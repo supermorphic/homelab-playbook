@@ -1,17 +1,10 @@
 ---
 profile: production
 exclude_paths:
-  - .ansible
-warn_list:
-  - experimental  # Show experimental rules as warnings
-  - formatting
-  - unnamed-task
-  - no-changed-when
-  - command-instead-of-shell
+  - .ansible/
+  - .venv/
+  - .tmp/
 
 skip_list:
+  # Generated and human-frozen K3s content is clearer preserved than wrapped.
   - yaml[line-length]
-  - name[casing]
-  - var-naming
-  - role-name
-  - name[play]

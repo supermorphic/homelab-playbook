@@ -1,4 +1,11 @@
 ---
+pihole_pihole_dns_1: 127.0.0.1#5335
+pihole_dnsmasq_listening: single
+unbound_listen_addresses:
+  - '127.0.0.1@5335'
+  - '::1@5335'
+pihole_dns_list_file: /etc/pihole/custom.list
+
 pihole_dns_records:
   - 192.168.90.101 traefik.lab.supermorphic.com
   - 192.168.90.101 longhorn.lab.supermorphic.com

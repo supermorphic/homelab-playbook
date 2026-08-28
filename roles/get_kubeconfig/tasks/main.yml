@@ -7,12 +7,13 @@
 
 - name: Set primary K3s cluster facts
   ansible.builtin.set_fact:
-    k3s_primary_host: "{{ groups['k3s_cluster'][0] }}"
-    vip_address: "{{ hostvars[groups['k3s_cluster'][0]].k3s_registration_address
-      | default(ansible_host) }}"
+    get_kubeconfig_primary_host: "{{ groups['k3s_cluster'][0] }}"
+    get_kubeconfig_vip_address: >-
+      {{ hostvars[groups['k3s_cluster'][0]].k3s_registration_address
+        | default(ansible_host) }}
 
 - name: Fetch the kubeconfig file directly from the primary K3s node
-  delegate_to: "{{ k3s_primary_host }}"
+  delegate_to: "{{ get_kubeconfig_primary_host }}"
   become: true
   ansible.builtin.fetch:
     src: /etc/rancher/k3s/k3s.yaml
@@ -30,7 +31,7 @@
 - name: Configure kubectl cluster for K3s VIP address
   ansible.builtin.command: >-
     kubectl config set-cluster default
-      --server https://{{ vip_address }}:6443
+      --server https://{{ get_kubeconfig_vip_address }}:6443
   environment:
     KUBECONFIG: "{{ ansible_user_dir }}/.kube/config"
   changed_when: true

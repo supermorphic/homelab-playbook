@@ -3,12 +3,12 @@
   hosts: k3s_cluster
   become: true
   roles:
-    - role: enable-cgroup
-    - role: prepare-cifs-storage
+    - role: enable_cgroup
+    - role: prepare_cifs_storage
     - role: geerlingguy.docker
     - role: xanmanning.k3s
 
 - name: Retrieve K3s kubeconfig to Ansible control node
   hosts: ansible
   roles:
-    - role: get-kubeconfig
+    - role: get_kubeconfig

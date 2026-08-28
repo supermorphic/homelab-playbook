@@ -1,5 +1,0 @@
----
-- name: Update Pi-hole
-  ansible.builtin.command: pihole -up
-  register: pihole_update_result
-  changed_when: "'Everything is up to date!' not in pihole_update_result.stdout"

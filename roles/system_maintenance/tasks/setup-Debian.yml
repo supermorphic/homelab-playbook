@@ -4,8 +4,8 @@
     update_cache: true
     upgrade: dist
     force_apt_get: true
-  register: apt_upgrade
-  changed_when: apt_upgrade.changed
+  register: system_maintenance_apt_upgrade
+  changed_when: system_maintenance_apt_upgrade.changed
 
 - name: Autoremove unused packages
   ansible.builtin.apt:
@@ -40,7 +40,7 @@
 - name: Check if reboot is required
   ansible.builtin.stat:
     path: /var/run/reboot-required
-  register: reboot_required_file
+  register: system_maintenance_reboot_required_file
 
 - name: Reboot if required
   ansible.builtin.reboot:
@@ -48,4 +48,4 @@
     connect_timeout: 5
     reboot_timeout: 600
     test_command: whoami
-  when: reboot_required_file.stat.exists
+  when: system_maintenance_reboot_required_file.stat.exists

@@ -11,5 +11,5 @@
   become: true
   gather_facts: true
   roles:
-    - system-maintenance
+    - system_maintenance
     - geerlingguy.security

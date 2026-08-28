@@ -25,3 +25,7 @@ run = "./scripts/playbook.sh"
 [tasks."check:fast"]
 description = "Run fast repository and security validation"
 run = "./scripts/ci/check-fast.sh"
+
+[tasks."check:ansible"]
+description = "Run offline Ansible, inventory, and Vault validation"
+run = "./scripts/ci/check-ansible.sh"

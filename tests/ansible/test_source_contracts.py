@@ -24,7 +24,7 @@ def load_tasks(relative_path: str) -> list[dict[str, object]]:
 class SourceContractTests(unittest.TestCase):
     def test_system_maintenance_asserts_debian_before_include(self) -> None:
         """Unsupported operating systems must fail before Debian tasks are included."""
-        tasks = load_tasks("roles/system-maintenance/tasks/main.yml")
+        tasks = load_tasks("roles/system_maintenance/tasks/main.yml")
         first_task = tasks[0]
         second_task = tasks[1]
 
@@ -44,7 +44,7 @@ class SourceContractTests(unittest.TestCase):
 
     def test_update_pihole_has_no_end_play(self) -> None:
         """A Pi-hole command failure must fail normally instead of ending a play."""
-        tasks = load_tasks("roles/update-pihole/tasks/main.yml")
+        tasks = load_tasks("roles/update_pihole/tasks/main.yml")
         command_tasks = [
             task for task in tasks if "ansible.builtin.command" in task
         ]
@@ -68,7 +68,7 @@ class SourceContractTests(unittest.TestCase):
 
     def test_dns_commands_do_not_treat_nonzero_rc_as_changed(self) -> None:
         """DNS command failures must remain failures, never reported as changes."""
-        tasks = load_tasks("roles/update-pihole/tasks/update-dns.yml")
+        tasks = load_tasks("roles/update_pihole/tasks/update-dns.yml")
 
         self.assertEqual(len(tasks), 2)
         self.assertTrue(

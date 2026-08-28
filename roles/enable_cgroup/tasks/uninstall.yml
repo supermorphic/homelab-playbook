@@ -2,16 +2,17 @@
 - name: Read existing /boot/firmware/cmdline.txt
   ansible.builtin.slurp:
     path: /boot/firmware/cmdline.txt
-  register: cmdline_raw
+  register: enable_cgroup_cmdline_raw
 
 - name: Decode cmdline content
   ansible.builtin.set_fact:
-    cmdline_current: "{{ cmdline_raw.content | b64decode | trim }}"
+    enable_cgroup_cmdline_current: >-
+      {{ enable_cgroup_cmdline_raw.content | b64decode | trim }}
 
 - name: Compute cleaned cmdline without cgroup parameters
   ansible.builtin.set_fact:
-    cmdline_cleaned: >-
-      {{ cmdline_current
+    enable_cgroup_cmdline_cleaned: >-
+      {{ enable_cgroup_cmdline_current
         | regex_replace('cgroup_enable=cpuset', '')
         | regex_replace('cgroup_enable=memory', '')
         | regex_replace('cgroup_memory=1', '')
@@ -22,14 +23,14 @@
 - name: Get existing file mode for preservation
   ansible.builtin.stat:
     path: /boot/firmware/cmdline.txt
-  register: cmdline_stat
+  register: enable_cgroup_cmdline_stat
 
 - name: Remove cgroup kernel parameters if present
   ansible.builtin.copy:
-    content: "{{ cmdline_cleaned }}\n"
+    content: "{{ enable_cgroup_cmdline_cleaned }}\n"
     dest: /boot/firmware/cmdline.txt
     owner: root
     group: root
-    mode: "{{ '%04o' % cmdline_stat.stat.mode | int(base=8) }}"
-  when: cmdline_current != cmdline_cleaned
+    mode: "{{ enable_cgroup_cmdline_stat.stat.mode }}"
+  when: enable_cgroup_cmdline_current != enable_cgroup_cmdline_cleaned
   notify: Reboot system

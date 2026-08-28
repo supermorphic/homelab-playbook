@@ -5,4 +5,4 @@
   roles:
     - r_pufky.pihole
     - l3d.unbound
-    - update-pihole
+    - update_pihole

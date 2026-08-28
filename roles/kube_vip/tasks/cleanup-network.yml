@@ -22,6 +22,6 @@
     echo "VIP cleanup completed."
   args:
     executable: /bin/bash
-  register: vip_cleanup
-  changed_when: "'Removing' in vip_cleanup.stdout"
+  register: kube_vip_cleanup
+  changed_when: "'Removing' in kube_vip_cleanup.stdout"
   failed_when: false

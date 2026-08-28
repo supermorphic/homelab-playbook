@@ -1,2 +1,3 @@
 ---
-- import_playbook: ../k3s/uninstall.yml
+- name: Uninstall the K3s cluster
+  ansible.builtin.import_playbook: ../k3s/uninstall.yml

@@ -1,0 +1,2 @@
+---
+cgroup_state: present  # noqa var-naming[no-role-prefix] - Frozen role API; renaming would break callers.

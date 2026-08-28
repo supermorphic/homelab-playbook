@@ -13,14 +13,14 @@
       - dmsetup
     state: present
     force_apt_get: true
-  register: pkg_install
-  changed_when: pkg_install.changed
+  register: prepare_cifs_storage_pkg_install
+  changed_when: prepare_cifs_storage_pkg_install.changed
 
 - name: Load required kernel module dm_crypt
   ansible.builtin.modprobe:
     name: dm_crypt
     state: present
-  register: mod_dmcrypt
+  register: prepare_cifs_storage_mod_dmcrypt
   ignore_errors: true
 
 - name: Ensure dm_crypt module is loaded on boot
@@ -29,22 +29,25 @@
     line: dm_crypt
     create: true
     mode: '0644'
-  register: module_boot
-  changed_when: module_boot.changed
+  register: prepare_cifs_storage_module_boot
+  changed_when: prepare_cifs_storage_module_boot.changed
 
 - name: Enable and start iscsid service
   ansible.builtin.systemd:
     name: iscsid
     enabled: true
     state: started
-  register: svc_iscsid
-  changed_when: svc_iscsid.changed
+  register: prepare_cifs_storage_svc_iscsid
+  changed_when: prepare_cifs_storage_svc_iscsid.changed
   notify: Restart iscsid service
 
 - name: Determine if system reboot is required
   ansible.builtin.set_fact:
-    reboot_needed: "{{ pkg_install.changed or mod_dmcrypt.changed or module_boot.changed }}"
+    prepare_cifs_storage_reboot_needed: >-
+      {{ prepare_cifs_storage_pkg_install.changed
+        or prepare_cifs_storage_mod_dmcrypt.changed
+        or prepare_cifs_storage_module_boot.changed }}
 
 - name: Trigger reboot if configuration changed
   ansible.builtin.meta: flush_handlers
-  when: reboot_needed | default(false)
+  when: prepare_cifs_storage_reboot_needed | default(false)

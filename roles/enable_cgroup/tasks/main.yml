@@ -2,14 +2,16 @@
 - name: Check if /boot/firmware/cmdline.txt
   ansible.builtin.stat:
     path: /boot/firmware/cmdline.txt
-  register: cmdline_check
+  register: enable_cgroup_cmdline_check
   changed_when: false
   when:
     - ansible_os_family == 'Debian'
     - ansible_facts['architecture'] in ['armv7l', 'aarch64']
 
 - name: Manage cgroup kernel parameters
-  when: cmdline_check is defined and cmdline_check.get('stat', {}).get('exists', false)
+  when: >-
+    enable_cgroup_cmdline_check is defined
+    and enable_cgroup_cmdline_check.get('stat', {}).get('exists', false)
   block:
 
     - name: Install cgroup kernel parameters
