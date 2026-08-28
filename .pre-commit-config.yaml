@@ -1,28 +1,24 @@
 ---
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: check-added-large-files
       - id: check-merge-conflict
       - id: end-of-file-fixer
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
-      - id: check-yaml
-        args: [--allow-multiple-documents]
-      - id: check-json
       - id: check-case-conflict
       - id: requirements-txt-fixer
       - id: sort-simple-yaml
       - id: detect-private-key
       - id: mixed-line-ending
 
-  - repo: https://github.com/adrienverge/yamllint
-    rev: v1.37.0
+  - repo: local
     hooks:
-      - id: yamllint
-
-  - repo: https://github.com/ansible/ansible-lint
-    rev: v25.2.1
-    hooks:
-      - id: ansible-lint
+      - id: check-fast
+        name: canonical fast validation
+        entry: mise run check:fast
+        language: system
+        pass_filenames: false
+        always_run: true

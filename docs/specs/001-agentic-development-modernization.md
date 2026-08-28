@@ -403,7 +403,7 @@ Changes to the classifier or its tests also select `full`.
 Initial mappings are conceptually:
 
 | Change | Depth |
-|---|---|
+| --- | --- |
 | documentation, license, repository metadata | `fast` |
 | shell/operator helpers | `fast` |
 | playbooks, roles, active/frozen inventory, Ansible configuration | `ansible` |

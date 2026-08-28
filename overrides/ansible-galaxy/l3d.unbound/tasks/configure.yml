@@ -1,5 +1,5 @@
 ---
-- name: Copy snipet to protect for DNS rebinding
+- name: Copy snippet to protect for DNS rebinding
   become: true
   ansible.builtin.template:
     src: 'templates/snippets/private-addresses.conf'
@@ -10,7 +10,7 @@
   notify: 'Systemctl restart unbound'
   when: unbount__dns_rebind_protection | bool
 
-- name: Copy snipet for qname privacy
+- name: Copy snippet for qname privacy
   become: true
   ansible.builtin.template:
     src: 'templates/snippets/qname-minimisation.conf'

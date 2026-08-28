@@ -1,7 +1,7 @@
+# Kube-VIP K3s Setup
+
 > This K3s automation is retained but frozen. It is not an active deployment
 > target. CI performs static validation only and never executes these playbooks.
-
-# Kube-VIP K3s Setup
 
 ## Overview
 
@@ -64,6 +64,7 @@ kube-vip manifest daemonset \
 ```
 
 This command generates a DaemonSet that:
+
 - Runs on tainted (control-plane) nodes only.
 - Advertises the VIP on the active leader.
 - Provides automatic failover without Service LB mode.
@@ -180,20 +181,29 @@ k3s_server_manifests_urls:
 ```
 
 ### Verification
+
 - Confirm the DaemonSet is running on all control-plane nodes:
-```bash
-kubectl -n kube-system get ds kube-vip-ds -o wide
-```
+
+  ```bash
+  kubectl -n kube-system get ds kube-vip-ds -o wide
+  ```
+
 - Check which node holds the control-plane lease:
-```bash
-kubectl -n kube-system get lease plndr-cp-lock -o yaml | grep holderIdentity
-```
+
+  ```bash
+  kubectl -n kube-system get lease plndr-cp-lock -o yaml | grep holderIdentity
+  ```
+
 - Verify the VIP is assigned on the leader node:
-```bash
-ssh <leader-node> "ip -brief addr | grep $VIP"
-```
+
+  ```bash
+  ssh <leader-node> "ip -brief addr | grep $VIP"
+  ```
+
 - Test failover by cordoning and draining the leader:
-```bash
-kubectl drain <leader-node> --ignore-daemonsets --delete-emptydir-data
-```
+
+  ```bash
+  kubectl drain <leader-node> --ignore-daemonsets --delete-emptydir-data
+  ```
+
 - Confirm the VIP migrates to another node and the API remains reachable.

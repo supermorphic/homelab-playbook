@@ -1,3 +1,4 @@
+---
 # escalate user privileges for tasks that need root permissions
 k3s_become: true
 

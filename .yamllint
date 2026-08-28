@@ -1,13 +1,21 @@
 ---
 extends: default
+ignore: |
+  .git/
+  .ansible/
+  .venv/
+  .tmp/
+  inventory/frozen/k3s/group_vars/k3s_cluster/vault.yml
+  inventory/production/group_vars/pihole/vault.yml
 rules:
+  document-start:
+    present: true
+    level: error
   indentation:
-    level: warning
-    indent-sequences: false
+    level: error
+    indent-sequences: consistent
   line-length:
     max: 160
     level: warning
-  comments:
-    min-spaces-from-content: 1
-    level: warning
-  trailing-spaces: disable
+  trailing-spaces:
+    level: error

@@ -1,0 +1,2 @@
+[codespell]
+skip = .git,.ansible,.venv,.tmp,uv.lock

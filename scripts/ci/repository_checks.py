@@ -1,0 +1,186 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import stat
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+from typing import Sequence
+
+
+APACHE_LICENSE_SIGNATURES = (
+    "Apache License",
+    "Version 2.0, January 2004",
+)
+NON_EXACT_TOOL_VERSIONS = {"latest", "lts", "stable", "system"}
+
+
+def relative_name(file_path: Path, repo_root: Path) -> str:
+    return file_path.relative_to(repo_root).as_posix()
+
+
+def check_json(file_path: Path, repo_root: Path) -> list[str]:
+    try:
+        with file_path.open(encoding="utf-8") as source:
+            json.load(source)
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return [f"{relative_name(file_path, repo_root)}: invalid JSON"]
+    return []
+
+
+def check_toml(file_path: Path, repo_root: Path) -> list[str]:
+    try:
+        with file_path.open("rb") as source:
+            tomllib.load(source)
+    except (tomllib.TOMLDecodeError, OSError):
+        return [f"{relative_name(file_path, repo_root)}: invalid TOML"]
+    return []
+
+
+def check_executable(file_path: Path, repo_root: Path) -> list[str]:
+    try:
+        mode = file_path.stat().st_mode
+        with file_path.open("rb") as source:
+            has_shebang = source.read(2) == b"#!"
+    except OSError:
+        return [f"{relative_name(file_path, repo_root)}: cannot inspect file mode"]
+
+    has_executable_mode = bool(
+        mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    )
+    is_executable = os.access(file_path, os.X_OK)
+    file_name = relative_name(file_path, repo_root)
+
+    if (has_executable_mode or is_executable) and not has_shebang:
+        return [f"{file_name}: executable file is missing a shebang"]
+    if has_shebang and not (has_executable_mode and is_executable):
+        return [f"{file_name}: shebang file is not executable"]
+    return []
+
+
+def discover_repository_files(repo_root: Path) -> list[Path]:
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            os.fspath(repo_root),
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+    )
+    relative_paths = [
+        Path(os.fsdecode(raw_path))
+        for raw_path in result.stdout.split(b"\0")
+        if raw_path
+    ]
+    return sorted(repo_root / relative_path for relative_path in relative_paths)
+
+
+def check_license(repo_root: Path) -> list[str]:
+    try:
+        license_text = (repo_root / "LICENSE").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ["LICENSE: missing Apache-2.0 signature"]
+
+    if all(signature in license_text for signature in APACHE_LICENSE_SIGNATURES):
+        return []
+    return ["LICENSE: missing Apache-2.0 signature"]
+
+
+def exact_version(tool_value: object) -> str | None:
+    requested: object = tool_value
+    if isinstance(tool_value, dict):
+        requested = tool_value.get("version")
+    if not isinstance(requested, str):
+        return None
+
+    normalized = requested.strip()
+    if not normalized or normalized.lower() in NON_EXACT_TOOL_VERSIONS:
+        return None
+    if any(character in normalized for character in "*<>=^~ "):
+        return None
+    if normalized.startswith(("path:", "prefix:", "ref:")):
+        return None
+    return normalized
+
+
+def check_mise_lock(repo_root: Path) -> list[str]:
+    try:
+        with (repo_root / ".mise.toml").open("rb") as source:
+            mise_config = tomllib.load(source)
+        with (repo_root / "mise.lock").open("rb") as source:
+            mise_lock = tomllib.load(source)
+    except (tomllib.TOMLDecodeError, OSError):
+        return ["mise.lock: cannot verify exact tool pins"]
+
+    configured_tools = mise_config.get("tools", {})
+    locked_tools = mise_lock.get("tools", {})
+    if not isinstance(configured_tools, dict) or not isinstance(locked_tools, dict):
+        return ["mise.lock: cannot verify exact tool pins"]
+
+    errors: list[str] = []
+    for tool_name, tool_value in sorted(configured_tools.items()):
+        requested_version = exact_version(tool_value)
+        if requested_version is None:
+            continue
+
+        lock_entries = locked_tools.get(tool_name, [])
+        if not isinstance(lock_entries, list):
+            lock_entries = []
+        represented = any(
+            isinstance(entry, dict) and entry.get("version") == requested_version
+            for entry in lock_entries
+        )
+        if not represented:
+            errors.append(
+                f"mise.lock: exact pin {tool_name}@{requested_version} "
+                "is not represented"
+            )
+    return errors
+
+
+def repository_errors(repo_root: Path) -> list[str]:
+    errors: list[str] = []
+    for file_path in discover_repository_files(repo_root):
+        if file_path.suffix == ".json":
+            errors.extend(check_json(file_path, repo_root))
+        elif file_path.suffix == ".toml":
+            errors.extend(check_toml(file_path, repo_root))
+        errors.extend(check_executable(file_path, repo_root))
+
+    errors.extend(check_license(repo_root))
+    errors.extend(check_mise_lock(repo_root))
+    return errors
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Validate repository structure")
+    parser.add_argument("root", nargs="?", type=Path, default=Path.cwd())
+    arguments = parser.parse_args(argv)
+    repo_root = arguments.root.resolve()
+
+    try:
+        errors = repository_errors(repo_root)
+    except subprocess.CalledProcessError:
+        print("error: repository file discovery failed", file=sys.stderr)
+        return 1
+
+    if errors:
+        for error in errors:
+            print(f"error: {error}", file=sys.stderr)
+        return 1
+
+    print("Repository checks passed.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
