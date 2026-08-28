@@ -60,6 +60,9 @@ class SourceContractTests(unittest.TestCase):
             any("ignore_errors" in task for task in tasks),
         )
         self.assertFalse(
+            any("failed_when" in task for task in tasks),
+        )
+        self.assertFalse(
             any(task.get("ansible.builtin.meta") == "end_play" for task in tasks)
         )
 
