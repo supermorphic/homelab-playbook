@@ -1,40 +1,26 @@
 # Specification 001: Agentic development modernization
 
-Status: Approved
-
 Issue: [#1 Modernize homelab-playbook for agentic development](https://github.com/supermorphic/homelab-playbook/issues/1)
-
-Approved: 2026-08-28
 
 ## Purpose
 
 Modernize `homelab-playbook` into the safe, deterministic Ansible source for
 off-cluster host provisioning and configuration management. The repository must
-remain directly operable from a workstation, support future NUC #4 work, and be
-understandable to both human operators and coding agents without rewriting useful
-Ansible automation.
+remain directly operable from a workstation and be understandable to both human
+operators and coding agents without rewriting useful Ansible automation.
 
 This initiative establishes repository boundaries, lifecycle decisions, an
 operator interface, a reproducible development toolchain, Ansible-native secret
-handling, agent instructions, and fast offline validation. It does not deploy NUC
-#4 services or change production hosts.
+handling, agent instructions, and fast offline validation. It does not deploy
+services or change managed hosts.
 
 ## Context
 
-The last active repository work and host provisioning occurred in December 2025.
-The only active managed service is Pi-hole on Raspberry Pi 1. The existing three
-Raspberry Pi 5 nodes previously intended for K3s are not currently running and
-will be repurposed. The repository therefore needs an audit based on current
-consumers rather than preservation of every historical executable surface.
-
-The desired long-term topology is:
-
-- two Raspberry Pi 5 systems providing redundant Technitium DNS and Tailscale
-  routing;
-- NUC #4 as the primary build/CI runner and likely VM staging host;
-- Raspberry Pi provisioning retained in this repository;
-- `homelab-talos` remaining the active Kubernetes GitOps environment;
-- the former K3s work retained as frozen human-authored Ansible automation.
+The only active managed service is Pi-hole on Raspberry Pi 1. The nodes previously
+intended for K3s are not currently running. The repository therefore needs an
+audit based on current consumers rather than preservation of every historical
+executable surface. Future service and infrastructure designs remain with their
+own issues and specifications.
 
 ## Governing principles
 
@@ -46,11 +32,8 @@ The desired long-term topology is:
    author to choose a shallower test scope.
 5. Target an ordinary pull-request gate of approximately two minutes p95.
 6. Add deeper validation only for changes that can benefit from its evidence.
-7. Keep GitHub available for bootstrap and disaster recovery if Forgejo later
-   becomes canonical.
-8. Keep this repository separate from `homelab-talos` and do not create an
-   executable or documentation dependency on the retired `homelab-gitops`
-   repository.
+7. Keep GitHub available for bootstrap and disaster recovery.
+8. Keep this repository separate from `homelab-talos`.
 
 ## Scope
 
@@ -68,22 +51,18 @@ The desired long-term topology is:
 - Apache License 2.0 standardization;
 - deterministic, change-directed GitHub Actions validation;
 - high-value repository, security, and Ansible checks;
-- documentation of a future Molecule convention;
-- follow-up boundaries for host provisioning, services, staging, and dependency
-  lifecycle.
+- documentation of a future Molecule convention.
 
 ### Excluded
 
 - connecting CI to production or staging hosts;
 - decrypting production Vault content in CI;
-- deploying or updating Pi-hole, Technitium, Tailscale, NUC #4, or K3s;
-- designing the complete Technitium topology;
+- deploying or updating any managed service or host;
+- designing future service or infrastructure topology;
 - implementing a VM staging platform;
-- installing or configuring OrbStack, Podman machines, QEMU, or a NUC runner;
 - converting K3s from Argo CD to Flux;
 - migrating secrets to SOPS;
 - implementing Molecule scenarios;
-- tracking or modifying the retired `homelab-gitops` repository;
 - a generalized CI test catalog, dependency graph, or reporting platform.
 
 ## Current-state audit
@@ -92,13 +71,9 @@ The desired long-term topology is:
 
 - Raspberry Pi 1 runs Pi-hole on bare metal.
 - Pi-hole is managed through `playbooks/pihole` and related inventory/roles.
-- No repository provisioning or system-update execution has occurred since
-  December 2025.
 
-Pi-hole is transitional. It will eventually be replaced by Technitium, probably
-running through a Podman Quadlet. Modernization must keep the current path
-operable, but should not make a large new testing investment in code scheduled for
-replacement.
+Modernization must keep the current Pi-hole path operable but does not redesign
+the service or choose its eventual replacement.
 
 ### Frozen K3s
 
@@ -160,27 +135,24 @@ These findings guide modernization. They do not authorize production execution.
 
 - Debian host bootstrap and lifecycle configuration outside Kubernetes;
 - Raspberry Pi provisioning;
-- Podman and Quadlet host foundations;
-- off-cluster DNS, routing, automation, Git, TLS, backup, and runner hosts;
+- off-cluster host configuration introduced through focused future
+  specifications;
 - Ansible inventories, roles, playbooks, Vault content, and operator workflows;
 - offline validation of those sources.
 
 `homelab-talos` owns the active Talos/Kubernetes GitOps environment and its SOPS
 boundary. No SOPS handoff is needed inside this repository.
 
-The old `homelab-gitops` repository is retired independently. This repository
-must contain no runtime or documentation references to it.
-
 ## Supported operating systems
 
 The maintained production target is deliberately narrow:
 
-- Debian 13 for NUC and general-purpose hosts;
+- Debian 13 for general-purpose hosts;
 - Raspberry Pi OS based on Debian for Raspberry Pi hosts.
 
 Arch Linux and Red Hat-family logic may remain only where it is useful historical
 or experimental source. It is not a validated production contract until a real
-consumer and test target are approved. Unsupported production paths should fail
+consumer and test target are defined. Unsupported production paths should fail
 clearly rather than silently skip required work.
 
 ## Inventory design
@@ -200,8 +172,7 @@ Requirements:
 - each environment is directly selectable by the operator interface;
 - public variables and encrypted secret variables remain separate;
 - frozen K3s groups and variables move together under `inventory/frozen/k3s`;
-- staging contains no placeholder claim that a VM platform exists before the
-  follow-up initiative implements one;
+- staging contains no placeholder claim that a VM platform exists;
 - active inventory parsing is validated offline;
 - CI never contacts hosts named in any inventory.
 
@@ -374,7 +345,7 @@ include `ansible` evidence plus affected Molecule scenarios.
 Issue #1 documents this convention but does not install Molecule, add a scenario,
 add a CI job, or add placeholder classifier mappings. The first durable
 first-party role that benefits from converge, idempotence, and verification tests
-introduces the implementation through its own approved work.
+introduces the implementation through its own focused specification.
 
 An initial scenario will conventionally live at:
 
@@ -536,8 +507,8 @@ The first implementation may include:
 - non-blocking link validation;
 - full offline validation.
 
-Dependency freshness belongs to issue #8. Live health checks, VM staging, and
-hardware validation are outside pull-request CI.
+Dependency-update automation, live health checks, VM staging, and hardware
+validation are outside pull-request CI.
 
 ### Measurement and activation
 
@@ -566,42 +537,13 @@ order:
 Do not introduce a generalized affected-target planner unless measured retained,
 unrelated validation later dominates runtime.
 
-## VM staging direction
+## Staging boundary
 
-VM staging is a separate initiative. Its purpose is to execute playbooks against
-disposable Debian targets before real hardware deployment.
-
-Current direction:
-
-- NUC #4 is the preferred canonical x86 VM staging and CI host because it is
-  always available and does not consume the developer workstation;
-- the M3 MacBook may provide optional local ARM smoke testing, but must not become
-  the required staging environment;
-- one Raspberry Pi 5 may be evaluated as an ARM CI runner, but keeping it requires
-  a measured workload and benefit; it is not assumed merely because hardware is
-  available;
-- OrbStack, Podman machine, Lima, QEMU, libvirt, and other candidates must be
-  compared against reproducibility, architecture coverage, automation, isolation,
-  cost, and operator ergonomics;
-- CI container tests must not be described as equivalent to VM or Raspberry Pi
-  validation.
-
-Create a separate tracked issue for this investigation. No staging-platform choice
-or hardware sale decision is made by issue #1.
-
-## Follow-up issue boundaries
-
-Modernization prepares but does not absorb the existing follow-up initiatives:
-
-- issue #2: bootstrap NUC #4 Debian host with Ansible;
-- issue #3: establish NUC #4 Podman and Quadlet foundation;
-- issue #4: Semaphore infrastructure automation on the new foundation;
-- issue #5: out-of-cluster trusted TLS automation;
-- issue #6: Talos upgrade orchestration;
-- issue #7: Forgejo self-hosted Git;
-- issue #8: Renovate lifecycle for off-cluster infrastructure;
-- issue #9: off-cluster backup and disaster recovery;
-- a new issue: disposable multi-architecture VM staging and runner evaluation.
+VM and hardware staging are separate design concerns. This specification reserves
+an inventory boundary for staging but does not choose a platform, host,
+architecture, or runner. A future focused specification may introduce those
+decisions. Container-based CI must not be described as equivalent to VM or
+physical-hardware validation.
 
 ## Migration sequence
 
@@ -616,8 +558,7 @@ The implementation plan must preserve reviewable boundaries:
 6. restructure active and frozen inventories with parse validation;
 7. remove Argo CD, KSOPS, SOPS, obsolete Semaphore Compose, and orphaned helpers;
 8. harden Ansible Vault and active-role failure/change semantics;
-9. reconcile all documentation and run final validation;
-10. create the separate VM staging investigation issue.
+9. reconcile all documentation and run final validation.
 
 The plan may reorder adjacent steps where tests require it, but must not mix
 production deployment into repository modernization.
@@ -654,29 +595,4 @@ Issue #1 is complete when:
     or implemented;
 15. no validation contacts a live host or uses production secrets;
 16. README examples match files and commands that actually exist;
-17. the separate VM staging and ARM-runner investigation is tracked;
-18. all implementation-plan verification commands pass from a clean checkout.
-
-## Decision record
-
-The following decisions are approved and should not be reopened during
-implementation without new evidence:
-
-- keep the repository separate from `homelab-talos`;
-- use Apache-2.0;
-- retain Ansible Vault rather than migrate to SOPS;
-- retire Argo CD and KSOPS completely;
-- retain but freeze K3s;
-- do not reference `homelab-gitops`;
-- retire obsolete Semaphore Compose automation;
-- use `frozen/`, not `frozen-k3s/`, as the inventory lifecycle directory;
-- make Mise the canonical operator/task interface;
-- retain a thin `run-playbook` shell alias;
-- keep bootstrap explicit and playbook execution dependency-non-mutating;
-- support Debian 13 and Raspberry Pi OS/Debian as the maintained production
-  targets;
-- use deterministic `fast`, `ansible`, `molecule`, and `full` validation depths;
-- expose `ci:changed`, not a separate public `ci:plan` command;
-- document Molecule now but implement it only with a suitable future role;
-- target an ordinary required CI duration of approximately two minutes p95;
-- investigate VM staging separately, with NUC #4 as the leading canonical host.
+17. all implementation-plan verification commands pass from a clean checkout.
