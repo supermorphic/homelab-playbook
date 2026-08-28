@@ -29,3 +29,14 @@ run = "./scripts/ci/check-fast.sh"
 [tasks."check:ansible"]
 description = "Run offline Ansible, inventory, and Vault validation"
 run = "./scripts/ci/check-ansible.sh"
+
+[tasks."ci:changed"]
+description = "Classify local changes and run the required offline checks"
+run = "uv run --frozen --no-sync python scripts/ci/run_changed.py"
+
+[tasks.ci]
+description = "Run complete offline validation"
+run = '''
+FULL_SECRET_SCAN=1 mise run check:fast
+mise run check:ansible
+'''
