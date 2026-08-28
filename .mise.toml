@@ -17,3 +17,7 @@ pre-commit = "4.6.2"
 [tasks.bootstrap]
 description = "Install the locked controller and Galaxy dependencies"
 run = "./scripts/bootstrap.sh"
+
+[tasks.playbook]
+description = "Run one playbook action against a named inventory"
+run = "./scripts/playbook.sh"
