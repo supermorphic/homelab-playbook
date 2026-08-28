@@ -1,76 +1,68 @@
-# Ansible Playbook Framework
+# Homelab Playbook
 
-This repository provides a flexible structure for Ansible playbooks designed to provision and manage various server configurations. The framework supports modular roles and tasks that can be easily extended to manage different applications or configurations. The initial implementation includes a setup for Podman, demonstrating the framework's capabilities.
+Ansible automation for provisioning and maintaining off-cluster homelab hosts.
 
-## Directory Structure
+## Prerequisites
 
-The repository is organized to support clarity and extensibility:
+Install [Mise](https://mise.jdx.dev/), Git, and SSH configuration appropriate
+for the hosts you are explicitly authorized to operate.
 
-- **playbooks/**: Contains specific Ansible playbooks for orchestrating roles to set up and manage applications or services. Each subdirectory corresponds to a domain or application, e.g., `podman/`.
+## Bootstrap
 
-- **roles/**: Includes modular roles encapsulating tasks and handlers. Roles can be shared across different playbooks, promoting reusability. Each role typically includes:
-  - `tasks/`: Main tasks to execute.
-  - `handlers/`: Handlers triggered by tasks when changes occur.
-  - `defaults/`: Default variables for the role.
+After checkout or a dependency change, install the repository-managed tools and
+dependencies:
 
-- **inventory/**: Stores host inventories divided by environment, such as:
-  - `production/`: Production environment configuration.
-  - `staging/`: Staging environment configuration.
+```bash
+mise run bootstrap
+```
 
-- **scripts/**: Contains utility scripts for running playbooks efficiently. The `run.sh` script automates the execution of playbooks with appropriate inventories and additional options.
+## Repository layout
 
-- **ansible.cfg**: Configuration file for Ansible settings that apply globally to all playbook runs.
-## Extensibility
+`playbooks/` contains host automation, `roles/` contains reusable Ansible roles,
+and `inventory/` contains environment inventories. Durable design specifications
+live in `docs/specs/`; transient implementation plans belong in `.tmp/plans/`.
 
-The current setup is designed with future extensibility in mind:
+## Running playbooks
 
-- **Adding New Playbooks**: You can add new directories within `playbooks/` to create playbooks for other services or applications.
-- **Creating New Roles**: Within `roles/`, you can add new roles that define tasks and configurations for unique services or systems.
+Run playbooks through the repository interface:
 
-## Podman Implementation
+```bash
+mise run playbook -- <playbook> <action> <inventory> [ansible-args...]
+```
 
-The initial implementation includes playbooks and roles for managing Podman:
+Execute against production or staging only with explicit operator direction.
 
-- **Playbooks for Podman**:
-  - `playbooks/podman/install.yml`: Installs and configures Podman on target hosts.
-  - `playbooks/podman/uninstall.yml`: Removes Podman from target hosts.
-  - `playbooks/podman/verify.yml`: Checks the installation and configuration of Podman.
+## Inventories
 
-- **Roles for Podman**: Logical grouping of tasks and configurations to manage Podman installation and verification.
+Select the environment as the command's inventory argument. Production and
+staging inventories are operator inputs; validation does not connect to their
+hosts.
 
-### Running Podman Playbooks with Scripts
+## Secrets
 
-The `scripts/run.sh` script streamlines the execution of Podman-related playbooks and supports additional Ansible arguments for further customization:
+Ansible Vault encrypts secret variables. Keep Vault passwords and SSH material
+outside the repository; do not decrypt, print, or inspect production Vault
+values during development or validation.
 
-1. **Install Podman**
-   ```bash
-   scripts/run.sh podman install <inventory>
-   ```
+## Validation
 
-2. **Verify Installation with Verbose Output**
-   ```bash
-   scripts/run.sh podman verify <inventory> -vvv
-   ```
-   - The `-vvv` flag increases the verbosity level of Ansible's output, providing detailed execution logs which can help in debugging and understanding the tasks performed.
+Use focused checks while iterating, then run change-directed validation before
+claiming completion:
 
-3. **Uninstall Podman for a Specific Host**
-   ```bash
-   scripts/run.sh podman uninstall <inventory> --limit <host>
-   ```
-   - The `--limit <host>` option confines the playbook execution to a specific host within the inventory, allowing for targeted operations.
+```bash
+mise run check:fast
+mise run check:ansible
+mise run ci:changed
+```
 
-Replace `<inventory>` with `staging` or `production`, and `<host>` with the specific host identifier.
+Use `mise run ci` when deeper validation is warranted. Pull-request validation
+is offline and secret-free.
 
-Including `ansible-args` enables more flexible and powerful management of your infrastructure by allowing command customization directly through the script.
+## Frozen K3s
 
-## Requirements
+The retained K3s source is frozen. It receives static validation only; live
+verification remains operator-run and is not CI evidence.
 
-- **Ansible**: Ensure Ansible is installed on the control node, as it orchestrates the configuration management processes across your servers.
+## License
 
-- **SSH Key-Based Authentication**: It is recommended to use SSH keys for server authentication. This method enhances security by eliminating the need for password-based logins and enabling seamless, automated connections between Ansible and your managed nodes.
-
-- **Privilege Escalation**: The playbooks might require elevated permissions to execute specific tasks. The scripts are configured to prompt for the sudo password where necessary using the `--ask-become-pass` Ansible flag. This approach is preferred over configuring "passwordless sudo" (using the `NOPASSWD` directive in the sudoers file), as it offers a balance between security and convenience by ensuring that privilege escalation remains deliberate and user-approved.
-
-## Contribution
-
-Contributions are welcome. Feel free to add new features, improve existing ones, or report issues.
+This repository is licensed under [Apache-2.0](LICENSE).

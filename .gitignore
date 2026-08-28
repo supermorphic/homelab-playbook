@@ -9,7 +9,12 @@ Icon?
 *.swp
 Thumbs.db
 
-# Ansible
+# Repository-local transient state
+.tmp/
+.venv/
+.cache/
+
+# Ansible dependencies and runtime state
 .ansible/
 *.md5
 
