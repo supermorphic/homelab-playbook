@@ -73,6 +73,26 @@ def direct_mapping_values(source: str, key: str, indent: int) -> list[str]:
     ]
 
 
+def direct_mapping_block(source: str, key: str, indent: int) -> str:
+    lines = source.splitlines()
+    prefix = f"{' ' * indent}{key}:"
+    matches = [index for index, line in enumerate(lines) if line.startswith(prefix)]
+    if len(matches) != 1:
+        raise AssertionError(
+            f"expected one direct mapping for {key!r}, found {len(matches)}"
+        )
+
+    start = matches[0]
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        line_indent = len(line) - len(line.lstrip())
+        if line.strip() and line_indent <= indent:
+            end = index
+            break
+    return "\n".join(lines[start:end])
+
+
 class MergeGateReconciliationTests(unittest.TestCase):
     def assert_accepted(
         self,
@@ -349,12 +369,18 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("CI_BASE_SHA", full_history_step)
         self.assertNotIn("CI_HEAD_SHA", full_history_step)
 
-    def test_ansible_runs_in_pull_request_shadow_mode_and_is_offline(self) -> None:
+    def test_ansible_runs_only_for_exact_selected_depths_and_is_offline(self) -> None:
         self.assertIn("needs: classify", self.ansible)
-        self.assertIn(
-            "if: github.event_name == 'pull_request' || "
-            "needs.classify.outputs.run_ansible == 'true'",
-            self.ansible,
+        self.assertEqual(
+            "\n".join(
+                [
+                    "    if: >-",
+                    "      needs.classify.outputs.depth == 'ansible' ||",
+                    "      needs.classify.outputs.depth == 'molecule' ||",
+                    "      needs.classify.outputs.depth == 'full'",
+                ]
+            ),
+            direct_mapping_block(self.ansible, "if", 4),
         )
         self.assertIn("timeout-minutes: 5", self.ansible)
         self.assertEqual(1, self.ansible.count("mise run bootstrap"))

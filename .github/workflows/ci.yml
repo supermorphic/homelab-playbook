@@ -92,9 +92,12 @@ jobs:
         run: mise run check:fast
 
   ansible:
-    name: ansible (shadow)
+    name: ansible
     needs: classify
-    if: github.event_name == 'pull_request' || needs.classify.outputs.run_ansible == 'true'
+    if: >-
+      needs.classify.outputs.depth == 'ansible' ||
+      needs.classify.outputs.depth == 'molecule' ||
+      needs.classify.outputs.depth == 'full'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

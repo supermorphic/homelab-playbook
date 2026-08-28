@@ -518,6 +518,28 @@ maximum, individual samples, and a provisional p95 with its small-sample
 limitation. Enable selective execution only after classifier fixtures and observed
 plans agree.
 
+#### Implementation evidence
+
+The shadow workflow was measured on candidate
+`0d4d60721a92a0262daeb92299a74d319807d484`. Five attempts of the same
+GitHub run passed:
+
+| Attempt | Workflow | `fast` job | `ansible` job | Visible Mise cache |
+| --- | ---: | ---: | ---: | --- |
+| [1](https://github.com/supermorphic/homelab-playbook/actions/runs/33207743436/attempts/1) | 68s | 15s | 36s | classify/fast miss; Ansible/merge gate hit |
+| [2](https://github.com/supermorphic/homelab-playbook/actions/runs/33207743436/attempts/2) | 61s | 11s | 31s | all jobs hit |
+| [3](https://github.com/supermorphic/homelab-playbook/actions/runs/33207743436/attempts/3) | 55s | 14s | 23s | all jobs hit |
+| [4](https://github.com/supermorphic/homelab-playbook/actions/runs/33207743436/attempts/4) | 51s | 12s | 21s | all jobs hit |
+| [5](https://github.com/supermorphic/homelab-playbook/actions/runs/33207743436/attempts/5) | 60s | 11s | 30s | all jobs hit |
+
+Workflow elapsed time uses the GitHub attempt creation and update timestamps.
+The five samples had a 51s minimum, 60s median, 68s maximum, and 68s
+nearest-rank provisional p95. Three unchanged-candidate local warm-cache runs
+also passed at 11.11s, 11.18s, and 11.11s (11.11s minimum and median; 11.18s
+maximum). Classifier fixtures passed and all observed paths selected the
+expected depth. The 120-second objective passed, so selective execution was
+activated. The small sample makes the p95 provisional.
+
 If the ordinary gate misses the approximately two-minute target, optimize in this
 order:
 
