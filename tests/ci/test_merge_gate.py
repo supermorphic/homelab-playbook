@@ -64,6 +64,15 @@ def named_step_block(source: str, name: str, indent: int = 6) -> str:
     return "\n".join(lines[start:end])
 
 
+def direct_mapping_values(source: str, key: str, indent: int) -> list[str]:
+    prefix = f"{' ' * indent}{key}:"
+    return [
+        line.removeprefix(prefix).strip()
+        for line in source.splitlines()
+        if line.startswith(prefix)
+    ]
+
+
 class MergeGateReconciliationTests(unittest.TestCase):
     def assert_accepted(
         self,
@@ -136,6 +145,28 @@ class MergeGateReconciliationTests(unittest.TestCase):
                     merge_gate.reconcile(depth, "success", "success", "success"),
                 )
 
+    def test_invalid_depths_still_report_classifier_and_fast_mismatches(self) -> None:
+        cases = {
+            "": "validation depth is missing",
+            "molecule": "validation depth 'molecule' is not implemented",
+            "unexpected": "validation depth 'unexpected' is unknown",
+        }
+        for depth, depth_error in cases.items():
+            with self.subTest(depth=depth):
+                self.assertEqual(
+                    [
+                        "classify job result is 'failure', expected 'success'",
+                        "fast job result is 'cancelled', expected 'success'",
+                        depth_error,
+                    ],
+                    merge_gate.reconcile(
+                        depth,
+                        "failure",
+                        "cancelled",
+                        "failure",
+                    ),
+                )
+
     def test_classifier_failure_fails_gate(self) -> None:
         self.assertEqual(
             ["classify job result is 'failure', expected 'success'"],
@@ -175,6 +206,49 @@ class MergeGateReconciliationTests(unittest.TestCase):
             ),
             result.stderr,
         )
+
+    def test_invalid_depth_cli_prints_classifier_fast_and_depth_mismatches(
+        self,
+    ) -> None:
+        cases = {
+            "": "validation depth is missing",
+            "molecule": "validation depth 'molecule' is not implemented",
+            "unexpected": "validation depth 'unexpected' is unknown",
+        }
+        for depth, depth_error in cases.items():
+            with self.subTest(depth=depth):
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(MERGE_GATE_PATH),
+                        "--depth",
+                        depth,
+                        "--classify-result",
+                        "failure",
+                        "--fast-result",
+                        "cancelled",
+                        "--ansible-result",
+                        "failure",
+                    ],
+                    cwd=REPOSITORY_ROOT,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+
+                self.assertEqual(1, result.returncode)
+                self.assertEqual("", result.stdout)
+                self.assertEqual(
+                    "\n".join(
+                        [
+                            "classify job result is 'failure', expected 'success'",
+                            "fast job result is 'cancelled', expected 'success'",
+                            depth_error,
+                            "",
+                        ]
+                    ),
+                    result.stderr,
+                )
 
 
 class WorkflowContractTests(unittest.TestCase):
@@ -296,7 +370,10 @@ class WorkflowContractTests(unittest.TestCase):
 
     def test_merge_gate_always_reconciles_classifier_and_job_results(self) -> None:
         self.assertIn("name: merge-gate", self.merge_gate)
-        self.assertIn("if: always()", self.merge_gate)
+        self.assertEqual(
+            ["always()"],
+            direct_mapping_values(self.merge_gate, "if", 4),
+        )
         self.assertIn("timeout-minutes: 2", self.merge_gate)
         self.assertIn(
             "needs:\n      - classify\n      - fast\n      - ansible", self.merge_gate

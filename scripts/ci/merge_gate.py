@@ -21,6 +21,8 @@ def reconcile(
     errors: list[str] = []
     if classify_result != "success":
         errors.append(_result_error("classify", classify_result, "'success'"))
+    if fast_result != "success":
+        errors.append(_result_error("fast", fast_result, "'success'"))
 
     if not depth:
         errors.append("validation depth is missing")
@@ -31,9 +33,6 @@ def reconcile(
     if depth not in IMPLEMENTED_DEPTHS:
         errors.append(f"validation depth '{depth}' is unknown")
         return errors
-
-    if fast_result != "success":
-        errors.append(_result_error("fast", fast_result, "'success'"))
 
     if depth == "fast":
         if ansible_result not in {"success", "skipped"}:
