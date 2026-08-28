@@ -33,7 +33,6 @@ own issues and specifications.
 5. Target an ordinary pull-request gate of approximately two minutes p95.
 6. Add deeper validation only for changes that can benefit from its evidence.
 7. Keep GitHub available for bootstrap and disaster recovery.
-8. Keep this repository separate from `homelab-talos`.
 
 ## Scope
 
@@ -140,9 +139,6 @@ These findings guide modernization. They do not authorize production execution.
 - Ansible inventories, roles, playbooks, Vault content, and operator workflows;
 - offline validation of those sources.
 
-`homelab-talos` owns the active Talos/Kubernetes GitOps environment and its SOPS
-boundary. No SOPS handoff is needed inside this repository.
-
 ## Supported operating systems
 
 The maintained production target is deliberately narrow:
@@ -184,8 +180,7 @@ Ansible Vault remains the only encryption format in this repository.
 
 Ansible Vault follows the natural playbook execution path, avoids a collection or
 external decryption integration, and remains useful after Argo CD and KSOPS are
-removed. SOPS remains appropriate in `homelab-talos`, where GitOps controllers
-consume encrypted Kubernetes material, but it adds no durable consumer here.
+removed. SOPS adds no durable consumer here.
 
 Both Ansible Vault and SOPS require external key material. The Vault password or
 password retrieval mechanism remains in the operator's password manager and is
@@ -207,9 +202,8 @@ made available to pull-request CI.
 ## Licensing
 
 Replace the existing GPL-3.0 license with Apache License 2.0 and identify the
-repository as Apache-2.0 in documentation. This standardizes licensing with
-`homelab-talos` while preserving an explicit public-repository license and adding
-Apache's patent grant.
+repository as Apache-2.0 in documentation. This preserves an explicit
+public-repository license and adds Apache's patent grant.
 
 ## Reproducible toolchain
 
