@@ -9,10 +9,11 @@ for the hosts you are explicitly authorized to operate.
 
 ## Bootstrap
 
-After checkout or a dependency change, install the repository-managed tools and
-dependencies:
+After checkout, install the pinned tools, then install the locked controller and
+Galaxy dependencies. Repeat both commands after a tool or dependency change:
 
 ```bash
+mise install
 mise run bootstrap
 ```
 
@@ -30,18 +31,31 @@ Run playbooks through the repository interface:
 mise run playbook -- <playbook> <action> <inventory> [ansible-args...]
 ```
 
+The repository-root alias is an equivalent thin forwarding wrapper:
+
+```bash
+./run-playbook <playbook> <action> <inventory> [ansible-args...]
+```
+
 Execute against production or staging only with explicit operator direction.
 
 ## Inventories
 
-Select the environment as the command's inventory argument. Production and
-staging inventories are operator inputs; validation does not connect to their
-hosts.
+Select one of these inventory arguments:
+
+- `production` contains the active off-cluster hosts.
+- `staging` is an intentionally empty environment boundary.
+- `frozen/k3s` retains the non-active K3s inventory.
+
+Production and staging are operator inputs. Validation parses public-only
+inventory mirrors and does not connect to their hosts.
 
 ## Secrets
 
-Ansible Vault encrypts secret variables. Keep Vault passwords and SSH material
-outside the repository; do not decrypt, print, or inspect production Vault
+Ansible Vault encrypts secret variables. Operators own the Vault password or
+password-retrieval mechanism outside the repository, such as in a password
+manager. Do not commit key material or embed it in Mise configuration, helper
+scripts, or pull-request CI. Do not decrypt, print, or inspect production Vault
 values during development or validation.
 
 ## Validation
@@ -55,8 +69,13 @@ mise run check:ansible
 mise run ci:changed
 ```
 
-Use `mise run ci` when deeper validation is warranted. Pull-request validation
-is offline and secret-free.
+`ci:changed` classifies committed and working-tree changes and runs the minimum
+required depth. Use `mise run ci` to force all currently implemented offline
+validation. Pull-request validation is offline and secret-free.
+
+Molecule is reserved as a future convention for scenarios under
+`roles/<role>/molecule/<scenario>/`. This repository currently has no Molecule
+task, dependency, scenario, or CI job.
 
 ## Frozen K3s
 
