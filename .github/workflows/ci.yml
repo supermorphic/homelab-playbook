@@ -1,0 +1,163 @@
+---
+name: CI
+
+"on":
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: "17 8 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    name: classify
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      depth: ${{ steps.classify.outputs.depth }}
+      run_fast: ${{ steps.classify.outputs.run_fast }}
+      run_ansible: ${{ steps.classify.outputs.run_ansible }}
+      run_molecule: ${{ steps.classify.outputs.run_molecule }}
+      paths: ${{ steps.classify.outputs.paths }}
+      reasons: ${{ steps.classify.outputs.reasons }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install locked tools
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install: true
+          cache: true
+      - name: Classify validation depth
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          classify_args=(--format github)
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            classify_args+=(
+              --base "$PR_BASE_SHA"
+              --head "$PR_HEAD_SHA"
+            )
+          else
+            classify_args+=(
+              --base HEAD
+              --head HEAD
+              --force-depth full
+            )
+          fi
+          mise exec -- python scripts/ci/classify.py "${classify_args[@]}" \
+            >> "$GITHUB_OUTPUT"
+
+  fast:
+    name: fast
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install locked tools
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install: true
+          cache: true
+      - name: Install fast Python dependencies
+        run: mise exec -- uv sync --frozen --only-group fast
+      - name: Run pull request fast validation
+        if: github.event_name == 'pull_request'
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: mise run check:fast
+      - name: Run full-history fast validation
+        if: github.event_name != 'pull_request'
+        env:
+          FULL_SECRET_SCAN: "1"
+        run: mise run check:fast
+
+  ansible:
+    name: ansible (shadow)
+    needs: classify
+    if: github.event_name == 'pull_request' || needs.classify.outputs.run_ansible == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install locked tools
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install: true
+          cache: true
+      - name: Bootstrap controller dependencies
+        run: mise run bootstrap
+      - name: Run offline Ansible validation
+        run: mise run check:ansible
+
+  merge-gate:
+    name: merge-gate
+    needs:
+      - classify
+      - fast
+      - ansible
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install locked tools
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install: true
+          cache: true
+      - name: Reconcile validation results
+        env:
+          SELECTED_DEPTH: ${{ needs.classify.outputs.depth }}
+          CLASSIFY_RESULT: ${{ needs.classify.result }}
+          FAST_RESULT: ${{ needs.fast.result }}
+          ANSIBLE_RESULT: ${{ needs.ansible.result }}
+        run: |
+          mise exec -- python scripts/ci/merge_gate.py \
+            --depth "$SELECTED_DEPTH" \
+            --classify-result "$CLASSIFY_RESULT" \
+            --fast-result "$FAST_RESULT" \
+            --ansible-result "$ANSIBLE_RESULT"
+      - name: Write validation summary
+        if: always()
+        env:
+          SELECTED_DEPTH: ${{ needs.classify.outputs.depth }}
+          REASONS: ${{ needs.classify.outputs.reasons }}
+          CLASSIFY_RESULT: ${{ needs.classify.result }}
+          FAST_RESULT: ${{ needs.fast.result }}
+          ANSIBLE_RESULT: ${{ needs.ansible.result }}
+        run: |
+          {
+            printf '%s\n\n' '### CI summary'
+            printf -- '- Selected depth: %s\n' "${SELECTED_DEPTH:-missing}"
+            printf -- '- Reasons: %s\n' "${REASONS:-missing}"
+            printf -- '- Results: classify=%s, fast=%s, ansible=%s\n' \
+              "$CLASSIFY_RESULT" "$FAST_RESULT" "$ANSIBLE_RESULT"
+          } >> "$GITHUB_STEP_SUMMARY"
