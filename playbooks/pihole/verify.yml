@@ -1,0 +1,12 @@
+---
+- name: Verify Pi-hole
+  hosts: pihole
+  become: true
+  tasks:
+  - name: Verify Pi-hole service status
+    ansible.builtin.command: pihole status
+    changed_when: false
+
+  - name: Validate Unbound configuration
+    ansible.builtin.command: unbound-checkconf /etc/unbound/unbound.conf
+    changed_when: false

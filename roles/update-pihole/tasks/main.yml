@@ -1,13 +1,7 @@
 ---
-- name: Check if Pi-hole is installed
-  ansible.builtin.command: which pihole
-  register: pihole_check
-  ignore_errors: true
+- name: Verify Pi-hole is installed and running
+  ansible.builtin.command: pihole status
   changed_when: false
-
-- name: Skip Pi-hole tasks if not installed
-  ansible.builtin.meta: end_play
-  when: pihole_check.rc != 0
 
 - name: Include DNS update tasks
   ansible.builtin.include_tasks: update-dns.yml

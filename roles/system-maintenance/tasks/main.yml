@@ -1,4 +1,10 @@
 ---
-- name: Include setup tasks for specific OS families
-  ansible.builtin.include_tasks: setup-{{ ansible_os_family }}.yml
-  when: ansible_os_family in ['Archlinux', 'Debian', 'RedHat']
+- name: Assert the host uses the supported operating system family
+  ansible.builtin.assert:
+    that:
+    - ansible_os_family == 'Debian'
+    fail_msg: >-
+      system-maintenance supports Debian-family hosts only; received {{ ansible_os_family }}
+
+- name: Include Debian setup tasks
+  ansible.builtin.include_tasks: setup-Debian.yml

@@ -3,10 +3,10 @@
   ansible.builtin.command: >-
     pihole-FTL --config dns.hosts '{{ pihole_dns_records | to_json }}'
   register: ftl_dns_hosts_response
-  changed_when: ftl_dns_hosts_response.rc != 0
+  changed_when: true
 
 - name: Update local CName records
   ansible.builtin.command: >-
     pihole-FTL --config dns.cnameRecords '{{ pihole_dns_cname_records | to_json }}'
   register: ftl_dns_cname_records_response
-  changed_when: ftl_dns_cname_records_response.rc != 0
+  changed_when: true
