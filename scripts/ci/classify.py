@@ -9,6 +9,14 @@ from collections.abc import Sequence
 
 DEPTH_ORDER = {"fast": 0, "ansible": 1, "molecule": 2, "full": 3}
 EMITTED_DEPTHS = ("fast", "ansible", "full")
+DIFF_DISCOVERY_OPTIONS = [
+    "diff",
+    "--name-status",
+    "-z",
+    "--find-renames",
+    "--find-copies",
+    "--find-copies-harder",
+]
 
 FULL_EXACT_PATHS = {
     "mise.lock",
@@ -180,29 +188,54 @@ def _resolve_commit(revision: str) -> str:
     )
 
 
+def _complete_nul_fields(output: bytes, stream_name: str) -> list[bytes]:
+    if not output:
+        return []
+    if not output.endswith(b"\0"):
+        raise GitDiscoveryError(f"Git returned unterminated {stream_name} output")
+
+    fields = output[:-1].split(b"\0")
+    if any(not field for field in fields):
+        raise GitDiscoveryError(f"Git returned an empty {stream_name} record")
+    return fields
+
+
+def _status_path_count(status: bytes) -> int:
+    if status in {b"A", b"D", b"M", b"T", b"U", b"X", b"B"}:
+        return 1
+    if status[:1] not in {b"C", b"R"}:
+        raise GitDiscoveryError("Git returned an invalid name-status token")
+
+    score = status[1:]
+    valid_score = len(score) == 3 and score.isdigit() and int(score) <= 100
+    if not valid_score:
+        raise GitDiscoveryError("Git returned an invalid copy/rename score")
+    return 2
+
+
 def _parse_name_status(output: bytes) -> list[str]:
-    fields = output.split(b"\0")
-    if fields and fields[-1] == b"":
-        fields.pop()
+    fields = _complete_nul_fields(output, "name-status")
 
     paths: list[str] = []
     index = 0
     while index < len(fields):
         status = fields[index]
         index += 1
-        if not status or status[:1] not in b"ACDMRTUXB":
-            raise GitDiscoveryError("Git returned invalid name-status output")
-
-        path_count = 2 if status[:1] in b"CR" else 1
+        path_count = _status_path_count(status)
         if index + path_count > len(fields):
             raise GitDiscoveryError("Git returned incomplete name-status output")
         for encoded_path in fields[index : index + path_count]:
-            if not encoded_path:
-                raise GitDiscoveryError("Git returned an empty changed path")
             paths.append(os.fsdecode(encoded_path))
         index += path_count
 
     return paths
+
+
+def _parse_nul_paths(output: bytes) -> list[str]:
+    return [
+        os.fsdecode(encoded_path)
+        for encoded_path in _complete_nul_fields(output, "path")
+    ]
 
 
 def discover_changes(base: str, head: str, include_worktree: bool) -> list[str]:
@@ -216,10 +249,7 @@ def discover_changes(base: str, head: str, include_worktree: bool) -> list[str]:
         _parse_name_status(
             _run_git(
                 [
-                    "diff",
-                    "--name-status",
-                    "-z",
-                    "--find-renames",
+                    *DIFF_DISCOVERY_OPTIONS,
                     merge_base,
                     resolved_head,
                     "--",
@@ -232,10 +262,7 @@ def discover_changes(base: str, head: str, include_worktree: bool) -> list[str]:
             _parse_name_status(
                 _run_git(
                     [
-                        "diff",
-                        "--name-status",
-                        "-z",
-                        "--find-renames",
+                        *DIFF_DISCOVERY_OPTIONS,
                         "--cached",
                         "--",
                     ]
@@ -245,18 +272,14 @@ def discover_changes(base: str, head: str, include_worktree: bool) -> list[str]:
         paths.update(
             _parse_name_status(
                 _run_git(
-                    ["diff", "--name-status", "-z", "--find-renames", "--"]
+                    [*DIFF_DISCOVERY_OPTIONS, "--"]
                 )
             )
         )
         untracked_output = _run_git(
             ["ls-files", "-z", "--others", "--exclude-standard", "--"]
         )
-        paths.update(
-            os.fsdecode(encoded_path)
-            for encoded_path in untracked_output.split(b"\0")
-            if encoded_path
-        )
+        paths.update(_parse_nul_paths(untracked_output))
 
     return sorted(paths)
 

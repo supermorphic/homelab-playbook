@@ -285,6 +285,67 @@ class OutputFormatTests(unittest.TestCase):
         self.assertNotIn(self.special_path, output)
 
 
+class GitOutputParserTests(unittest.TestCase):
+    def test_name_status_accepts_complete_one_and_two_path_records(self) -> None:
+        output = (
+            b"M\0docs/guide.md\0"
+            b"R057\0docs/old.md\0docs/new.md\0"
+            b"C087\0roles/source.yml\0docs/copy.yml\0"
+        )
+
+        self.assertEqual(
+            [
+                "docs/guide.md",
+                "docs/old.md",
+                "docs/new.md",
+                "roles/source.yml",
+                "docs/copy.yml",
+            ],
+            classifier._parse_name_status(output),
+        )
+        self.assertEqual([], classifier._parse_name_status(b""))
+
+    def test_name_status_rejects_every_malformed_record_shape(self) -> None:
+        malformed_outputs = {
+            "missing final NUL": b"M\0docs/guide.md",
+            "empty status": b"\0",
+            "empty path": b"M\0\0",
+            "one-path status suffix": b"Mgarbage\0docs/guide.md\0",
+            "added status suffix": b"A100\0docs/guide.md\0",
+            "rename missing score": b"R\0docs/old.md\0docs/new.md\0",
+            "rename non-padded score": b"R57\0docs/old.md\0docs/new.md\0",
+            "rename invalid score": b"Rgarbage\0docs/old.md\0docs/new.md\0",
+            "copy score above 100": b"C101\0roles/source.yml\0docs/copy.yml\0",
+            "truncated rename": b"R100\0docs/old.md\0",
+            "truncated copy": b"C100\0roles/source.yml\0",
+            "stray field": b"M\0docs/guide.md\0stray\0",
+        }
+
+        for name, output in malformed_outputs.items():
+            with self.subTest(name=name):
+                with self.assertRaises(classifier.GitDiscoveryError):
+                    classifier._parse_name_status(output)
+
+    def test_untracked_parser_accepts_only_complete_nonempty_path_records(self) -> None:
+        output = b"docs/guide.md\0docs/line\nbreak%file.md\0"
+
+        self.assertEqual(
+            ["docs/guide.md", "docs/line\nbreak%file.md"],
+            classifier._parse_nul_paths(output),
+        )
+        self.assertEqual([], classifier._parse_nul_paths(b""))
+
+        malformed_outputs = {
+            "missing final NUL": b"docs/guide.md",
+            "empty path": b"\0",
+            "empty trailing record": b"docs/guide.md\0\0",
+        }
+        for name, malformed_output in malformed_outputs.items():
+            with self.subTest(name=name):
+                with self.assertRaises(classifier.GitDiscoveryError):
+                    classifier._parse_nul_paths(malformed_output)
+
+
 class GitDiscoveryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.repository = TemporaryGitRepository()
@@ -311,6 +372,35 @@ class GitDiscoveryTests(unittest.TestCase):
             ],
             paths,
         )
+
+    def test_committed_copy_includes_unchanged_source_and_deepest_wins(self) -> None:
+        self.repository.write("docs/copied-role.yml", "---\n")
+        self.repository.commit_all("copy unchanged role source")
+
+        with working_directory(self.repository.root):
+            paths = classifier.discover_changes(self.base, "HEAD", False)
+
+        self.assertEqual(
+            ["docs/copied-role.yml", "roles/update_pihole/tasks/main.yml"],
+            paths,
+        )
+        self.assertEqual("ansible", classifier.classify_paths(paths)["depth"])
+
+    def test_staged_copy_includes_unchanged_source_and_deepest_wins(self) -> None:
+        self.repository.write("docs/staged-copied-role.yml", "---\n")
+        self.repository.git("add", "docs/staged-copied-role.yml")
+
+        with working_directory(self.repository.root):
+            paths = classifier.discover_changes("HEAD", "HEAD", True)
+
+        self.assertEqual(
+            [
+                "docs/staged-copied-role.yml",
+                "roles/update_pihole/tasks/main.yml",
+            ],
+            paths,
+        )
+        self.assertEqual("ansible", classifier.classify_paths(paths)["depth"])
 
     def test_worktree_discovery_unions_committed_staged_unstaged_and_untracked(self) -> None:
         self.repository.write("docs/committed.md", "committed\n")
@@ -389,6 +479,83 @@ class GitDiscoveryTests(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("full", json.loads(result.stdout)["depth"])
+
+    def test_malformed_successful_git_output_selects_full(self) -> None:
+        fake_git_source = """#!/usr/bin/env python3
+import os
+import sys
+
+command = sys.argv[1]
+if command in {"rev-parse", "merge-base"}:
+    sys.stdout.write("a" * 40 + "\\n")
+elif command == "diff":
+    sys.stdout.buffer.write(bytes.fromhex(os.environ["FAKE_DIFF_HEX"]))
+elif command == "ls-files":
+    sys.stdout.buffer.write(bytes.fromhex(os.environ["FAKE_UNTRACKED_HEX"]))
+else:
+    raise SystemExit(1)
+"""
+        cases = {
+            "unterminated diff": {
+                "diff": b"M\0docs/partial.md",
+                "untracked": b"",
+                "arguments": [],
+            },
+            "unterminated untracked": {
+                "diff": b"",
+                "untracked": b"docs/partial.md",
+                "arguments": ["--include-worktree"],
+            },
+        }
+
+        for name, case in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
+                temporary_root = Path(temporary)
+                fake_bin = temporary_root / "bin"
+                fake_bin.mkdir()
+                fake_git = fake_bin / "git"
+                fake_git.write_text(fake_git_source, encoding="utf-8")
+                fake_git.chmod(0o755)
+                environment = os.environ.copy()
+                environment.update(
+                    {
+                        "PATH": f"{fake_bin}{os.pathsep}{environment.get('PATH', '')}",
+                        "FAKE_DIFF_HEX": case["diff"].hex(),
+                        "FAKE_UNTRACKED_HEX": case["untracked"].hex(),
+                    }
+                )
+
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(CLASSIFIER_PATH),
+                        "--base",
+                        "base",
+                        "--head",
+                        "head",
+                        *case["arguments"],
+                        "--format",
+                        "json",
+                    ],
+                    cwd=temporary_root,
+                    env=environment,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+
+                self.assertEqual(0, result.returncode, result.stderr)
+                payload = json.loads(result.stdout)
+                self.assertEqual("full", payload["depth"])
+                self.assertEqual([], payload["paths"])
+                self.assertEqual(
+                    {
+                        "<classifier>": (
+                            "Git change discovery failed; full validation required"
+                        )
+                    },
+                    payload["reasons"],
+                )
 
 
 class ClassifierCliTests(unittest.TestCase):
