@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import subprocess
 from collections.abc import Sequence
@@ -46,9 +47,14 @@ def _print_reasons(result: dict[str, object]) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     arguments = parser.parse_args(argv)
+    resolved_base = arguments.base
+    resolved_head = arguments.head
 
     try:
-        paths = classify.discover_changes(arguments.base, arguments.head, True)
+        resolved_base, resolved_head = classify.resolve_commits(
+            arguments.base, arguments.head
+        )
+        paths = classify.discover_changes(resolved_base, resolved_head, True)
         classified_result = classify.classify_paths(paths)
         result = classify.force_depth(classified_result, arguments.force_depth)
     except classify.GitDiscoveryError:
@@ -73,12 +79,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Escalated validation depth: {classified_depth} -> {selected_depth}")
     _print_reasons(classified_result)
 
+    validation_environment = os.environ.copy()
+    validation_environment.update(
+        {
+            "CI_BASE_SHA": resolved_base,
+            "CI_HEAD_SHA": resolved_head,
+            "LOCAL_CHANGE_DIRECTED": "1",
+        }
+    )
     for command in COMMANDS[selected_depth]:
         if arguments.dry_run:
             print(f"Would run: {shlex.join(command)}")
             continue
         print(f"Running: {shlex.join(command)}", flush=True)
-        completed = subprocess.run(command, check=False)
+        completed = subprocess.run(
+            command, check=False, env=validation_environment
+        )
         if completed.returncode != 0:
             return completed.returncode
     return 0

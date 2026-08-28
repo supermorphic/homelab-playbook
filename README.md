@@ -58,6 +58,13 @@ manager. Do not commit key material or embed it in Mise configuration, helper
 scripts, or pull-request CI. Do not decrypt, print, or inspect production Vault
 values during development or validation.
 
+Public group variables live in `vars.yml`; frozen K3s version pins in
+`versions.yml` are public as well. Encrypted variables live only in the sibling
+`vault.yml` files. The active boundary is
+`inventory/production/group_vars/pihole/`, while retained K3s variables are
+under `inventory/frozen/k3s/group_vars/`. Validation may use the public files but
+never opens or passes either encrypted `vault.yml` file to a validator.
+
 ## Validation
 
 Use focused checks while iterating, then run change-directed validation before

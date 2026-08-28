@@ -188,6 +188,10 @@ def _resolve_commit(revision: str) -> str:
     )
 
 
+def resolve_commits(base: str, head: str) -> tuple[str, str]:
+    return _resolve_commit(base), _resolve_commit(head)
+
+
 def _complete_nul_fields(output: bytes, stream_name: str) -> list[bytes]:
     if not output:
         return []
@@ -239,8 +243,7 @@ def _parse_nul_paths(output: bytes) -> list[str]:
 
 
 def discover_changes(base: str, head: str, include_worktree: bool) -> list[str]:
-    resolved_base = _resolve_commit(base)
-    resolved_head = _resolve_commit(head)
+    resolved_base, resolved_head = resolve_commits(base, head)
     merge_base = _single_object_id(
         _run_git(["merge-base", resolved_base, resolved_head])
     )

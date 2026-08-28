@@ -167,6 +167,12 @@ Requirements:
 
 - each environment is directly selectable by the operator interface;
 - public variables and encrypted secret variables remain separate;
+- active Pi-hole public variables live in
+  `inventory/production/group_vars/pihole/vars.yml`, while encrypted variables
+  live in the sibling `vault.yml`;
+- frozen K3s public variables live in `vars.yml` and `versions.yml` under
+  `inventory/frozen/k3s/group_vars/`, while its encrypted variables live in the
+  exact sibling `vault.yml`;
 - frozen K3s groups and variables move together under `inventory/frozen/k3s`;
 - staging contains no placeholder claim that a VM platform exists;
 - active inventory parsing is validated offline;
@@ -233,6 +239,14 @@ Operational playbook execution is non-mutating with respect to controller
 dependencies. If required tools or roles are absent, the command fails with a
 clear instruction to run bootstrap rather than silently installing dependencies
 while preparing to modify a host.
+
+Non-mutating dependency verification rejects floating Mise tool declarations,
+checks lock consistency, runs `uv sync --frozen --check`, compares installed
+Galaxy version metadata with every exact role requirement, and compares each
+bootstrap-owned installed override byte-for-byte with its source. Bootstrap
+freshness evidence covers `uv.lock`, `requirements.yml`, and both the source and
+installed form of every override. Every actionable failure directs the operator
+to run `mise run bootstrap`.
 
 ## Operator interface
 
@@ -469,7 +483,9 @@ shows playbooks not reached by ansible-lint.
 
 The initial high-value set is:
 
-- `git diff --check`;
+- candidate whitespace validation over the pull-request merge-base range, or
+  over the committed branch range plus cached and unstaged changes for local
+  `ci:changed`; invalid Git state fails closed;
 - YAML, JSON, and TOML parsing/style;
 - `bash -n` and ShellCheck;
 - executable-script and shebang consistency;
@@ -477,15 +493,19 @@ The initial high-value set is:
 - actionlint and zizmor;
 - Apache-2.0 license presence/metadata;
 - lock/configuration consistency;
-- Gitleaks scanning of the pull-request commit range;
+- redacted Gitleaks coverage of the pull-request range on clean CI checkouts,
+  the branch range plus working tree for local `ci:changed`, full history plus
+  working tree for `ci`, and the working tree for standalone `check:fast`;
 - fast operator-wrapper unit contracts that require no Ansible target.
 
 ### `ansible` checks
 
 The initial high-value set is:
 
-- production-profile ansible-lint with warning/skip policy narrowed to justified
-  exceptions;
+- production-profile ansible-lint over the explicit tracked/cached plus
+  untracked, non-ignored, existing Ansible source set, with warning/skip policy
+  narrowed to justified exceptions and only the exact encrypted inventory inputs
+  excluded;
 - active and frozen inventory parse/graph validation;
 - playbook discovery coverage;
 - exact Galaxy dependency resolution into the repository-local path;
@@ -497,7 +517,7 @@ The initial high-value set is:
 
 The first implementation may include:
 
-- a full-history Gitleaks scan;
+- a full-history plus current-working-tree Gitleaks scan;
 - non-blocking link validation;
 - full offline validation.
 

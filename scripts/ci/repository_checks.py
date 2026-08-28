@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -16,6 +17,10 @@ APACHE_LICENSE_SIGNATURES = (
     "Version 2.0, January 2004",
 )
 NON_EXACT_TOOL_VERSIONS = {"latest", "lts", "stable", "system"}
+EXACT_TOOL_VERSION_PATTERN = re.compile(
+    r"^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$"
+)
+BOOTSTRAP_RECOVERY = "run mise run bootstrap"
 
 
 def relative_name(file_path: Path, repo_root: Path) -> str:
@@ -109,6 +114,8 @@ def exact_version(tool_value: object) -> str | None:
         return None
     if normalized.startswith(("path:", "prefix:", "ref:")):
         return None
+    if not EXACT_TOOL_VERSION_PATTERN.fullmatch(normalized):
+        return None
     return normalized
 
 
@@ -119,30 +126,41 @@ def check_mise_lock(repo_root: Path) -> list[str]:
         with (repo_root / "mise.lock").open("rb") as source:
             mise_lock = tomllib.load(source)
     except (tomllib.TOMLDecodeError, OSError):
-        return ["mise.lock: cannot verify exact tool pins"]
+        return [
+            f"mise.lock: cannot verify exact tool pins; {BOOTSTRAP_RECOVERY}"
+        ]
 
     configured_tools = mise_config.get("tools", {})
     locked_tools = mise_lock.get("tools", {})
     if not isinstance(configured_tools, dict) or not isinstance(locked_tools, dict):
-        return ["mise.lock: cannot verify exact tool pins"]
+        return [
+            f"mise.lock: cannot verify exact tool pins; {BOOTSTRAP_RECOVERY}"
+        ]
 
     errors: list[str] = []
     for tool_name, tool_value in sorted(configured_tools.items()):
         requested_version = exact_version(tool_value)
         if requested_version is None:
+            errors.append(
+                f".mise.toml: tool {tool_name} must use an exact version; "
+                f"{BOOTSTRAP_RECOVERY}"
+            )
             continue
 
         lock_entries = locked_tools.get(tool_name, [])
         if not isinstance(lock_entries, list):
             lock_entries = []
         represented = any(
-            isinstance(entry, dict) and entry.get("version") == requested_version
+            isinstance(entry, dict)
+            and entry.get("version") == requested_version
+            and isinstance(entry.get("specifiers"), list)
+            and requested_version in entry["specifiers"]
             for entry in lock_entries
         )
         if not represented:
             errors.append(
                 f"mise.lock: exact pin {tool_name}@{requested_version} "
-                "is not represented"
+                f"is not represented; {BOOTSTRAP_RECOVERY}"
             )
     return errors
 

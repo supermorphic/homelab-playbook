@@ -4,14 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
-git diff --check
-if [[ "${FULL_SECRET_SCAN:-0}" == "1" ]]; then
-  gitleaks git --redact --log-opts="--all" .
-elif [[ -n "${CI_BASE_SHA:-}" && -n "${CI_HEAD_SHA:-}" ]]; then
-  gitleaks git --redact --log-opts="${CI_BASE_SHA}..${CI_HEAD_SHA}" .
-else
-  gitleaks dir --redact .
-fi
+uv run --frozen --no-sync python scripts/ci/candidate_checks.py
 
 uv lock --check
 uv run --frozen --no-sync python -m unittest discover -s tests/ci -p 'test_*.py'

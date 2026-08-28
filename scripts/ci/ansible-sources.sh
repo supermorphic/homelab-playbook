@@ -4,15 +4,16 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
-while IFS= read -r -d '' tracked_source; do
-  case "$tracked_source" in
+while IFS= read -r -d '' candidate_source; do
+  [[ -f "$candidate_source" ]] || continue
+  case "$candidate_source" in
     inventory/frozen/k3s/group_vars/k3s_cluster/vault.yml) continue ;;
     inventory/production/group_vars/pihole/vault.yml) continue ;;
   esac
 
-  printf '%s\0' "$tracked_source"
+  printf '%s\0' "$candidate_source"
 done < <(
-  git ls-files -z -- \
+  git ls-files -z --cached --others --exclude-standard -- \
     ':(glob)playbooks/**/*.yml' \
     ':(glob)playbooks/**/*.yaml' \
     ':(glob)roles/**/*.yml' \

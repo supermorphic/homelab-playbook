@@ -173,7 +173,7 @@ The following manifests are installed during cluster bootstrap:
 
 ```yaml
 k3s_server_manifests_templates:
-  - "{{ playbook_dir }}/../../roles/kube-vip/templates/30-kube-vip-daemonset.yaml"
+  - "{{ playbook_dir }}/../../roles/kube_vip/templates/30-kube-vip-daemonset.yaml"
 
 k3s_server_manifests_urls:
   - url: "https://kube-vip.io/manifests/rbac.yaml"

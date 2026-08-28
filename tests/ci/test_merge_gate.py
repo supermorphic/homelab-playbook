@@ -93,6 +93,34 @@ def direct_mapping_block(source: str, key: str, indent: int) -> str:
     return "\n".join(lines[start:end])
 
 
+def workflow_observability_errors(source: str) -> list[str]:
+    errors: list[str] = []
+    contracts = (
+        ("Run pull request fast validation", "mise run check:fast"),
+        ("Run full-history fast validation", "mise run check:fast"),
+        ("Run offline Ansible validation", "mise run check:ansible"),
+    )
+    for step_name, command in contracts:
+        try:
+            step = named_step_block(source, step_name)
+        except AssertionError:
+            errors.append(f"{step_name}: step is missing")
+            continue
+        expected_fragments = (
+            "started_at=$SECONDS",
+            f"{command} || validation_status=$?",
+            "elapsed_seconds=$((SECONDS - started_at))",
+            f"'{command}'",
+            "Validation duration: %s seconds",
+            '>> "$GITHUB_STEP_SUMMARY"',
+            'exit "$validation_status"',
+        )
+        for fragment in expected_fragments:
+            if fragment not in step:
+                errors.append(f"{step_name}: missing {fragment}")
+    return errors
+
+
 class MergeGateReconciliationTests(unittest.TestCase):
     def assert_accepted(
         self,
@@ -345,7 +373,10 @@ class WorkflowContractTests(unittest.TestCase):
         sync = "mise exec -- uv sync --frozen --only-group fast"
         self.assertEqual(1, self.fast.count(sync))
         self.assertLess(self.fast.index(sync), self.fast.index("mise run check:fast"))
-        self.assertEqual(2, self.fast.count("mise run check:fast"))
+        self.assertEqual(
+            2,
+            self.fast.count("mise run check:fast || validation_status=$?"),
+        )
 
         pull_request_step = named_step_block(
             self.fast, "Run pull request fast validation"
@@ -384,7 +415,10 @@ class WorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("timeout-minutes: 5", self.ansible)
         self.assertEqual(1, self.ansible.count("mise run bootstrap"))
-        self.assertEqual(1, self.ansible.count("mise run check:ansible"))
+        self.assertEqual(
+            1,
+            self.ansible.count("mise run check:ansible || validation_status=$?"),
+        )
         self.assertLess(
             self.ansible.index("mise run bootstrap"),
             self.ansible.index("mise run check:ansible"),
@@ -393,6 +427,29 @@ class WorkflowContractTests(unittest.TestCase):
         for forbidden in ("secrets.", "kubeconfig", "ssh", "inventory/production"):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, lowered)
+
+    def test_validation_jobs_report_exact_commands_and_measured_durations(
+        self,
+    ) -> None:
+        self.assertEqual([], workflow_observability_errors(self.workflow))
+
+    def test_workflow_observability_contract_rejects_command_mutations(self) -> None:
+        mutations = (
+            self.workflow.replace("mise run check:fast", "mise run ci"),
+            self.workflow.replace("mise run check:ansible", "mise run ci"),
+        )
+
+        for mutated_workflow in mutations:
+            with self.subTest():
+                self.assertTrue(workflow_observability_errors(mutated_workflow))
+
+    def test_workflow_observability_contract_rejects_duration_mutation(self) -> None:
+        mutated_workflow = self.workflow.replace(
+            "elapsed_seconds=$((SECONDS - started_at))",
+            "elapsed_seconds=0",
+        )
+
+        self.assertTrue(workflow_observability_errors(mutated_workflow))
 
     def test_merge_gate_always_reconciles_classifier_and_job_results(self) -> None:
         self.assertIn("name: merge-gate", self.merge_gate)

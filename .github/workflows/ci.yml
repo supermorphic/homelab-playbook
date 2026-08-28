@@ -84,12 +84,32 @@ jobs:
         env:
           CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: mise run check:fast
+        run: |
+          started_at=$SECONDS
+          validation_status=0
+          mise run check:fast || validation_status=$?
+          elapsed_seconds=$((SECONDS - started_at))
+          {
+            printf '%s\n\n' '### fast validation'
+            printf -- "- Command: \`%s\`\n" 'mise run check:fast'
+            printf -- '- Validation duration: %s seconds\n' "$elapsed_seconds"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$validation_status"
       - name: Run full-history fast validation
         if: github.event_name != 'pull_request'
         env:
           FULL_SECRET_SCAN: "1"
-        run: mise run check:fast
+        run: |
+          started_at=$SECONDS
+          validation_status=0
+          mise run check:fast || validation_status=$?
+          elapsed_seconds=$((SECONDS - started_at))
+          {
+            printf '%s\n\n' '### fast validation'
+            printf -- "- Command: \`%s\`\n" 'mise run check:fast'
+            printf -- '- Validation duration: %s seconds\n' "$elapsed_seconds"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$validation_status"
 
   ansible:
     name: ansible
@@ -114,7 +134,17 @@ jobs:
       - name: Bootstrap controller dependencies
         run: mise run bootstrap
       - name: Run offline Ansible validation
-        run: mise run check:ansible
+        run: |
+          started_at=$SECONDS
+          validation_status=0
+          mise run check:ansible || validation_status=$?
+          elapsed_seconds=$((SECONDS - started_at))
+          {
+            printf '%s\n\n' '### Ansible validation'
+            printf -- "- Command: \`%s\`\n" 'mise run check:ansible'
+            printf -- '- Validation duration: %s seconds\n' "$elapsed_seconds"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$validation_status"
 
   merge-gate:
     name: merge-gate

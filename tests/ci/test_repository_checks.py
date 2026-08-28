@@ -140,7 +140,63 @@ class RepositoryCheckTests(unittest.TestCase):
         errors = repository_checks.check_mise_lock(self.repo_root)
 
         self.assertEqual(
-            ["mise.lock: exact pin python@3.13.14 is not represented"], errors
+            [
+                "mise.lock: exact pin python@3.13.14 is not represented; "
+                "run mise run bootstrap"
+            ],
+            errors,
+        )
+
+    def test_mise_lock_rejects_floating_tool_specs(self) -> None:
+        self.write(
+            ".mise.toml",
+            '[tools]\npython = "latest"\nuv = "0.11"\nnode = "^24.18.0"\n',
+        )
+        self.write("mise.lock", "lockfile_version = 1\n[tools]\n")
+
+        errors = repository_checks.check_mise_lock(self.repo_root)
+
+        self.assertEqual(
+            [
+                ".mise.toml: tool node must use an exact version; "
+                "run mise run bootstrap",
+                ".mise.toml: tool python must use an exact version; "
+                "run mise run bootstrap",
+                ".mise.toml: tool uv must use an exact version; "
+                "run mise run bootstrap",
+            ],
+            errors,
+        )
+
+    def test_mise_lock_requires_requested_version_in_lock_specifiers(self) -> None:
+        self.write(".mise.toml", '[tools]\npython = "3.13.14"\n')
+        self.write(
+            "mise.lock",
+            '[[tools.python]]\nversion = "3.13.14"\nspecifiers = ["latest"]\n',
+        )
+
+        errors = repository_checks.check_mise_lock(self.repo_root)
+
+        self.assertEqual(
+            [
+                "mise.lock: exact pin python@3.13.14 is not represented; "
+                "run mise run bootstrap"
+            ],
+            errors,
+        )
+
+    def test_mise_lock_parse_failure_includes_bootstrap_recovery(self) -> None:
+        self.write(".mise.toml", '[tools\npython = "3.13.14"\n')
+        self.write("mise.lock", "lockfile_version = 1\n")
+
+        errors = repository_checks.check_mise_lock(self.repo_root)
+
+        self.assertEqual(
+            [
+                "mise.lock: cannot verify exact tool pins; "
+                "run mise run bootstrap"
+            ],
+            errors,
         )
 
     def test_discovery_includes_tracked_and_untracked_nonignored_files(self) -> None:

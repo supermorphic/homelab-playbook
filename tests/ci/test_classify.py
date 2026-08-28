@@ -688,6 +688,58 @@ class ChangedRunnerTests(unittest.TestCase):
         self.assertEqual(2, result.returncode)
         self.assertIn("invalid choice: 'molecule'", result.stderr)
 
+    def test_runner_passes_resolved_range_and_local_union_mode_to_fast(self) -> None:
+        self.repository.write("docs/new.md", "documentation\n")
+        resolved_head = self.repository.git("rev-parse", "HEAD").stdout.strip()
+
+        with tempfile.TemporaryDirectory() as fake_bin_name:
+            fake_bin = Path(fake_bin_name)
+            capture_path = fake_bin / "environment.txt"
+            fake_mise = fake_bin / "mise"
+            fake_mise.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "printf '%s\\n' \"${CI_BASE_SHA-}\" \"${CI_HEAD_SHA-}\" "
+                "\"${LOCAL_CHANGE_DIRECTED-}\" > \"$ENV_CAPTURE\"\n",
+                encoding="utf-8",
+            )
+            fake_mise.chmod(0o755)
+            environment = os.environ.copy()
+            for variable in (
+                "CI_BASE_SHA",
+                "CI_HEAD_SHA",
+                "LOCAL_CHANGE_DIRECTED",
+            ):
+                environment.pop(variable, None)
+            environment.update(
+                {
+                    "ENV_CAPTURE": os.fspath(capture_path),
+                    "PATH": f"{fake_bin}{os.pathsep}{environment.get('PATH', '')}",
+                }
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(RUN_CHANGED_PATH),
+                    "--base",
+                    "HEAD",
+                    "--head",
+                    "HEAD",
+                ],
+                cwd=self.repository.root,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(
+                [resolved_head, resolved_head, "1"],
+                capture_path.read_text(encoding="utf-8").splitlines(),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
