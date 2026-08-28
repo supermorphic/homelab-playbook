@@ -1,8 +1,0 @@
----
-- name: Uninstall Argo CD
-  hosts: k3s_cluster
-  become: true
-  roles:
-    - role: argocd
-      vars:
-        argocd_state: absent

@@ -1,6 +1,0 @@
----
-- name: Patch l3d.unbound role from local
-  ansible.builtin.copy:
-    src: l3d.unbound/
-    dest: "{{ ansible_env.HOME }}/.ansible/roles/l3d.unbound/"
-    mode: '0644'

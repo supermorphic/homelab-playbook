@@ -1,8 +1,0 @@
----
-- name: Patch geerlingguy.security role from local
-  delegate_to: localhost
-  become: false
-  ansible.builtin.copy:
-    src: geerlingguy.security/
-    dest: "{{ ansible_env.HOME }}/.ansible/roles/geerlingguy.security/"
-    mode: '0644'

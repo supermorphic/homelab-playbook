@@ -1,7 +1,0 @@
-# database
-semaphore_db_name: semaphore
-
-# db backups
-db_dump_target: smb://{{ smb_user }}:{{ smb_password }}@192.168.0.3/Semaphore/mysql
-db_dump_retention: 90d
-db_dump_cron: 0 17 * * *

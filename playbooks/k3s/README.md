@@ -1,3 +1,6 @@
+> This K3s automation is retained but frozen. It is not an active deployment
+> target. CI performs static validation only and never executes these playbooks.
+
 # Kube-VIP K3s Setup
 
 ## Overview
