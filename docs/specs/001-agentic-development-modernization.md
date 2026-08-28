@@ -1,0 +1,682 @@
+# Specification 001: Agentic development modernization
+
+Status: Approved
+
+Issue: [#1 Modernize homelab-playbook for agentic development](https://github.com/supermorphic/homelab-playbook/issues/1)
+
+Approved: 2026-08-28
+
+## Purpose
+
+Modernize `homelab-playbook` into the safe, deterministic Ansible source for
+off-cluster host provisioning and configuration management. The repository must
+remain directly operable from a workstation, support future NUC #4 work, and be
+understandable to both human operators and coding agents without rewriting useful
+Ansible automation.
+
+This initiative establishes repository boundaries, lifecycle decisions, an
+operator interface, a reproducible development toolchain, Ansible-native secret
+handling, agent instructions, and fast offline validation. It does not deploy NUC
+#4 services or change production hosts.
+
+## Context
+
+The last active repository work and host provisioning occurred in December 2025.
+The only active managed service is Pi-hole on Raspberry Pi 1. The existing three
+Raspberry Pi 5 nodes previously intended for K3s are not currently running and
+will be repurposed. The repository therefore needs an audit based on current
+consumers rather than preservation of every historical executable surface.
+
+The desired long-term topology is:
+
+- two Raspberry Pi 5 systems providing redundant Technitium DNS and Tailscale
+  routing;
+- NUC #4 as the primary build/CI runner and likely VM staging host;
+- Raspberry Pi provisioning retained in this repository;
+- `homelab-talos` remaining the active Kubernetes GitOps environment;
+- the former K3s work retained as frozen human-authored Ansible automation.
+
+## Governing principles
+
+1. Preserve active and valuable automation, not obsolete execution surfaces.
+2. Keep Ansible the repository's native operational and secret-management model.
+3. Keep production execution deliberate, workstation-friendly, and separate from
+   validation.
+4. Make the repository determine required validation; do not rely on an agent or
+   author to choose a shallower test scope.
+5. Target an ordinary pull-request gate of approximately two minutes p95.
+6. Add deeper validation only for changes that can benefit from its evidence.
+7. Keep GitHub available for bootstrap and disaster recovery if Forgejo later
+   becomes canonical.
+8. Keep this repository separate from `homelab-talos` and do not create an
+   executable or documentation dependency on the retired `homelab-gitops`
+   repository.
+
+## Scope
+
+### Included
+
+- current-state and consumer audit;
+- repository lifecycle cleanup;
+- frozen K3s organization;
+- removal of Argo CD, KSOPS, SOPS, and obsolete Semaphore Compose automation;
+- Ansible Vault hardening;
+- inventory restructuring;
+- Mise and uv toolchain management;
+- a thin playbook operator interface;
+- agent, contribution, and repository documentation;
+- Apache License 2.0 standardization;
+- deterministic, change-directed GitHub Actions validation;
+- high-value repository, security, and Ansible checks;
+- documentation of a future Molecule convention;
+- follow-up boundaries for host provisioning, services, staging, and dependency
+  lifecycle.
+
+### Excluded
+
+- connecting CI to production or staging hosts;
+- decrypting production Vault content in CI;
+- deploying or updating Pi-hole, Technitium, Tailscale, NUC #4, or K3s;
+- designing the complete Technitium topology;
+- implementing a VM staging platform;
+- installing or configuring OrbStack, Podman machines, QEMU, or a NUC runner;
+- converting K3s from Argo CD to Flux;
+- migrating secrets to SOPS;
+- implementing Molecule scenarios;
+- tracking or modifying the retired `homelab-gitops` repository;
+- a generalized CI test catalog, dependency graph, or reporting platform.
+
+## Current-state audit
+
+### Active production
+
+- Raspberry Pi 1 runs Pi-hole on bare metal.
+- Pi-hole is managed through `playbooks/pihole` and related inventory/roles.
+- No repository provisioning or system-update execution has occurred since
+  December 2025.
+
+Pi-hole is transitional. It will eventually be replaced by Technitium, probably
+running through a Podman Quadlet. Modernization must keep the current path
+operable, but should not make a large new testing investment in code scheduled for
+replacement.
+
+### Frozen K3s
+
+The K3s implementation represents substantial human-authored work and remains a
+plausible long-term Kubernetes option. It is not active today and is not the
+repository's current deployment direction. It must be retained but frozen.
+
+Frozen means:
+
+- source remains versioned and readable;
+- static YAML and Ansible validation remains applicable;
+- documentation clearly describes it as non-active;
+- no playbook is executed by CI;
+- no modernization to Flux is performed;
+- no new feature work is bundled into issue #1.
+
+Argo CD is not part of the retained K3s boundary. K3s provisioning remains;
+Argo CD and KSOPS are retired.
+
+### Retired surfaces
+
+The following have no active consumer and are removed rather than archived as
+executable automation:
+
+- Argo CD install/uninstall automation and documentation;
+- KSOPS and repository SOPS configuration or scripts;
+- SOPS-encrypted content in this repository;
+- obsolete Semaphore Docker Compose deployment automation;
+- documentation describing removed commands or directory layouts;
+- rendered Helm helper code whose only consumer was the retired Argo path.
+
+Removal is verified during implementation through search, configuration review,
+and the final diff. CI will not retain permanent checks that merely forbid names
+of removed technologies.
+
+### Existing quality concerns
+
+The audit identified several gaps that the implementation plan must address:
+
+- no GitHub Actions validation exists;
+- the README describes Podman files and command paths that do not exist;
+- existing lint configuration turns important reliability rules into warnings or
+  skips them;
+- the active Pi-hole path has no repository-owned verification playbook;
+- an absent Pi-hole installation can end a play successfully rather than fail an
+  expected-service check;
+- Pi-hole DNS update change reporting conflates failure with change;
+- system maintenance silently skips unsupported operating systems;
+- SSH host-key checking is disabled globally;
+- validation is concentrated in retiring Argo and Semaphore code;
+- Ansible Galaxy dependencies and controller dependencies are not managed through
+  one reproducible toolchain.
+
+These findings guide modernization. They do not authorize production execution.
+
+## Repository responsibility
+
+`homelab-playbook` owns:
+
+- Debian host bootstrap and lifecycle configuration outside Kubernetes;
+- Raspberry Pi provisioning;
+- Podman and Quadlet host foundations;
+- off-cluster DNS, routing, automation, Git, TLS, backup, and runner hosts;
+- Ansible inventories, roles, playbooks, Vault content, and operator workflows;
+- offline validation of those sources.
+
+`homelab-talos` owns the active Talos/Kubernetes GitOps environment and its SOPS
+boundary. No SOPS handoff is needed inside this repository.
+
+The old `homelab-gitops` repository is retired independently. This repository
+must contain no runtime or documentation references to it.
+
+## Supported operating systems
+
+The maintained production target is deliberately narrow:
+
+- Debian 13 for NUC and general-purpose hosts;
+- Raspberry Pi OS based on Debian for Raspberry Pi hosts.
+
+Arch Linux and Red Hat-family logic may remain only where it is useful historical
+or experimental source. It is not a validated production contract until a real
+consumer and test target are approved. Unsupported production paths should fail
+clearly rather than silently skip required work.
+
+## Inventory design
+
+The target inventory layout is:
+
+```text
+inventory/
+├── production/
+├── staging/
+└── frozen/
+    └── k3s/
+```
+
+Requirements:
+
+- each environment is directly selectable by the operator interface;
+- public variables and encrypted secret variables remain separate;
+- frozen K3s groups and variables move together under `inventory/frozen/k3s`;
+- staging contains no placeholder claim that a VM platform exists before the
+  follow-up initiative implements one;
+- active inventory parsing is validated offline;
+- CI never contacts hosts named in any inventory.
+
+## Secrets design
+
+Ansible Vault remains the only encryption format in this repository.
+
+### Rationale
+
+Ansible Vault follows the natural playbook execution path, avoids a collection or
+external decryption integration, and remains useful after Argo CD and KSOPS are
+removed. SOPS remains appropriate in `homelab-talos`, where GitOps controllers
+consume encrypted Kubernetes material, but it adds no durable consumer here.
+
+Both Ansible Vault and SOPS require external key material. The Vault password or
+password retrieval mechanism remains in the operator's password manager and is
+never committed, embedded in Mise configuration, printed by helper scripts, or
+made available to pull-request CI.
+
+### Requirements
+
+- encrypted variables use Ansible Vault;
+- public variables live outside encrypted files;
+- secret filenames and variable boundaries are documented;
+- production Vault material is never used by CI;
+- CI validates Vault integration with an ephemeral generated password and fixture;
+- scripts must not dump the environment;
+- examples contain no real addresses, tokens, passwords, or private keys beyond
+  information intentionally public in inventory;
+- GitHub secret scanning is supplemented by Gitleaks.
+
+## Licensing
+
+Replace the existing GPL-3.0 license with Apache License 2.0 and identify the
+repository as Apache-2.0 in documentation. This standardizes licensing with
+`homelab-talos` while preserving an explicit public-repository license and adding
+Apache's patent grant.
+
+## Reproducible toolchain
+
+### Mise
+
+Mise is the canonical task and tool entry point. It pins the controller runtime
+and supporting command-line tools and exposes memorable repository tasks.
+
+Mise does not store production credentials, Vault passwords, SSH material, or
+host-specific secrets.
+
+### Python and uv
+
+- Mise pins Python and uv.
+- uv manages and locks Python dependencies, including Ansible and ansible-lint.
+- the uv lock is committed and checked for consistency.
+- Galaxy roles and collections remain declared with exact versions in
+  `requirements.yml` and install into a repository-local path.
+- controller and Galaxy dependency installation is explicit and reproducible.
+
+### Bootstrap
+
+`mise run bootstrap` installs or validates the locked development dependencies.
+It is explicit and may access package and Galaxy sources.
+
+Operational playbook execution is non-mutating with respect to controller
+dependencies. If required tools or roles are absent, the command fails with a
+clear instruction to run bootstrap rather than silently installing dependencies
+while preparing to modify a host.
+
+## Operator interface
+
+The canonical playbook command is:
+
+```text
+mise run playbook -- <playbook> <action> <inventory> [ansible-args...]
+```
+
+Examples:
+
+```bash
+mise run playbook -- pihole update production
+mise run playbook -- pihole update production --limit pi1 --check
+mise run playbook -- os provision staging -vv
+```
+
+The command resolves the repository root, validates the selected playbook and
+inventory, checks dependencies, and then replaces itself with `ansible-playbook`.
+All arguments following the first three positional arguments are forwarded
+unchanged.
+
+### Thin shell alias
+
+Retain an executable repository-root alias named `run-playbook`:
+
+```text
+./run-playbook <playbook> <action> <inventory> [ansible-args...]
+```
+
+It may only:
+
+1. locate the repository root;
+2. verify that Mise is available;
+3. replace itself with the canonical Mise task while forwarding `"$@"` exactly.
+
+It must not duplicate playbook resolution, inventory resolution, dependency
+installation, prompts, Vault policy, or Ansible flags. The current `run.sh` is
+replaced after contract tests prove equivalent intended argument forwarding.
+
+## Agent workflow
+
+Repository-root `AGENTS.md` provides the authoritative contribution workflow for
+coding agents. It must describe:
+
+- issue, branch, worktree, design, and implementation-plan expectations;
+- preservation of user changes in a dirty worktree;
+- no production or staging execution without explicit operator direction;
+- no decryption or inspection of production secrets;
+- use of repository-owned Mise tasks;
+- focused validation while iterating;
+- final change-directed validation before claiming completion;
+- escalation to full validation when classification is uncertain;
+- documentation and lifecycle expectations for new automation.
+
+Agents do not choose the minimum sufficient CI depth. They run:
+
+```bash
+mise run ci:changed
+```
+
+The repository classifier selects and executes the required checks. An agent may
+run a deeper command voluntarily, but cannot de-escalate the classifier result.
+
+## Validation architecture
+
+### Objective
+
+The ordinary required pull-request gate targets approximately two minutes p95.
+Validation first provides the smallest relevant, nonduplicated, deterministic
+evidence. Deeper execution is conditional on changes that can benefit from it.
+
+### Validation depths
+
+The architecture defines four ordered depths:
+
+```text
+fast < ansible < molecule < full
+```
+
+When multiple paths change, the deepest selected depth wins.
+
+#### `fast`
+
+Runs on every pull request and covers repository hygiene, controller-independent
+file validation, and security checks.
+
+Initial target: no more than 60 seconds on a warm GitHub runner path.
+
+#### `ansible`
+
+Runs when active or frozen Ansible inventories, playbooks, roles, configuration,
+or their direct validation fixtures change. It includes `fast` evidence plus
+Ansible-specific static and contract checks.
+
+Initial target: complete required gate no more than 120 seconds on the ordinary
+warm path.
+
+#### `molecule`
+
+Reserved for executable testing of explicitly mapped first-party roles. It will
+include `ansible` evidence plus affected Molecule scenarios.
+
+Issue #1 documents this convention but does not install Molecule, add a scenario,
+add a CI job, or add placeholder classifier mappings. The first durable
+first-party role that benefits from converge, idempotence, and verification tests
+introduces the implementation through its own approved work.
+
+An initial scenario will conventionally live at:
+
+```text
+roles/<role>/molecule/<scenario>/
+```
+
+and expose a future command shaped as:
+
+```text
+mise run check:molecule -- <role>/<scenario>
+```
+
+Container scenarios do not claim to validate Raspberry Pi hardware, ARM behavior
+on x86, firmware, reboot behavior, real routing/DNS failover, or production
+networking. Those require VM or hardware staging.
+
+#### `full`
+
+Runs all implemented offline validation. It is selected for CI, classifier,
+toolchain, lock, dependency, and unknown-path changes and is available through
+manual and scheduled execution.
+
+Until Molecule scenarios exist, `full` is `fast + ansible` and retains the same
+approximately two-minute objective.
+
+### Public commands
+
+```text
+mise run check:fast
+mise run check:ansible
+mise run ci:changed
+mise run ci:changed -- --dry-run
+mise run ci
+```
+
+- `check:fast` and `check:ansible` are focused development commands.
+- `ci:changed` discovers, explains, and executes the required depth.
+- `ci:changed -- --dry-run` classifies and explains without executing.
+- `ci` forces all currently implemented offline validation.
+- there is no public `ci:plan` task.
+
+### Classifier
+
+A small dependency-free repository script is the only source of path
+classification. Mise and GitHub Actions call the same script. The workflow YAML
+does not duplicate path knowledge.
+
+Local classification includes the union of:
+
+- committed changes from the merge base through `HEAD`;
+- staged changes;
+- unstaged tracked changes;
+- untracked, non-ignored files;
+- both old and new paths for renames.
+
+GitHub classification uses the pull request merge base and complete candidate.
+Missing bases, invalid output, ambiguous mappings, or unknown paths select `full`.
+Changes to the classifier or its tests also select `full`.
+
+Initial mappings are conceptually:
+
+| Change | Depth |
+|---|---|
+| documentation, license, repository metadata | `fast` |
+| shell/operator helpers | `fast` |
+| playbooks, roles, active/frozen inventory, Ansible configuration | `ansible` |
+| requirements, Mise/uv locks, CI workflow, classifier | `full` |
+| unknown path | `full` |
+| future explicitly mapped executable role | `molecule` |
+
+The final mapping follows the implemented target tree and is covered by
+table-driven tests. The classifier should remain understandable as a small script;
+it must not become a generalized test catalog or dependency graph.
+
+### GitHub Actions topology
+
+One workflow always triggers for pull requests targeting the protected branch. It
+must not use top-level path filters.
+
+```text
+classify
+   ├── fast (always) ───────────┐
+   ├── ansible (conditional) ───┤
+   └── molecule (future only) ──┤
+                                └── merge-gate (always)
+```
+
+Only `merge-gate` is required by branch protection. It runs with `always()`,
+validates classifier output, and reconciles the result of every selected job. A
+job skipped because it was not selected is acceptable; a selected job that is
+skipped, cancelled, or failed makes the gate fail.
+
+Workflow requirements:
+
+- read-only permissions by default;
+- SHA-pinned third-party actions;
+- `persist-credentials: false` where applicable;
+- cancellation of superseded runs for the same pull request;
+- bounded job timeouts;
+- no production credentials, Vault password, SSH key, kubeconfig, or host access;
+- no cached passing result used as evidence;
+- concise GitHub summary containing selected depth, reasons, commands, and
+  per-group duration;
+- no JUnit, Allure, permanent result catalog, or report artifact unless a future
+  measured consumer justifies it.
+
+### Canonical validation ownership
+
+Each invariant runs once:
+
+- yamllint owns general YAML syntax/style;
+- ansible-lint owns Ansible semantics and syntax under the production profile;
+- inventory validation owns inventory parsing and group/host resolution;
+- ShellCheck and `bash -n` own shell semantics and parsing;
+- wrapper contract tests own operator argument and failure behavior;
+- the Vault fixture owns secret integration behavior;
+- Gitleaks owns broad repository secret-pattern detection;
+- actionlint and zizmor own GitHub workflow correctness and security analysis.
+
+Pre-commit may remain a local convenience, but CI does not run a pre-commit hook
+and then rerun the same validator separately. A separate blanket
+`ansible-playbook --syntax-check` pass is added only if a measured coverage audit
+shows playbooks not reached by ansible-lint.
+
+### `fast` checks
+
+The initial high-value set is:
+
+- `git diff --check`;
+- YAML, JSON, and TOML parsing/style;
+- `bash -n` and ShellCheck;
+- executable-script and shebang consistency;
+- Markdown lint and codespell;
+- actionlint and zizmor;
+- Apache-2.0 license presence/metadata;
+- lock/configuration consistency;
+- Gitleaks scanning of the pull-request commit range;
+- fast operator-wrapper unit contracts that require no Ansible target.
+
+### `ansible` checks
+
+The initial high-value set is:
+
+- production-profile ansible-lint with warning/skip policy narrowed to justified
+  exceptions;
+- active and frozen inventory parse/graph validation;
+- playbook discovery coverage;
+- exact Galaxy dependency resolution into the repository-local path;
+- operator-wrapper integration contracts;
+- an ephemeral Ansible Vault fixture covering creation, encryption, decryption,
+  and playbook consumption without production material.
+
+### Scheduled/manual checks
+
+The first implementation may include:
+
+- a full-history Gitleaks scan;
+- non-blocking link validation;
+- full offline validation.
+
+Dependency freshness belongs to issue #8. Live health checks, VM staging, and
+hardware validation are outside pull-request CI.
+
+### Measurement and activation
+
+Before selective execution is accepted, the completed workflow runs the retained
+`fast + ansible` suite repeatedly on one unchanged candidate while the classifier
+records what it would have selected. Collect at least:
+
+- five GitHub workflow samples;
+- three local samples.
+
+Record setup, validation, and reporting separately. Report minimum, median,
+maximum, individual samples, and a provisional p95 with its small-sample
+limitation. Enable selective execution only after classifier fixtures and observed
+plans agree.
+
+If the ordinary gate misses the approximately two-minute target, optimize in this
+order:
+
+1. delete checks without a current invariant or consumer;
+2. remove duplicate execution;
+3. reduce dependency and process startup;
+4. improve the retained implementation;
+5. use bounded parallelism only after isolation is demonstrated;
+6. remeasure the complete gate.
+
+Do not introduce a generalized affected-target planner unless measured retained,
+unrelated validation later dominates runtime.
+
+## VM staging direction
+
+VM staging is a separate initiative. Its purpose is to execute playbooks against
+disposable Debian targets before real hardware deployment.
+
+Current direction:
+
+- NUC #4 is the preferred canonical x86 VM staging and CI host because it is
+  always available and does not consume the developer workstation;
+- the M3 MacBook may provide optional local ARM smoke testing, but must not become
+  the required staging environment;
+- one Raspberry Pi 5 may be evaluated as an ARM CI runner, but keeping it requires
+  a measured workload and benefit; it is not assumed merely because hardware is
+  available;
+- OrbStack, Podman machine, Lima, QEMU, libvirt, and other candidates must be
+  compared against reproducibility, architecture coverage, automation, isolation,
+  cost, and operator ergonomics;
+- CI container tests must not be described as equivalent to VM or Raspberry Pi
+  validation.
+
+Create a separate tracked issue for this investigation. No staging-platform choice
+or hardware sale decision is made by issue #1.
+
+## Follow-up issue boundaries
+
+Modernization prepares but does not absorb the existing follow-up initiatives:
+
+- issue #2: bootstrap NUC #4 Debian host with Ansible;
+- issue #3: establish NUC #4 Podman and Quadlet foundation;
+- issue #4: Semaphore infrastructure automation on the new foundation;
+- issue #5: out-of-cluster trusted TLS automation;
+- issue #6: Talos upgrade orchestration;
+- issue #7: Forgejo self-hosted Git;
+- issue #8: Renovate lifecycle for off-cluster infrastructure;
+- issue #9: off-cluster backup and disaster recovery;
+- a new issue: disposable multi-architecture VM staging and runner evaluation.
+
+## Migration sequence
+
+The implementation plan must preserve reviewable boundaries:
+
+1. establish repository documentation, contribution/agent policy, license, and
+   reproducible toolchain;
+2. add contract tests around the existing operator behavior;
+3. introduce the Mise playbook task and thin `run-playbook` alias;
+4. establish deterministic `fast`, `ansible`, and `full` validation;
+5. baseline and activate change-directed CI with the stable merge gate;
+6. restructure active and frozen inventories with parse validation;
+7. remove Argo CD, KSOPS, SOPS, obsolete Semaphore Compose, and orphaned helpers;
+8. harden Ansible Vault and active-role failure/change semantics;
+9. reconcile all documentation and run final validation;
+10. create the separate VM staging investigation issue.
+
+The plan may reorder adjacent steps where tests require it, but must not mix
+production deployment into repository modernization.
+
+## Acceptance criteria
+
+Issue #1 is complete when:
+
+1. repository responsibilities and current consumers are accurately documented;
+2. Apache License 2.0 replaces GPL-3.0 and repository documentation identifies it;
+3. Argo CD, KSOPS, SOPS, obsolete Semaphore Compose, and their orphaned helpers are
+   removed without permanent absence checks;
+4. K3s inventory remains under `inventory/frozen/k3s`, its playbooks remain
+   retained, and both receive static validation without CI execution;
+5. active inventory is divided into production and staging boundaries and parses
+   offline;
+6. Ansible Vault is the only repository encryption format, with an ephemeral CI
+   fixture and no production key material;
+7. Mise and uv pin the controller toolchain and `mise run bootstrap` establishes
+   exact dependencies;
+8. `mise run playbook -- <playbook> <action> <inventory> [ansible-args...]` is the
+   canonical operator command;
+9. `run-playbook` is a tested ultra-thin alias and the stale `run.sh` interface is
+   retired;
+10. `AGENTS.md` makes repository-owned validation and production-safety boundaries
+    explicit;
+11. GitHub Actions always runs `fast`, conditionally runs `ansible`, selects `full`
+    for broad or ambiguous changes, and exposes one stable `merge-gate`;
+12. `mise run ci:changed` classifies and executes local committed and working-tree
+    changes, and `--dry-run` explains without executing;
+13. initial CI measurement is recorded and the ordinary gate is evaluated against
+    the approximately two-minute p95 target;
+14. Molecule is documented as a future conditional convention but is not installed
+    or implemented;
+15. no validation contacts a live host or uses production secrets;
+16. README examples match files and commands that actually exist;
+17. the separate VM staging and ARM-runner investigation is tracked;
+18. all implementation-plan verification commands pass from a clean checkout.
+
+## Decision record
+
+The following decisions are approved and should not be reopened during
+implementation without new evidence:
+
+- keep the repository separate from `homelab-talos`;
+- use Apache-2.0;
+- retain Ansible Vault rather than migrate to SOPS;
+- retire Argo CD and KSOPS completely;
+- retain but freeze K3s;
+- do not reference `homelab-gitops`;
+- retire obsolete Semaphore Compose automation;
+- use `frozen/`, not `frozen-k3s/`, as the inventory lifecycle directory;
+- make Mise the canonical operator/task interface;
+- retain a thin `run-playbook` shell alias;
+- keep bootstrap explicit and playbook execution dependency-non-mutating;
+- support Debian 13 and Raspberry Pi OS/Debian as the maintained production
+  targets;
+- use deterministic `fast`, `ansible`, `molecule`, and `full` validation depths;
+- expose `ci:changed`, not a separate public `ci:plan` command;
+- document Molecule now but implement it only with a suitable future role;
+- target an ordinary required CI duration of approximately two minutes p95;
+- investigate VM staging separately, with NUC #4 as the leading canonical host.
