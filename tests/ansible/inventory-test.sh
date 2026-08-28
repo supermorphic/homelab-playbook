@@ -8,7 +8,14 @@ trap 'rm -rf -- "$inventory_test_root"' EXIT
 
 printf '%s\n' '[defaults]' > "$inventory_test_root/ansible.cfg"
 export ANSIBLE_CONFIG="$inventory_test_root/ansible.cfg"
-unset ANSIBLE_VAULT_IDENTITY_LIST ANSIBLE_VAULT_PASSWORD_FILE
+unset \
+  ANSIBLE_ASK_VAULT_PASS \
+  ANSIBLE_VAULT_ENCRYPT_IDENTITY \
+  ANSIBLE_VAULT_ENCRYPT_SALT \
+  ANSIBLE_VAULT_IDENTITY \
+  ANSIBLE_VAULT_IDENTITY_LIST \
+  ANSIBLE_VAULT_ID_MATCH \
+  ANSIBLE_VAULT_PASSWORD_FILE
 
 mkdir -p \
   "$inventory_test_root/production/group_vars/pihole" \

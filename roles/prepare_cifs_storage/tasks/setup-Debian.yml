@@ -17,11 +17,9 @@
   changed_when: prepare_cifs_storage_pkg_install.changed
 
 - name: Load required kernel module dm_crypt
-  ansible.builtin.modprobe:
-    name: dm_crypt
-    state: present
-  register: prepare_cifs_storage_mod_dmcrypt
-  ignore_errors: true
+  ansible.builtin.command: modprobe dm_crypt
+  changed_when: false
+  failed_when: false
 
 - name: Ensure dm_crypt module is loaded on boot
   ansible.builtin.lineinfile:
@@ -45,7 +43,6 @@
   ansible.builtin.set_fact:
     prepare_cifs_storage_reboot_needed: >-
       {{ prepare_cifs_storage_pkg_install.changed
-        or prepare_cifs_storage_mod_dmcrypt.changed
         or prepare_cifs_storage_module_boot.changed }}
 
 - name: Trigger reboot if configuration changed

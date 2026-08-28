@@ -22,6 +22,43 @@ def load_tasks(relative_path: str) -> list[dict[str, object]]:
 
 
 class SourceContractTests(unittest.TestCase):
+    def test_frozen_k3s_manifest_templates_resolve_to_files(self) -> None:
+        """Every configured local K3s manifest template must exist."""
+        variables = load_yaml_documents(
+            "inventory/frozen/k3s/group_vars/k3s_cluster/vars.yml"
+        )[0]
+        playbook_dir = REPOSITORY_ROOT / "playbooks/k3s"
+        template_prefix = "{{ playbook_dir }}/"
+        configured_templates = variables.get("k3s_server_manifests_templates")
+
+        self.assertIsInstance(configured_templates, list)
+        self.assertTrue(configured_templates)
+        for configured_template in configured_templates:
+            self.assertTrue(configured_template.startswith(template_prefix))
+            relative_template = configured_template.removeprefix(template_prefix)
+            resolved_template = (playbook_dir / relative_template).resolve()
+            self.assertTrue(resolved_template.is_relative_to(REPOSITORY_ROOT))
+            self.assertTrue(
+                resolved_template.is_file(),
+                f"configured K3s manifest template does not exist: {relative_template}",
+            )
+
+    def test_cifs_module_load_uses_available_builtin_with_truthful_status(self) -> None:
+        """The best-effort module load must use a resolved action without changes."""
+        tasks = load_tasks("roles/prepare_cifs_storage/tasks/setup-Debian.yml")
+        module_load_tasks = [
+            task
+            for task in tasks
+            if task["name"] == "Load required kernel module dm_crypt"
+        ]
+
+        self.assertEqual(len(module_load_tasks), 1)
+        module_load = module_load_tasks[0]
+        self.assertEqual(module_load.get("ansible.builtin.command"), "modprobe dm_crypt")
+        self.assertIs(module_load.get("changed_when"), False)
+        self.assertIs(module_load.get("failed_when"), False)
+        self.assertNotIn("ignore_errors", module_load)
+
     def test_system_maintenance_asserts_debian_before_include(self) -> None:
         """Unsupported operating systems must fail before Debian tasks are included."""
         tasks = load_tasks("roles/system_maintenance/tasks/main.yml")

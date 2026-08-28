@@ -17,7 +17,14 @@ chmod 0600 "$password_file"
 printf '%s\n' 'fixture_secret: ephemeral-ci-value' > "$vars_file"
 printf '%s\n' '[defaults]' > "$ansible_config"
 export ANSIBLE_CONFIG="$ansible_config"
-unset ANSIBLE_VAULT_IDENTITY_LIST ANSIBLE_VAULT_PASSWORD_FILE
+unset \
+  ANSIBLE_ASK_VAULT_PASS \
+  ANSIBLE_VAULT_ENCRYPT_IDENTITY \
+  ANSIBLE_VAULT_ENCRYPT_SALT \
+  ANSIBLE_VAULT_IDENTITY \
+  ANSIBLE_VAULT_IDENTITY_LIST \
+  ANSIBLE_VAULT_ID_MATCH \
+  ANSIBLE_VAULT_PASSWORD_FILE
 
 uv run --frozen --no-sync ansible-vault encrypt \
   --vault-password-file "$password_file" \

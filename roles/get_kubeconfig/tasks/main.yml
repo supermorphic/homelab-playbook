@@ -3,7 +3,7 @@
   ansible.builtin.file:
     path: "{{ ansible_user_dir }}/.kube"
     state: directory
-    mode: 0700
+    mode: '0700'
 
 - name: Set primary K3s cluster facts
   ansible.builtin.set_fact:
@@ -26,7 +26,7 @@
   ansible.builtin.copy:
     src: /tmp/kubeconfig
     dest: "{{ ansible_user_dir }}/.kube/config"
-    mode: 0600
+    mode: '0600'
 
 - name: Configure kubectl cluster for K3s VIP address
   ansible.builtin.command: >-

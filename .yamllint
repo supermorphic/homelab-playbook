@@ -8,6 +8,11 @@ ignore: |
   inventory/frozen/k3s/group_vars/k3s_cluster/vault.yml
   inventory/production/group_vars/pihole/vault.yml
 rules:
+  braces:
+    max-spaces-inside: 1
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: false
   document-start:
     present: true
     level: error
@@ -17,5 +22,8 @@ rules:
   line-length:
     max: 160
     level: warning
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true
   trailing-spaces:
     level: error

@@ -4,7 +4,3 @@ exclude_paths:
   - .ansible/
   - .venv/
   - .tmp/
-
-skip_list:
-  # Generated and human-frozen K3s content is clearer preserved than wrapped.
-  - yaml[line-length]
