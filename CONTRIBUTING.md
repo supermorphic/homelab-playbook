@@ -35,6 +35,27 @@ mise run ci
 `ci:changed` classifies committed and working-tree changes and runs the minimum
 required depth. `ci` forces all currently implemented offline validation.
 
+## Pull-request workflow
+
+Work from an issue-backed feature branch; do not commit or push directly to
+`main`. Fetch and inspect both the remote feature branch and `origin/main`
+before each push. Open a pull request, keep it current, wait for `merge-gate`,
+and squash merge only with explicit operator authority for that merge or
+auto-merge action.
+
+Use the read-only live protection commands when repository-administration
+access is available:
+
+```bash
+mise run github-protection:check
+mise run github-protection:plan
+```
+
+These commands are outside offline validation. A plan and the apply confirmation
+do not authorize a change. Follow the
+[GitHub main protection guide](docs/guides/github-main-protection.md) for the
+exact desired state, guarded apply, read-back, and recovery procedure.
+
 Molecule is reserved as a future convention for scenarios under
 `roles/<role>/molecule/<scenario>/`. No Molecule task, dependency, scenario, or
 CI job is currently implemented.

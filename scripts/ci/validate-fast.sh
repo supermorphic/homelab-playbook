@@ -8,6 +8,7 @@ uv run --frozen --no-sync python scripts/ci/candidate_validation.py
 
 uv lock --check
 uv run --frozen --no-sync python -m unittest discover -s tests/ci -p 'test_*.py'
+uv run --frozen --no-sync python -m unittest discover -s tests/repository -p 'test_*.py'
 uv run --frozen --no-sync python -m unittest discover -s tests/toolchain -p 'test_*.py'
 uv run --frozen --no-sync python scripts/ci/repository_validation.py
 uv run --frozen --no-sync yamllint --strict .

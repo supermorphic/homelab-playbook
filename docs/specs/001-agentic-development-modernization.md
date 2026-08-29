@@ -544,6 +544,13 @@ refuses duplicate managed Rulesets or unexpected effective rules rather than
 guessing. Live protection checks remain outside offline CI because they require
 authenticated repository-administration access.
 
+The implemented desired-state module is
+`scripts/repository/github_protection.py`. It uses only the Python standard
+library and the Mise-pinned GitHub CLI, keeps the discovered integration
+identifier transient, and exposes pure protection tests through fast offline
+validation. Apply recollects immediately before its planned writes and performs
+a complete API read-back before reporting success.
+
 Repository policy independently requires feature-branch publication, forbids
 committing or pushing directly to `main`, requires explicit authorization for a
 merge or auto-merge action, and requires inspecting the remote feature branch and

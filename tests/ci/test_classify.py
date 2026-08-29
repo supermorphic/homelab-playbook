@@ -121,7 +121,10 @@ class PathClassificationTests(unittest.TestCase):
             "scripts/ci/classify.py": "full",
             "scripts/ci/validate-fast.sh": "full",
             "tests/ci/test_classify.py": "full",
+            "scripts/repository/github_protection.py": "full",
+            "tests/repository/test_github_protection.py": "full",
             "tests/ansible/inventory-test.sh": "full",
+            "docs/guides/github-main-protection.md": "fast",
             "unknown/new-surface.txt": "full",
         }
 
@@ -130,6 +133,19 @@ class PathClassificationTests(unittest.TestCase):
                 depth, reason = classifier.classify_path(path)
                 self.assertEqual(expected_depth, depth)
                 self.assertTrue(reason)
+
+    def test_github_protection_implementation_has_explicit_full_ownership(self) -> None:
+        expected = (
+            "full",
+            "GitHub protection tooling changes require full validation",
+        )
+
+        for path in (
+            "scripts/repository/github_protection.py",
+            "tests/repository/test_github_protection.py",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(expected, classifier.classify_path(path))
 
     def test_current_security_validation_and_renamed_role_mappings(self) -> None:
         mappings = {

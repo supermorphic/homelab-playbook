@@ -33,10 +33,39 @@ class CommandLifecycleTests(unittest.TestCase):
             <= task_names
         )
         self.assertTrue(
+            {
+                "github-protection:check",
+                "github-protection:plan",
+                "github-protection:apply",
+            }
+            <= task_names
+        )
+        self.assertTrue(
             {"check:fast", "check:ansible", "check:molecule"}.isdisjoint(
                 published_names
             )
         )
+
+    def test_github_protection_tasks_publish_distinct_lifecycle_commands(
+        self,
+    ) -> None:
+        result = subprocess.run(
+            ["mise", "tasks", "--json"],
+            cwd=REPOSITORY_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        tasks = {task["name"]: task for task in json.loads(result.stdout)}
+
+        for mode in ("check", "plan", "apply"):
+            task = tasks[f"github-protection:{mode}"]
+            command = "\n".join(task["run"])
+            self.assertIn(
+                f"scripts/repository/github_protection.py {mode}",
+                command,
+            )
+            self.assertIn("uv run --frozen --no-sync python", command)
 
 
 if __name__ == "__main__":

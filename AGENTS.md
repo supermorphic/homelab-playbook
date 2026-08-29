@@ -10,6 +10,9 @@
 ## Development lifecycle
 
 - Use one issue and isolated branch/worktree per initiative.
+- Never commit or push directly to `main`; use an issue-backed feature branch.
+- Fetch and inspect both the remote feature branch and `origin/main` before each push.
+- Merge or enable auto-merge only with explicit operator authority for that action.
 - Durable design specifications live under `docs/specs/` with three-digit identifiers.
 - Transient implementation plans live uncommitted under `.tmp/plans/`.
 - Reconcile an active specification with material implementation changes before merge.
