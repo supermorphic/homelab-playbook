@@ -1,0 +1,73 @@
+---
+- name: Inspect operating system
+  hosts: servers
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Gather allowlisted operating-system facts
+      ansible.builtin.setup:
+        gather_subset:
+          - '!all'
+          - '!min'
+          - architecture
+          - distribution
+          - distribution_release
+          - distribution_version
+          - kernel
+          - os_family
+          - pkg_mgr
+          - python_version
+          - service_mgr
+          - virtualization_role
+          - virtualization_type
+        filter:
+          - ansible_architecture
+          - ansible_distribution
+          - ansible_distribution_release
+          - ansible_distribution_version
+          - ansible_kernel
+          - ansible_os_family
+          - ansible_pkg_mgr
+          - ansible_python_version
+          - ansible_service_mgr
+          - ansible_virtualization_role
+          - ansible_virtualization_type
+      register: inspected_host
+      no_log: true
+
+    - name: Report operating-system facts
+      ansible.builtin.debug:
+        msg:
+          architecture: >-
+            {{ inspected_host.ansible_facts.ansible_architecture
+               | default('unknown', true) }}
+          distribution: >-
+            {{ inspected_host.ansible_facts.ansible_distribution
+               | default('unknown', true) }}
+          distribution_release: >-
+            {{ inspected_host.ansible_facts.ansible_distribution_release
+               | default('unknown', true) }}
+          distribution_version: >-
+            {{ inspected_host.ansible_facts.ansible_distribution_version
+               | default('unknown', true) }}
+          kernel: >-
+            {{ inspected_host.ansible_facts.ansible_kernel
+               | default('unknown', true) }}
+          os_family: >-
+            {{ inspected_host.ansible_facts.ansible_os_family
+               | default('unknown', true) }}
+          pkg_mgr: >-
+            {{ inspected_host.ansible_facts.ansible_pkg_mgr
+               | default('unknown', true) }}
+          python_version: >-
+            {{ inspected_host.ansible_facts.ansible_python_version
+               | default('unknown', true) }}
+          service_mgr: >-
+            {{ inspected_host.ansible_facts.ansible_service_mgr
+               | default('unknown', true) }}
+          virtualization_role: >-
+            {{ inspected_host.ansible_facts.ansible_virtualization_role
+               | default('unknown', true) }}
+          virtualization_type: >-
+            {{ inspected_host.ansible_facts.ansible_virtualization_type
+               | default('unknown', true) }}

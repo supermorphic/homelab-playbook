@@ -31,7 +31,7 @@
     dest: /boot/firmware/cmdline.txt
     owner: root
     group: root
-    mode: "{{ enable_cgroup_cmdline_stat.stat.mode }}"
+    mode: '{{ enable_cgroup_cmdline_stat.stat.mode }}'
   when: enable_cgroup_cmdline_current != enable_cgroup_cmdline_updated
   notify: Reboot system
 

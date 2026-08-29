@@ -50,6 +50,8 @@ Select one of these inventory arguments:
 
 Production and staging are operator inputs. Validation parses public-only
 inventory mirrors and does not connect to their hosts.
+Each inventory directory stores its static host and group topology in
+`hosts.yml`; public variables remain under `group_vars/`.
 
 ## Secrets
 

@@ -33,7 +33,7 @@
     regexp: ^LANG=
     line: LANG=en_US.UTF-8
     create: true
-    mode: "0644"
+    mode: '0644'
 
 - name: Check if pacman cache has files
   ansible.builtin.find:

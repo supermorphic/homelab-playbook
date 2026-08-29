@@ -24,13 +24,13 @@ mkdir -p \
   "$inventory_test_root/frozen/k3s/group_vars/k3s_cluster" \
   "$inventory_test_root/frozen/k3s/group_vars/k3s_server"
 
-cp "$repository_root/inventory/production/hosts.ini" \
-  "$inventory_test_root/production/hosts.ini"
+cp "$repository_root/inventory/production/hosts.yml" \
+  "$inventory_test_root/production/hosts.yml"
 cp "$repository_root/inventory/production/group_vars/pihole/vars.yml" \
   "$inventory_test_root/production/group_vars/pihole/vars.yml"
 
-cp "$repository_root/inventory/staging/hosts.ini" \
-  "$inventory_test_root/staging/hosts.ini"
+cp "$repository_root/inventory/staging/hosts.yml" \
+  "$inventory_test_root/staging/hosts.yml"
 cp "$repository_root/inventory/staging/group_vars/semaphore/vars.yml" \
   "$inventory_test_root/staging/group_vars/semaphore/vars.yml"
 cp "$repository_root/inventory/staging/group_vars/semaphore/versions.yml" \
@@ -40,11 +40,18 @@ cp "$repository_root/inventory/staging/group_vars/semaphore/vars.yml" \
   "$inventory_test_root/staging-semaphore/group_vars/semaphore/vars.yml"
 cp "$repository_root/inventory/staging/group_vars/semaphore/versions.yml" \
   "$inventory_test_root/staging-semaphore/group_vars/semaphore/versions.yml"
-printf '%s\n' '[semaphore]' 'semaphore-test ansible_connection=local' \
-  > "$inventory_test_root/staging-semaphore/hosts.ini"
+printf '%s\n' \
+  '---' \
+  'all:' \
+  '  children:' \
+  '    semaphore:' \
+  '      hosts:' \
+  '        semaphore-test:' \
+  '          ansible_connection: local' \
+  > "$inventory_test_root/staging-semaphore/hosts.yml"
 
-cp "$repository_root/inventory/frozen/k3s/hosts.ini" \
-  "$inventory_test_root/frozen/k3s/hosts.ini"
+cp "$repository_root/inventory/frozen/k3s/hosts.yml" \
+  "$inventory_test_root/frozen/k3s/hosts.yml"
 cp "$repository_root/inventory/frozen/k3s/group_vars/k3s_cluster/vars.yml" \
   "$inventory_test_root/frozen/k3s/group_vars/k3s_cluster/vars.yml"
 cp "$repository_root/inventory/frozen/k3s/group_vars/k3s_cluster/versions.yml" \

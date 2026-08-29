@@ -159,9 +159,10 @@ Arch Linux and Red Hat-family logic may remain only where it is useful historica
 or experimental source. It is not a validated production contract until a real
 consumer and test target are defined. Unsupported production paths should fail
 clearly rather than silently skip required work. The tested Arch Linux package
-and locale tasks remain in `roles/system_maintenance/tasks/setup-Archlinux.yml`,
-with their exact Galaxy collection dependencies, but the active role dispatcher
-remains Debian-only.
+and locale tasks and the historical Red Hat-family maintenance tasks remain in
+`roles/system_maintenance/tasks/`, with their exact Galaxy collection
+dependencies. The role dispatcher preserves all three operating-system paths;
+only Debian has an active production consumer and live validation boundary.
 
 ## Inventory design
 
@@ -170,14 +171,18 @@ The target inventory layout is:
 ```text
 inventory/
 ├── production/
+│   └── hosts.yml
 ├── staging/
+│   └── hosts.yml
 └── frozen/
     └── k3s/
+        └── hosts.yml
 ```
 
 Requirements:
 
 - each environment is directly selectable by the operator interface;
+- each static inventory source uses YAML in its environment-local `hosts.yml`;
 - public variables and encrypted secret variables remain separate;
 - active Pi-hole public variables live in
   `inventory/production/group_vars/pihole/vars.yml`, while encrypted variables

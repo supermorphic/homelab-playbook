@@ -107,8 +107,8 @@ class PathClassificationTests(unittest.TestCase):
             "docs/specs/001-agentic-development-modernization.md": "fast",
             "run-playbook": "fast",
             "scripts/playbook.sh": "fast",
-            "inventory/production/hosts.ini": "ansible",
-            "inventory/frozen/k3s/hosts.ini": "ansible",
+            "inventory/production/hosts.yml": "ansible",
+            "inventory/frozen/k3s/hosts.yml": "ansible",
             "playbooks/pihole/update.yml": "ansible",
             "roles/update-pihole/tasks/main.yml": "ansible",
             "ansible.cfg": "ansible",
@@ -374,7 +374,7 @@ class GitDiscoveryTests(unittest.TestCase):
     def test_committed_diff_includes_deletion_and_both_rename_paths(self) -> None:
         self.repository.git("mv", "docs/old guide.md", "docs/new guide.md")
         (self.repository.root / "roles/update_pihole/tasks/main.yml").unlink()
-        self.repository.write("inventory/production/new hosts.ini", "[pihole]\n")
+        self.repository.write("inventory/production/new hosts.yml", "all: {}\n")
         self.repository.commit_all("committed changes")
 
         with working_directory(self.repository.root):
@@ -384,7 +384,7 @@ class GitDiscoveryTests(unittest.TestCase):
             [
                 "docs/new guide.md",
                 "docs/old guide.md",
-                "inventory/production/new hosts.ini",
+                "inventory/production/new hosts.yml",
                 "roles/update_pihole/tasks/main.yml",
             ],
             paths,

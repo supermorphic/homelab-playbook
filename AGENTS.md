@@ -133,9 +133,10 @@ configuration fields, or quoted text solely to satisfy these style rules.
 - Preserve useful Ansible automation and repository-owned role overrides. Do
   not rewrite working roles or introduce a collection without a demonstrated
   repository need.
-- Durable design specifications belong in `docs/specs/`. Transient
-  implementation plans belong uncommitted in `.tmp/plans/` and support task
-  execution, resumption, and handoff.
+- Durable design specifications belong in `docs/specs/`; implementation plans,
+  generated execution ledgers, review packages, and other transient tool state
+  belong uncommitted under `.tmp/` to support execution, resumption, and
+  handoff.
 - A validation assertion must use an independent oracle or encode a current
   invariant. Remove obsolete executable checks instead of adding permanent
   forbidden-reference checks.

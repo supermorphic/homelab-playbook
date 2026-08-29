@@ -1,4 +1,4 @@
-"""Offline source contracts for the active Pi-hole Ansible path."""
+"""Offline safety contracts for repository Ansible sources."""
 
 from __future__ import annotations
 
@@ -59,8 +59,24 @@ class SourceContractTests(unittest.TestCase):
         self.assertIs(module_load.get("failed_when"), False)
         self.assertNotIn("ignore_errors", module_load)
 
-    def test_system_maintenance_asserts_debian_before_include(self) -> None:
-        """Unsupported operating systems must fail before Debian tasks are included."""
+    def test_enable_cgroup_preserves_existing_cmdline_mode(self) -> None:
+        """Cgroup installation and removal must retain the cmdline file mode."""
+        for action in ("install", "uninstall"):
+            tasks = load_tasks(f"roles/enable_cgroup/tasks/{action}.yml")
+            stat_task = next(task for task in tasks if "ansible.builtin.stat" in task)
+            copy_task = next(task for task in tasks if "ansible.builtin.copy" in task)
+
+            self.assertEqual(
+                stat_task["register"],
+                "enable_cgroup_cmdline_stat",
+            )
+            self.assertEqual(
+                copy_task["ansible.builtin.copy"]["mode"],
+                "{{ enable_cgroup_cmdline_stat.stat.mode }}",
+            )
+
+    def test_system_maintenance_dispatches_supported_operating_systems(self) -> None:
+        """Arch, Debian, and RedHat hosts must resolve to maintained task files."""
         tasks = load_tasks("roles/system_maintenance/tasks/main.yml")
         first_task = tasks[0]
         second_task = tasks[1]
@@ -69,15 +85,65 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual(
             first_task["ansible.builtin.assert"],
             {
-                "that": ["ansible_os_family == 'Debian'"],
+                "that": [
+                    "ansible_os_family in ['Archlinux', 'Debian', 'RedHat']"
+                ],
                 "fail_msg": (
-                    "system-maintenance supports Debian-family hosts only; "
+                    "system-maintenance does not support operating-system family "
                     "received {{ ansible_os_family }}"
                 ),
             },
         )
-        self.assertEqual(second_task["ansible.builtin.include_tasks"], "setup-Debian.yml")
+        self.assertEqual(
+            second_task["ansible.builtin.include_tasks"],
+            "setup-{{ ansible_os_family }}.yml",
+        )
         self.assertNotIn("when", second_task)
+        for os_family in ("Archlinux", "Debian", "RedHat"):
+            self.assertTrue(
+                (
+                    REPOSITORY_ROOT
+                    / "roles/system_maintenance/tasks"
+                    / f"setup-{os_family}.yml"
+                ).is_file(),
+                f"missing system-maintenance tasks for {os_family}",
+            )
+
+    def test_redhat_maintenance_sets_kernel_retention_before_upgrade(self) -> None:
+        """RedHat updates must retain two kernels through supported DNF policy."""
+        tasks = load_tasks("roles/system_maintenance/tasks/setup-RedHat.yml")
+        retention_tasks = [
+            (index, task)
+            for index, task in enumerate(tasks)
+            if task.get("community.general.ini_file", {}).get("option")
+            == "installonly_limit"
+        ]
+        upgrade_index = next(
+            index
+            for index, task in enumerate(tasks)
+            if task.get("ansible.builtin.dnf", {}).get("update_only") is True
+        )
+
+        self.assertEqual(len(retention_tasks), 1)
+        retention_index, retention_task = retention_tasks[0]
+        self.assertLess(retention_index, upgrade_index)
+        self.assertEqual(
+            retention_task["community.general.ini_file"],
+            {
+                "path": "/etc/dnf/dnf.conf",
+                "section": "main",
+                "option": "installonly_limit",
+                "value": "2",
+                "no_extra_spaces": True,
+                "mode": "0644",
+            },
+        )
+        self.assertTrue(
+            any(
+                task.get("ansible.builtin.dnf", {}).get("autoremove") is True
+                for task in tasks
+            )
+        )
 
     def test_update_pihole_has_no_end_play(self) -> None:
         """A Pi-hole command failure must fail normally instead of ending a play."""
@@ -137,6 +203,68 @@ class SourceContractTests(unittest.TestCase):
                 ("pihole status", False),
                 ("unbound-checkconf /etc/unbound/unbound.conf", False),
             ],
+        )
+
+    def test_os_inspect_reports_only_allowlisted_facts(self) -> None:
+        """Host inspection must remain read-only and omit identifying facts."""
+        playbook_path = REPOSITORY_ROOT / "playbooks/os/inspect.yml"
+        self.assertTrue(playbook_path.is_file())
+        play = load_yaml_documents("playbooks/os/inspect.yml")[0][0]
+        tasks = play["tasks"]
+
+        allowed_facts = [
+            "ansible_architecture",
+            "ansible_distribution",
+            "ansible_distribution_release",
+            "ansible_distribution_version",
+            "ansible_kernel",
+            "ansible_os_family",
+            "ansible_pkg_mgr",
+            "ansible_python_version",
+            "ansible_service_mgr",
+            "ansible_virtualization_role",
+            "ansible_virtualization_type",
+        ]
+
+        self.assertEqual(play["hosts"], "servers")
+        self.assertIs(play["become"], False)
+        self.assertIs(play["gather_facts"], False)
+        self.assertEqual(len(tasks), 2)
+        self.assertEqual(
+            tasks[0]["ansible.builtin.setup"],
+            {
+                "filter": allowed_facts,
+                "gather_subset": [
+                    "!all",
+                    "!min",
+                    "architecture",
+                    "distribution",
+                    "distribution_release",
+                    "distribution_version",
+                    "kernel",
+                    "os_family",
+                    "pkg_mgr",
+                    "python_version",
+                    "service_mgr",
+                    "virtualization_role",
+                    "virtualization_type",
+                ],
+            },
+        )
+        self.assertIs(tasks[0]["no_log"], True)
+        reported_facts = {
+            name: " ".join(expression.split())
+            for name, expression in tasks[1]["ansible.builtin.debug"]["msg"].items()
+        }
+        self.assertEqual(
+            reported_facts,
+            {
+                fact.removeprefix("ansible_"): (
+                    "{{ inspected_host.ansible_facts."
+                    f"{fact} | default('unknown', true) }}}}"
+                )
+                for fact in allowed_facts
+            },
         )
 
     def test_ansible_cfg_uses_only_repository_role_paths(self) -> None:

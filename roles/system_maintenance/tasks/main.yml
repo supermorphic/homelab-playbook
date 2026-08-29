@@ -2,9 +2,10 @@
 - name: Assert the host uses the supported operating system family
   ansible.builtin.assert:
     that:
-    - ansible_os_family == 'Debian'
+    - ansible_os_family in ['Archlinux', 'Debian', 'RedHat']
     fail_msg: >-
-      system-maintenance supports Debian-family hosts only; received {{ ansible_os_family }}
+      system-maintenance does not support operating-system family
+      received {{ ansible_os_family }}
 
-- name: Include Debian setup tasks
-  ansible.builtin.include_tasks: setup-Debian.yml
+- name: Include setup tasks for the operating system family
+  ansible.builtin.include_tasks: 'setup-{{ ansible_os_family }}.yml'
