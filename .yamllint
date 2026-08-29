@@ -27,3 +27,5 @@ rules:
     forbid-explicit-octal: true
   trailing-spaces:
     level: error
+  truthy:
+    check-keys: false

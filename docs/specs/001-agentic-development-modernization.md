@@ -293,13 +293,18 @@ replaced after contract tests prove equivalent intended argument forwarding.
 
 ## Agent workflow
 
-Repository-root `AGENTS.md` provides the authoritative contribution workflow for
-coding agents. It must describe:
+Repository-root `AGENTS.md` provides the authoritative, vendor-neutral workflow
+for coding agents. `CLAUDE.md` imports that policy and contains only
+Claude-specific behavior. The policy must describe:
 
+- repository context and policy precedence;
+- clear, concrete communication style;
 - issue, branch, worktree, design, and implementation-plan expectations;
 - preservation of user changes in a dirty worktree;
+- Git safety, authority, orchestration, and completion boundaries;
 - no production or staging execution without explicit operator direction;
 - no decryption or inspection of production secrets;
+- public-repository disclosure safeguards;
 - use of repository-owned Mise tasks;
 - focused validation while iterating;
 - final change-directed validation before claiming completion;
@@ -517,6 +522,7 @@ The required live GitHub state is:
 - the Ruleset has no bypass actors;
 - updates require a pull request with zero required approvals and squash as the
   only allowed merge method;
+- additional approval for unattributed changes is required;
 - `merge-gate` is required from GitHub Actions and the candidate must be current
   with `main`;
 - linear history is required; and
@@ -727,8 +733,10 @@ Issue #1 is complete when:
    canonical operator command;
 9. `run-playbook` is a tested ultra-thin alias and the stale `run.sh` interface is
    retired;
-10. `AGENTS.md` makes repository-owned validation and production-safety boundaries
-    explicit;
+10. `AGENTS.md` provides compact vendor-neutral agent policy, including
+    communication, Git, authority, security, lifecycle, validation, and
+    completion boundaries, while `CLAUDE.md` imports it without duplicating
+    shared policy;
 11. GitHub Actions always runs `fast`, conditionally runs `ansible`, selects `full`
     for broad or ambiguous changes, and exposes one stable `merge-gate`;
 12. `mise run ci:changed` classifies and executes local committed and working-tree

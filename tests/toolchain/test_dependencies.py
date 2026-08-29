@@ -10,37 +10,15 @@ from types import ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPENDENCIES_PATH = REPO_ROOT / "scripts" / "dependencies.py"
-ROLE_NAMES = (
-    "robertdebock.bootstrap",
-    "geerlingguy.security",
-    "geerlingguy.docker",
-    "xanmanning.k3s",
-    "r_pufky.pihole",
-    "l3d.unbound",
+TEST_ROLES = (
+    ("example.bootstrap", "1.2.3"),
+    ("example.service", "v4.5.6"),
+    ("l3d.unbound", "v3.4.5"),
 )
-ROLE_VERSIONS = {
-    "robertdebock.bootstrap": "7.1.5",
-    "geerlingguy.security": "3.0.0",
-    "geerlingguy.docker": "7.6.0",
-    "xanmanning.k3s": "v3.6.1",
-    "r_pufky.pihole": "3.0.4",
-    "l3d.unbound": "v1.1.0",
-}
-REQUIREMENTS = """---
-roles:
-  - name: robertdebock.bootstrap
-    version: 7.1.5
-  - name: geerlingguy.security
-    version: 3.0.0
-  - name: geerlingguy.docker
-    version: 7.6.0
-  - name: xanmanning.k3s
-    version: v3.6.1
-  - name: r_pufky.pihole
-    version: 3.0.4
-  - name: l3d.unbound
-    version: v1.1.0
-"""
+REQUIREMENTS = "---\nroles:\n" + "".join(
+    f"  - name: {role_name}\n    version: {role_version}\n"
+    for role_name, role_version in TEST_ROLES
+)
 
 
 def load_dependencies() -> ModuleType:
@@ -106,7 +84,7 @@ class DependencyVerificationTests(unittest.TestCase):
         missing_metadata: str | None = None,
         wrong_metadata: str | None = None,
     ) -> None:
-        for role_name in ROLE_NAMES:
+        for role_name, required_version in TEST_ROLES:
             if role_name != excluding:
                 role_path = self.repo_root / ".ansible" / "roles" / role_name
                 role_path.mkdir(parents=True)
@@ -114,9 +92,7 @@ class DependencyVerificationTests(unittest.TestCase):
                     metadata_path = role_path / "meta" / ".galaxy_install_info"
                     metadata_path.parent.mkdir()
                     version = (
-                        "0.0.0"
-                        if role_name == wrong_metadata
-                        else ROLE_VERSIONS[role_name]
+                        "0.0.0" if role_name == wrong_metadata else required_version
                     )
                     metadata_path.write_text(f"version: {version}\n")
 
@@ -155,15 +131,13 @@ class DependencyVerificationTests(unittest.TestCase):
 
     def test_verify_rejects_missing_role(self) -> None:
         self.create_virtualenv_executable()
-        self.create_roles(excluding="geerlingguy.docker")
+        self.create_roles(excluding="example.service")
         self.create_installed_override()
         self.write_current_fingerprint()
 
         errors = dependencies.verify(self.repo_root)
 
-        self.assertTrue(
-            any("geerlingguy.docker" in error for error in errors), errors
-        )
+        self.assertTrue(any("example.service" in error for error in errors), errors)
 
     def test_verify_rejects_stale_requirements_fingerprint(self) -> None:
         self.create_virtualenv_executable()
@@ -200,20 +174,20 @@ class DependencyVerificationTests(unittest.TestCase):
 
     def test_verify_rejects_missing_galaxy_install_version_metadata(self) -> None:
         self.create_virtualenv_executable()
-        self.create_roles(missing_metadata="geerlingguy.security")
+        self.create_roles(missing_metadata="example.bootstrap")
         self.create_installed_override()
         self.write_current_fingerprint()
 
         errors = dependencies.verify(self.repo_root)
 
         self.assertTrue(
-            any("geerlingguy.security" in error and "metadata" in error for error in errors),
+            any("example.bootstrap" in error and "metadata" in error for error in errors),
             errors,
         )
 
     def test_verify_rejects_wrong_galaxy_install_version_metadata(self) -> None:
         self.create_virtualenv_executable()
-        self.create_roles(wrong_metadata="r_pufky.pihole")
+        self.create_roles(wrong_metadata="example.service")
         self.create_installed_override()
         self.write_current_fingerprint()
 
@@ -221,8 +195,8 @@ class DependencyVerificationTests(unittest.TestCase):
 
         self.assertTrue(
             any(
-                "r_pufky.pihole" in error
-                and "3.0.4" in error
+                "example.service" in error
+                and "v4.5.6" in error
                 and "0.0.0" in error
                 for error in errors
             ),
@@ -251,7 +225,7 @@ class DependencyVerificationTests(unittest.TestCase):
         self.create_current_environment()
         requirements_path = self.repo_root / "requirements.yml"
         requirements_path.write_text(
-            requirements_path.read_text().replace("version: 7.1.5", "version: latest")
+            requirements_path.read_text().replace("version: 1.2.3", "version: latest")
         )
         self.write_current_fingerprint()
 

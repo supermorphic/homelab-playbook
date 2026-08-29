@@ -42,6 +42,7 @@ ANSIBLE_CONFIG_PATHS = {
 }
 POLICY_PATHS = {
     "AGENTS.md",
+    "CLAUDE.md",
     "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md",
     "LICENSE",

@@ -142,6 +142,7 @@ def expected_rules(integration_id: int) -> list[dict[str, Any]]:
                 "allowed_merge_methods": ["squash"],
                 "dismiss_stale_reviews_on_push": False,
                 "require_code_owner_review": False,
+                "require_extra_approval_for_unattributed_changes": True,
                 "require_last_push_approval": False,
                 "required_approving_review_count": 0,
                 "required_review_thread_resolution": False,
@@ -380,6 +381,7 @@ def _normalize_rule(value: Any, path: str) -> dict[str, Any]:
         for field in (
             "dismiss_stale_reviews_on_push",
             "require_code_owner_review",
+            "require_extra_approval_for_unattributed_changes",
             "require_last_push_approval",
             "required_review_thread_resolution",
         ):

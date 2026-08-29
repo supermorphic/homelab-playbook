@@ -185,6 +185,7 @@ class PathClassificationTests(unittest.TestCase):
     def test_documentation_policy_and_operator_fixtures_are_fast(self) -> None:
         mappings = {
             "AGENTS.md": "fast",
+            "CLAUDE.md": "fast",
             "CONTRIBUTING.md": "fast",
             "LICENSE": "fast",
             "docs/operations.md": "fast",

@@ -305,7 +305,7 @@ class WorkflowContractTests(unittest.TestCase):
         if not WORKFLOW_PATH.is_file():
             raise RuntimeError(f"required workflow does not exist: {WORKFLOW_PATH}")
         cls.workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
-        cls.triggers = indented_block(cls.workflow, '"on"', 0)
+        cls.triggers = indented_block(cls.workflow, "on", 0)
         cls.classify = indented_block(cls.workflow, "classify", 2)
         cls.fast = indented_block(cls.workflow, "fast", 2)
         cls.ansible = indented_block(cls.workflow, "ansible", 2)
