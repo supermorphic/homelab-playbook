@@ -208,6 +208,163 @@ options = { trust_policy_excludes = '["fastq@1.20.2"]' }
 
         self.assertEqual([], errors)
 
+    def test_mise_lock_rejects_non_exact_reviewed_tool_identity(self) -> None:
+        invalid_identities = {
+            "version drift": (
+                'version = "0.23.3", '
+                'trust_policy_excludes = ["fastq@1.20.2"]',
+                "0.23.3",
+                "options = { trust_policy_excludes = "
+                "'[\"fastq@1.20.2\"]' }\n",
+            ),
+            "missing exception": (
+                'version = "0.23.2"',
+                "0.23.2",
+                "",
+            ),
+        }
+
+        for case, (tool_options, version, lock_options) in invalid_identities.items():
+            with self.subTest(case=case):
+                self.write(
+                    ".mise.toml",
+                    "[tools]\n"
+                    f'"npm:markdownlint-cli2" = {{ {tool_options} }}\n',
+                )
+                self.write(
+                    "mise.lock",
+                    """[[tools."npm:markdownlint-cli2"]]
+"""
+                    + f'version = "{version}"\n'
+                    + 'backend = "npm:markdownlint-cli2"\n'
+                    + f'specifiers = ["{version}"]\n'
+                    + lock_options,
+                )
+
+                errors = repository_validation.validate_mise_lock(self.repo_root)
+
+                self.assertEqual(
+                    [
+                        ".mise.toml: tool npm:markdownlint-cli2 has an "
+                        "unapproved trust_policy_excludes value; "
+                        "run mise run bootstrap"
+                    ],
+                    errors,
+                )
+
+    def test_mise_lock_rejects_extra_reviewed_tool_options(self) -> None:
+        extra_options = {
+            "trust related": "allow_low_downloads = true",
+            "release age": 'minimum_release_age = "0d"',
+            "package manager": 'npm_args = "--ignore-scripts"',
+            "arbitrary": "future_option = true",
+        }
+
+        for case, extra_option in extra_options.items():
+            with self.subTest(case=case):
+                self.write(
+                    ".mise.toml",
+                    "[tools]\n"
+                    '"npm:markdownlint-cli2" = { version = "0.23.2", '
+                    'trust_policy_excludes = ["fastq@1.20.2"], '
+                    f"{extra_option} }}\n",
+                )
+                self.write(
+                    "mise.lock",
+                    """[[tools."npm:markdownlint-cli2"]]
+version = "0.23.2"
+backend = "npm:markdownlint-cli2"
+specifiers = ["0.23.2"]
+options = { trust_policy_excludes = '["fastq@1.20.2"]' }
+""",
+                )
+
+                errors = repository_validation.validate_mise_lock(self.repo_root)
+
+                self.assertEqual(
+                    [
+                        ".mise.toml: tool npm:markdownlint-cli2 has an "
+                        "unapproved trust_policy_excludes value; "
+                        "run mise run bootstrap"
+                    ],
+                    errors,
+                )
+
+    def test_mise_lock_requires_exact_reviewed_backend(self) -> None:
+        invalid_backends = {
+            "missing": "",
+            "wrong": 'backend = "npm:other-tool"\n',
+        }
+
+        for case, backend in invalid_backends.items():
+            with self.subTest(case=case):
+                self.write(
+                    ".mise.toml",
+                    "[tools]\n"
+                    '"npm:markdownlint-cli2" = { version = "0.23.2", '
+                    'trust_policy_excludes = ["fastq@1.20.2"] }\n',
+                )
+                self.write(
+                    "mise.lock",
+                    """[[tools."npm:markdownlint-cli2"]]
+version = "0.23.2"
+"""
+                    + backend
+                    + """specifiers = ["0.23.2"]
+options = { trust_policy_excludes = '["fastq@1.20.2"]' }
+""",
+                )
+
+                errors = repository_validation.validate_mise_lock(self.repo_root)
+
+                self.assertEqual(
+                    [
+                        "mise.lock: trust_policy_excludes for "
+                        "npm:markdownlint-cli2@0.23.2 is not represented; "
+                        "run mise run bootstrap"
+                    ],
+                    errors,
+                )
+
+    def test_mise_lock_rejects_extra_reviewed_lock_options(self) -> None:
+        extra_options = {
+            "trust related": 'allow_low_downloads = "true"',
+            "release age": 'minimum_release_age = "0d"',
+            "package manager": 'npm_args = "--ignore-scripts"',
+            "arbitrary": 'future_option = "true"',
+        }
+
+        for case, extra_option in extra_options.items():
+            with self.subTest(case=case):
+                self.write(
+                    ".mise.toml",
+                    "[tools]\n"
+                    '"npm:markdownlint-cli2" = { version = "0.23.2", '
+                    'trust_policy_excludes = ["fastq@1.20.2"] }\n',
+                )
+                self.write(
+                    "mise.lock",
+                    """[[tools."npm:markdownlint-cli2"]]
+version = "0.23.2"
+backend = "npm:markdownlint-cli2"
+specifiers = ["0.23.2"]
+[tools."npm:markdownlint-cli2".options]
+trust_policy_excludes = '["fastq@1.20.2"]'
+"""
+                    + f"{extra_option}\n",
+                )
+
+                errors = repository_validation.validate_mise_lock(self.repo_root)
+
+                self.assertEqual(
+                    [
+                        "mise.lock: trust_policy_excludes for "
+                        "npm:markdownlint-cli2@0.23.2 is not represented; "
+                        "run mise run bootstrap"
+                    ],
+                    errors,
+                )
+
     def test_mise_lock_rejects_broadened_trust_policy_exception(self) -> None:
         invalid_exceptions = {
             "bare package": '["fastq"]',

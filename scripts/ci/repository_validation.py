@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
-from typing import Sequence
+from typing import NamedTuple, Sequence
 
 
 APACHE_LICENSE_SIGNATURES = (
@@ -22,9 +22,21 @@ EXACT_TOOL_VERSION_PATTERN = re.compile(
 )
 BOOTSTRAP_RECOVERY = "run mise run bootstrap"
 TRUST_POLICY_EXCLUDES_OPTION = "trust_policy_excludes"
-APPROVED_TRUST_POLICY_EXCLUDES = {
-    "npm:markdownlint-cli2": ("fastq@1.20.2",),
-}
+
+
+class TrustPolicyExceptionIdentity(NamedTuple):
+    tool_name: str
+    version: str
+    backend: str
+    excludes: tuple[str, ...]
+
+
+APPROVED_TRUST_POLICY_EXCEPTION = TrustPolicyExceptionIdentity(
+    tool_name="npm:markdownlint-cli2",
+    version="0.23.2",
+    backend="npm:markdownlint-cli2",
+    excludes=("fastq@1.20.2",),
+)
 
 
 def relative_name(file_path: Path, repo_root: Path) -> str:
@@ -127,47 +139,53 @@ def validate_mise_trust_policy_excludes(
     tool_name: str,
     tool_value: object,
     lock_entries: object,
-    requested_version: str,
 ) -> list[str]:
+    declares_exception = (
+        isinstance(tool_value, dict)
+        and TRUST_POLICY_EXCLUDES_OPTION in tool_value
+    )
     if (
-        not isinstance(tool_value, dict)
-        or TRUST_POLICY_EXCLUDES_OPTION not in tool_value
+        tool_name != APPROVED_TRUST_POLICY_EXCEPTION.tool_name
+        and not declares_exception
     ):
         return []
 
-    configured_excludes = tool_value[TRUST_POLICY_EXCLUDES_OPTION]
-    approved_excludes = APPROVED_TRUST_POLICY_EXCLUDES.get(tool_name)
+    expected_tool_value = {
+        "version": APPROVED_TRUST_POLICY_EXCEPTION.version,
+        TRUST_POLICY_EXCLUDES_OPTION: list(
+            APPROVED_TRUST_POLICY_EXCEPTION.excludes
+        ),
+    }
     if (
-        not isinstance(configured_excludes, list)
-        or not all(isinstance(value, str) for value in configured_excludes)
-        or tuple(configured_excludes) != approved_excludes
+        tool_name != APPROVED_TRUST_POLICY_EXCEPTION.tool_name
+        or tool_value != expected_tool_value
     ):
         return [
             f".mise.toml: tool {tool_name} has an unapproved "
             f"{TRUST_POLICY_EXCLUDES_OPTION} value; {BOOTSTRAP_RECOVERY}"
         ]
 
-    canonical_lock_value = json.dumps(configured_excludes)
-    if not isinstance(lock_entries, list):
-        lock_entries = []
-    version_entries = [
-        entry
-        for entry in lock_entries
-        if isinstance(entry, dict)
-        and entry.get("version") == requested_version
-    ]
-    represented = len(version_entries) == 1 and all(
-        isinstance(entry, dict)
-        and isinstance(entry.get("options"), dict)
-        and entry["options"].get(TRUST_POLICY_EXCLUDES_OPTION)
-        == canonical_lock_value
-        for entry in version_entries
+    expected_lock_options = {
+        TRUST_POLICY_EXCLUDES_OPTION: json.dumps(
+            list(APPROVED_TRUST_POLICY_EXCEPTION.excludes)
+        )
+    }
+    represented = (
+        isinstance(lock_entries, list)
+        and len(lock_entries) == 1
+        and isinstance(lock_entries[0], dict)
+        and lock_entries[0].get("version")
+        == APPROVED_TRUST_POLICY_EXCEPTION.version
+        and lock_entries[0].get("backend")
+        == APPROVED_TRUST_POLICY_EXCEPTION.backend
+        and lock_entries[0].get("options") == expected_lock_options
     )
     if represented:
         return []
     return [
         f"mise.lock: {TRUST_POLICY_EXCLUDES_OPTION} for "
-        f"{tool_name}@{requested_version} is not represented; "
+        f"{tool_name}@{APPROVED_TRUST_POLICY_EXCEPTION.version} "
+        f"is not represented; "
         f"{BOOTSTRAP_RECOVERY}"
     ]
 
@@ -220,7 +238,6 @@ def validate_mise_lock(repo_root: Path) -> list[str]:
                 tool_name,
                 tool_value,
                 lock_entries,
-                requested_version,
             )
         )
     return errors
