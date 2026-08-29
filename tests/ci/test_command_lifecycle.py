@@ -20,13 +20,23 @@ class CommandLifecycleTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-        task_names = {task["name"] for task in json.loads(result.stdout)}
+        tasks = json.loads(result.stdout)
+        task_names = {task["name"] for task in tasks}
+        published_names = {
+            name
+            for task in tasks
+            for name in (task["name"], *task["aliases"])
+        }
 
         self.assertTrue(
             {"validate:fast", "validate:ansible", "ci:changed", "ci"}
             <= task_names
         )
-        self.assertTrue({"check:fast", "check:ansible"}.isdisjoint(task_names))
+        self.assertTrue(
+            {"check:fast", "check:ansible", "check:molecule"}.isdisjoint(
+                published_names
+            )
+        )
 
 
 if __name__ == "__main__":
