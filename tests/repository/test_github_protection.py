@@ -811,6 +811,52 @@ class OwnershipAndVisibilityTests(unittest.TestCase):
 
 
 class IntegrationDiscoveryTests(unittest.TestCase):
+    def test_successful_ci_workflow_run_on_second_page_is_discovered(self) -> None:
+        other_workflow_run = copy.deepcopy(WORKFLOW_RUNS["workflow_runs"][0])
+        other_workflow_run["path"] = ".github/workflows/other.yml"
+        api = FakeAPI(
+            {
+                ("GET", WORKFLOW_RUNS_ENDPOINT): [
+                    [
+                        {"workflow_runs": [other_workflow_run]},
+                        copy.deepcopy(WORKFLOW_RUNS),
+                    ]
+                ],
+                ("GET", CHECK_RUNS_ENDPOINT): [[copy.deepcopy(CHECK_RUNS)]],
+            }
+        )
+
+        try:
+            integration_id = github_protection.discover_integration_id(api)
+        except github_protection.ProtectionError:
+            integration_id = None
+
+        self.assertEqual(INTEGRATION_ID, integration_id)
+
+    def test_successful_suite_check_on_second_page_is_discovered(self) -> None:
+        failed_check = copy.deepcopy(CHECK_RUNS["check_runs"][0])
+        failed_check["conclusion"] = "failure"
+        api = FakeAPI(
+            {
+                ("GET", WORKFLOW_RUNS_ENDPOINT): [
+                    [copy.deepcopy(WORKFLOW_RUNS)]
+                ],
+                ("GET", CHECK_RUNS_ENDPOINT): [
+                    [
+                        {"check_runs": [failed_check]},
+                        copy.deepcopy(CHECK_RUNS),
+                    ]
+                ],
+            }
+        )
+
+        try:
+            integration_id = github_protection.discover_integration_id(api)
+        except github_protection.ProtectionError:
+            integration_id = None
+
+        self.assertEqual(INTEGRATION_ID, integration_id)
+
     def test_same_sha_check_from_different_workflow_is_not_accepted(self) -> None:
         head_sha = "a" * 40
         check_suite_id = 9001
