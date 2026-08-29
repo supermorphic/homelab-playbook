@@ -100,6 +100,31 @@ class AnsibleSourceContracts(unittest.TestCase):
         self.assertTrue(ENCRYPTED_EXCLUSIONS.issubset(candidates))
         self.assertTrue(ENCRYPTED_EXCLUSIONS.isdisjoint(selected_sources))
 
+    def test_near_miss_inventory_vault_source_is_selected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            repository_root = Path(temporary_name)
+            self.initialize_repository(repository_root)
+            source_builder = self.isolated_source_builder(repository_root)
+            relative_path = "inventory/staging/group_vars/example/vault.yml"
+            near_miss_source = repository_root / relative_path
+            near_miss_source.parent.mkdir(parents=True)
+            near_miss_source.write_text("---\nfixture: public\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "scripts/ci/ansible-sources.sh", relative_path],
+                cwd=repository_root,
+                check=True,
+            )
+
+            result = subprocess.run(
+                ["bash", str(source_builder)],
+                cwd=repository_root,
+                check=False,
+                capture_output=True,
+            )
+
+            self.assertEqual(0, result.returncode, result.stderr.decode())
+            self.assertEqual(f"{relative_path}\0".encode(), result.stdout)
+
     def isolated_source_builder(self, repository_root: Path) -> Path:
         source_builder = repository_root / "scripts" / "ci" / "ansible-sources.sh"
         source_builder.parent.mkdir(parents=True)
@@ -188,16 +213,37 @@ class AnsibleSourceContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_name:
             repository_root = Path(temporary_name)
             source_builder = self.isolated_source_builder(repository_root)
+            valid_source = repository_root / "playbooks" / "valid.yml"
+            valid_source.parent.mkdir(parents=True)
+            valid_source.write_text("---\n", encoding="utf-8")
+
+            fake_bin = repository_root / "fake-bin"
+            fake_bin.mkdir()
+            fake_git = fake_bin / "git"
+            fake_git.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\0' 'playbooks/valid.yml'\n"
+                "printf '%s\\n' 'forced git discovery failure' >&2\n"
+                "exit 47\n",
+                encoding="utf-8",
+            )
+            fake_git.chmod(0o755)
+            environment = os.environ.copy()
+            environment["PATH"] = (
+                f"{fake_bin}{os.pathsep}{environment.get('PATH', '')}"
+            )
 
             result = subprocess.run(
                 ["bash", str(source_builder)],
                 cwd=repository_root,
+                env=environment,
                 check=False,
                 capture_output=True,
             )
 
-            self.assertNotEqual(0, result.returncode)
+            self.assertEqual(47, result.returncode)
             self.assertEqual(b"", result.stdout)
+            self.assertIn(b"forced git discovery failure", result.stderr)
 
     def test_empty_explicit_manifest_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
@@ -216,13 +262,27 @@ class AnsibleSourceContracts(unittest.TestCase):
             self.assertEqual(b"", result.stdout)
             self.assertIn(b"no explicit Ansible sources", result.stderr)
 
-    def test_ansible_check_propagates_source_builder_failure(self) -> None:
+    def test_ansible_check_propagates_source_builder_failure_before_lint(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
             repository_root = Path(temporary_name)
-            self.initialize_repository(repository_root)
-            self.isolated_source_builder(repository_root)
             ansible_check = repository_root / "scripts" / "ci" / "check-ansible.sh"
+            ansible_check.parent.mkdir(parents=True)
             shutil.copy2(ANSIBLE_CHECK, ansible_check)
+            source_builder = (
+                repository_root / "scripts" / "ci" / "ansible-sources.sh"
+            )
+            source_builder.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\0' 'playbooks/valid.yml'\n"
+                "printf '%s\\n' 'forced source builder failure' >&2\n"
+                "exit 53\n",
+                encoding="utf-8",
+            )
+            valid_source = repository_root / "playbooks" / "valid.yml"
+            valid_source.parent.mkdir(parents=True)
+            valid_source.write_text("---\n", encoding="utf-8")
 
             tests_root = repository_root / "tests" / "ansible"
             tests_root.mkdir(parents=True)
@@ -234,14 +294,19 @@ class AnsibleSourceContracts(unittest.TestCase):
             fake_bin = repository_root / "fake-bin"
             fake_bin.mkdir()
             fake_uv = fake_bin / "uv"
+            fake_uv_log = repository_root / "fake-uv.log"
             fake_uv.write_text(
-                "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\n' \"$*\" >> \"$FAKE_UV_LOG\"\n"
+                "exit 0\n",
+                encoding="utf-8",
             )
             fake_uv.chmod(0o755)
             environment = os.environ.copy()
             environment["PATH"] = (
                 f"{fake_bin}{os.pathsep}{environment.get('PATH', '')}"
             )
+            environment["FAKE_UV_LOG"] = os.fspath(fake_uv_log)
 
             result = subprocess.run(
                 ["bash", str(ansible_check)],
@@ -251,8 +316,11 @@ class AnsibleSourceContracts(unittest.TestCase):
                 capture_output=True,
             )
 
-            self.assertNotEqual(0, result.returncode)
-            self.assertIn(b"no explicit Ansible sources", result.stderr)
+            self.assertEqual(53, result.returncode)
+            self.assertIn(b"forced source builder failure", result.stderr)
+            self.assertNotIn(
+                "ansible-lint", fake_uv_log.read_text(encoding="utf-8")
+            )
 
     def test_untracked_invalid_module_is_selected_and_fails_semantic_validation(
         self,
