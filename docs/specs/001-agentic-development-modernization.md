@@ -312,8 +312,45 @@ Agents do not choose the minimum sufficient CI depth. They run:
 mise run ci:changed
 ```
 
-The repository classifier selects and executes the required checks. An agent may
+The repository classifier selects and executes the required validation. An agent may
 run a deeper command voluntarily, but cannot de-escalate the classifier result.
+
+## Repository command lifecycle
+
+Command names follow their effects and requested result:
+
+- `validate` proves local source, configuration, policy, or evidence correctness;
+- `verify` observes a live target without intentionally changing it;
+- `check` is a specialized live or external drift/compliance observation;
+- `plan` previews a later operation but is neither authorization nor a dry-run;
+- `apply` reconciles an existing live or external target;
+- `bootstrap` initializes controller or target capability; and
+- `test` conducts a bounded experiment that may create or change temporary state.
+
+Purpose-specific verbs remain valid when they describe the requested result more
+precisely. Safeguards are selected independently from naming: a consequential
+external mutation repeats current-state preconditions, requires operator authority
+and a target-bound confirmation, and reads back its result. An observational
+command does not gain an accidental-execution confirmation merely for symmetry.
+
+The current public command families therefore use:
+
+```text
+validate:fast                 focused local repository validation
+validate:ansible              focused local Ansible validation
+ci                            complete offline validation aggregate
+ci:changed                    change-directed validation selection and execution
+github-protection:check       read-only external drift verification
+github-protection:plan        read-only reconciliation preview
+github-protection:apply       guarded external reconciliation and read-back
+```
+
+The playbook operator retains purpose-specific actions such as `install`,
+`update`, and observational `verify`. Repository policy—not the verb or a
+confirmation variable—owns authority to execute them against a target.
+
+An approved lifecycle rename updates every repository-owned consumer atomically.
+The former `check:fast` and `check:ansible` tasks are removed without aliases.
 
 ## Validation architecture
 
@@ -368,7 +405,7 @@ roles/<role>/molecule/<scenario>/
 and expose a future command shaped as:
 
 ```text
-mise run check:molecule -- <role>/<scenario>
+mise run validate:molecule -- <role>/<scenario>
 ```
 
 Container scenarios do not claim to validate Raspberry Pi hardware, ARM behavior
@@ -387,14 +424,14 @@ approximately two-minute objective.
 ### Public commands
 
 ```text
-mise run check:fast
-mise run check:ansible
+mise run validate:fast
+mise run validate:ansible
 mise run ci:changed
 mise run ci:changed -- --dry-run
 mise run ci
 ```
 
-- `check:fast` and `check:ansible` are focused development commands.
+- `validate:fast` and `validate:ansible` are focused local-validation commands.
 - `ci:changed` discovers, explains, and executes the required depth.
 - `ci:changed -- --dry-run` classifies and explains without executing.
 - `ci` forces all currently implemented offline validation.
@@ -537,7 +574,7 @@ and then rerun the same validator separately. A separate blanket
 `ansible-playbook --syntax-check` pass is added only if a measured coverage audit
 shows playbooks not reached by ansible-lint.
 
-### `fast` checks
+### `fast` validation
 
 The initial high-value set is:
 
@@ -553,10 +590,10 @@ The initial high-value set is:
 - lock/configuration consistency;
 - redacted Gitleaks coverage of the pull-request range on clean CI checkouts,
   the branch range plus working tree for local `ci:changed`, full history plus
-  working tree for `ci`, and the working tree for standalone `check:fast`;
+  working tree for `ci`, and the working tree for standalone `validate:fast`;
 - fast operator-wrapper unit contracts that require no Ansible target.
 
-### `ansible` checks
+### `ansible` validation
 
 The initial high-value set is:
 
@@ -692,4 +729,7 @@ Issue #1 is complete when:
 17. all implementation-plan verification commands pass from a clean checkout;
 18. repository policy forbids direct publication to `main`, and tracked guarded
     tooling can check, plan, and explicitly reconcile the exact `Protect main`
-    Ruleset and squash-only merge settings.
+    Ruleset and squash-only merge settings;
+19. local assurance uses the atomic `validate:fast` and `validate:ansible`
+    lifecycle names without retaining aliases, while GitHub protection follows
+    `check -> plan -> authorize -> confirm -> apply -> read-back`.
