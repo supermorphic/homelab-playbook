@@ -10,24 +10,26 @@ from types import ModuleType
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-REPOSITORY_CHECKS_PATH = REPOSITORY_ROOT / "scripts" / "ci" / "repository_checks.py"
+REPOSITORY_VALIDATION_PATH = (
+    REPOSITORY_ROOT / "scripts" / "ci" / "repository_validation.py"
+)
 
 
-def load_repository_checks() -> ModuleType:
+def load_repository_validation() -> ModuleType:
     spec = importlib.util.spec_from_file_location(
-        "repository_checks", REPOSITORY_CHECKS_PATH
+        "repository_validation", REPOSITORY_VALIDATION_PATH
     )
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"could not load {REPOSITORY_CHECKS_PATH}")
+        raise RuntimeError(f"could not load {REPOSITORY_VALIDATION_PATH}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-repository_checks = load_repository_checks()
+repository_validation = load_repository_validation()
 
 
-class RepositoryCheckTests(unittest.TestCase):
+class RepositoryValidationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.repo_root = Path(self.temporary_directory.name)
@@ -45,14 +47,14 @@ class RepositoryCheckTests(unittest.TestCase):
     def test_json_parser_accepts_valid_json(self) -> None:
         file_path = self.write("config.json", '{"enabled": true}\n')
 
-        errors = repository_checks.check_json(file_path, self.repo_root)
+        errors = repository_validation.validate_json(file_path, self.repo_root)
 
         self.assertEqual([], errors)
 
     def test_json_parser_reports_relative_path_for_invalid_json(self) -> None:
         file_path = self.write("nested/config.json", '{"private-marker": }\n')
 
-        errors = repository_checks.check_json(file_path, self.repo_root)
+        errors = repository_validation.validate_json(file_path, self.repo_root)
 
         self.assertEqual(["nested/config.json: invalid JSON"], errors)
         self.assertNotIn("private-marker", errors[0])
@@ -60,14 +62,14 @@ class RepositoryCheckTests(unittest.TestCase):
     def test_toml_parser_accepts_valid_toml(self) -> None:
         file_path = self.write("settings.toml", '[tool]\nenabled = true\n')
 
-        errors = repository_checks.check_toml(file_path, self.repo_root)
+        errors = repository_validation.validate_toml(file_path, self.repo_root)
 
         self.assertEqual([], errors)
 
     def test_toml_parser_reports_relative_path_for_invalid_toml(self) -> None:
         file_path = self.write("nested/settings.toml", '[tool\nprivate-marker = true\n')
 
-        errors = repository_checks.check_toml(file_path, self.repo_root)
+        errors = repository_validation.validate_toml(file_path, self.repo_root)
 
         self.assertEqual(["nested/settings.toml: invalid TOML"], errors)
         self.assertNotIn("private-marker", errors[0])
@@ -75,7 +77,7 @@ class RepositoryCheckTests(unittest.TestCase):
     def test_executable_script_requires_shebang(self) -> None:
         file_path = self.write("missing-shebang.sh", "exit 0\n", mode=0o755)
 
-        errors = repository_checks.check_executable(file_path, self.repo_root)
+        errors = repository_validation.validate_executable(file_path, self.repo_root)
 
         self.assertEqual(
             ["missing-shebang.sh: executable file is missing a shebang"], errors
@@ -86,7 +88,7 @@ class RepositoryCheckTests(unittest.TestCase):
             "not-executable.sh", "#!/usr/bin/env bash\nexit 0\n", mode=0o644
         )
 
-        errors = repository_checks.check_executable(file_path, self.repo_root)
+        errors = repository_validation.validate_executable(file_path, self.repo_root)
 
         self.assertEqual(
             ["not-executable.sh: shebang file is not executable"], errors
@@ -97,7 +99,7 @@ class RepositoryCheckTests(unittest.TestCase):
             "valid.sh", "#!/usr/bin/env bash\nexit 0\n", mode=0o755
         )
 
-        errors = repository_checks.check_executable(file_path, self.repo_root)
+        errors = repository_validation.validate_executable(file_path, self.repo_root)
 
         self.assertEqual([], errors)
         self.assertTrue(os.access(file_path, os.X_OK))
@@ -108,14 +110,14 @@ class RepositoryCheckTests(unittest.TestCase):
             "Apache License\nVersion 2.0, January 2004\n",
         )
 
-        errors = repository_checks.check_license(self.repo_root)
+        errors = repository_validation.validate_license(self.repo_root)
 
         self.assertEqual([], errors)
 
     def test_license_rejects_wrong_license(self) -> None:
         self.write("LICENSE", "GNU GENERAL PUBLIC LICENSE\nVersion 3\n")
 
-        errors = repository_checks.check_license(self.repo_root)
+        errors = repository_validation.validate_license(self.repo_root)
 
         self.assertEqual(["LICENSE: missing Apache-2.0 signature"], errors)
 
@@ -126,7 +128,7 @@ class RepositoryCheckTests(unittest.TestCase):
             '[[tools.python]]\nversion = "3.13.14"\nspecifiers = ["3.13.14"]\n',
         )
 
-        errors = repository_checks.check_mise_lock(self.repo_root)
+        errors = repository_validation.validate_mise_lock(self.repo_root)
 
         self.assertEqual([], errors)
 
@@ -137,7 +139,7 @@ class RepositoryCheckTests(unittest.TestCase):
             '[[tools.python]]\nversion = "3.13.13"\nspecifiers = ["3.13.13"]\n',
         )
 
-        errors = repository_checks.check_mise_lock(self.repo_root)
+        errors = repository_validation.validate_mise_lock(self.repo_root)
 
         self.assertEqual(
             [
@@ -154,7 +156,7 @@ class RepositoryCheckTests(unittest.TestCase):
         )
         self.write("mise.lock", "lockfile_version = 1\n[tools]\n")
 
-        errors = repository_checks.check_mise_lock(self.repo_root)
+        errors = repository_validation.validate_mise_lock(self.repo_root)
 
         self.assertEqual(
             [
@@ -175,7 +177,7 @@ class RepositoryCheckTests(unittest.TestCase):
             '[[tools.python]]\nversion = "3.13.14"\nspecifiers = ["latest"]\n',
         )
 
-        errors = repository_checks.check_mise_lock(self.repo_root)
+        errors = repository_validation.validate_mise_lock(self.repo_root)
 
         self.assertEqual(
             [
@@ -189,7 +191,7 @@ class RepositoryCheckTests(unittest.TestCase):
         self.write(".mise.toml", '[tools\npython = "3.13.14"\n')
         self.write("mise.lock", "lockfile_version = 1\n")
 
-        errors = repository_checks.check_mise_lock(self.repo_root)
+        errors = repository_validation.validate_mise_lock(self.repo_root)
 
         self.assertEqual(
             [
@@ -213,7 +215,7 @@ class RepositoryCheckTests(unittest.TestCase):
             check=True,
         )
 
-        discovered = repository_checks.discover_repository_files(self.repo_root)
+        discovered = repository_validation.discover_repository_files(self.repo_root)
 
         self.assertIn(tracked, discovered)
         self.assertIn(untracked, discovered)

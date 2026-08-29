@@ -17,11 +17,11 @@ mise run bootstrap
 
 ## Focused validation
 
-Run the focused repository-owned checks while iterating:
+Run the focused repository-owned validation while iterating:
 
 ```bash
-mise run check:fast
-mise run check:ansible
+mise run validate:fast
+mise run validate:ansible
 ```
 
 Before claiming completion, run the change-directed validation. Use the full

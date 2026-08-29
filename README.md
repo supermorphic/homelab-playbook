@@ -69,12 +69,12 @@ including encrypted file bytes, without decryption or plaintext output.
 
 ## Validation
 
-Use focused checks while iterating, then run change-directed validation before
+Use focused validation while iterating, then run change-directed validation before
 claiming completion:
 
 ```bash
-mise run check:fast
-mise run check:ansible
+mise run validate:fast
+mise run validate:ansible
 mise run ci:changed
 ```
 

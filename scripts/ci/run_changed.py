@@ -11,21 +11,21 @@ import classify
 
 
 COMMANDS = {
-    "fast": [["mise", "run", "check:fast"]],
+    "fast": [["mise", "run", "validate:fast"]],
     "ansible": [
-        ["mise", "run", "check:fast"],
-        ["mise", "run", "check:ansible"],
+        ["mise", "run", "validate:fast"],
+        ["mise", "run", "validate:ansible"],
     ],
     "full": [
-        ["mise", "run", "check:fast"],
-        ["mise", "run", "check:ansible"],
+        ["mise", "run", "validate:fast"],
+        ["mise", "run", "validate:ansible"],
     ],
 }
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Classify local changes and run required offline checks"
+        description="Classify local changes and run required offline validation"
     )
     parser.add_argument("--base", default="origin/main", metavar="REF")
     parser.add_argument("--head", default="HEAD", metavar="REF")

@@ -27,7 +27,7 @@ def relative_name(file_path: Path, repo_root: Path) -> str:
     return file_path.relative_to(repo_root).as_posix()
 
 
-def check_json(file_path: Path, repo_root: Path) -> list[str]:
+def validate_json(file_path: Path, repo_root: Path) -> list[str]:
     try:
         with file_path.open(encoding="utf-8") as source:
             json.load(source)
@@ -36,7 +36,7 @@ def check_json(file_path: Path, repo_root: Path) -> list[str]:
     return []
 
 
-def check_toml(file_path: Path, repo_root: Path) -> list[str]:
+def validate_toml(file_path: Path, repo_root: Path) -> list[str]:
     try:
         with file_path.open("rb") as source:
             tomllib.load(source)
@@ -45,7 +45,7 @@ def check_toml(file_path: Path, repo_root: Path) -> list[str]:
     return []
 
 
-def check_executable(file_path: Path, repo_root: Path) -> list[str]:
+def validate_executable(file_path: Path, repo_root: Path) -> list[str]:
     try:
         mode = file_path.stat().st_mode
         with file_path.open("rb") as source:
@@ -89,7 +89,7 @@ def discover_repository_files(repo_root: Path) -> list[Path]:
     return sorted(repo_root / relative_path for relative_path in relative_paths)
 
 
-def check_license(repo_root: Path) -> list[str]:
+def validate_license(repo_root: Path) -> list[str]:
     try:
         license_text = (repo_root / "LICENSE").read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -119,7 +119,7 @@ def exact_version(tool_value: object) -> str | None:
     return normalized
 
 
-def check_mise_lock(repo_root: Path) -> list[str]:
+def validate_mise_lock(repo_root: Path) -> list[str]:
     try:
         with (repo_root / ".mise.toml").open("rb") as source:
             mise_config = tomllib.load(source)
@@ -165,17 +165,17 @@ def check_mise_lock(repo_root: Path) -> list[str]:
     return errors
 
 
-def repository_errors(repo_root: Path) -> list[str]:
+def repository_validation_errors(repo_root: Path) -> list[str]:
     errors: list[str] = []
     for file_path in discover_repository_files(repo_root):
         if file_path.suffix == ".json":
-            errors.extend(check_json(file_path, repo_root))
+            errors.extend(validate_json(file_path, repo_root))
         elif file_path.suffix == ".toml":
-            errors.extend(check_toml(file_path, repo_root))
-        errors.extend(check_executable(file_path, repo_root))
+            errors.extend(validate_toml(file_path, repo_root))
+        errors.extend(validate_executable(file_path, repo_root))
 
-    errors.extend(check_license(repo_root))
-    errors.extend(check_mise_lock(repo_root))
+    errors.extend(validate_license(repo_root))
+    errors.extend(validate_mise_lock(repo_root))
     return errors
 
 
@@ -186,7 +186,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     repo_root = arguments.root.resolve()
 
     try:
-        errors = repository_errors(repo_root)
+        errors = repository_validation_errors(repo_root)
     except subprocess.CalledProcessError:
         print("error: repository file discovery failed", file=sys.stderr)
         return 1
@@ -196,7 +196,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"error: {error}", file=sys.stderr)
         return 1
 
-    print("Repository checks passed.")
+    print("Repository validation passed.")
     return 0
 
 

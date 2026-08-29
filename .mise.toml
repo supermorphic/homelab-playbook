@@ -22,21 +22,21 @@ run = "./scripts/bootstrap.sh"
 description = "Run one playbook action against a named inventory"
 run = "./scripts/playbook.sh"
 
-[tasks."check:fast"]
+[tasks."validate:fast"]
 description = "Run fast repository and security validation"
-run = "./scripts/ci/check-fast.sh"
+run = "./scripts/ci/validate-fast.sh"
 
-[tasks."check:ansible"]
+[tasks."validate:ansible"]
 description = "Run offline Ansible, inventory, and Vault validation"
-run = "./scripts/ci/check-ansible.sh"
+run = "./scripts/ci/validate-ansible.sh"
 
 [tasks."ci:changed"]
-description = "Classify local changes and run the required offline checks"
+description = "Classify local changes and run required offline validation"
 run = "uv run --frozen --no-sync python scripts/ci/run_changed.py"
 
 [tasks.ci]
 description = "Run complete offline validation"
 run = '''
-FULL_SECRET_SCAN=1 mise run check:fast
-mise run check:ansible
+FULL_SECRET_SCAN=1 mise run validate:fast
+mise run validate:ansible
 '''

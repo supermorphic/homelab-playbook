@@ -87,11 +87,11 @@ jobs:
         run: |
           started_at=$SECONDS
           validation_status=0
-          mise run check:fast || validation_status=$?
+          mise run validate:fast || validation_status=$?
           elapsed_seconds=$((SECONDS - started_at))
           {
             printf '%s\n\n' '### fast validation'
-            printf -- "- Command: \`%s\`\n" 'mise run check:fast'
+            printf -- "- Command: \`%s\`\n" 'mise run validate:fast'
             printf -- '- Validation duration: %s seconds\n' "$elapsed_seconds"
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$validation_status"
@@ -102,11 +102,11 @@ jobs:
         run: |
           started_at=$SECONDS
           validation_status=0
-          mise run check:fast || validation_status=$?
+          mise run validate:fast || validation_status=$?
           elapsed_seconds=$((SECONDS - started_at))
           {
             printf '%s\n\n' '### fast validation'
-            printf -- "- Command: \`%s\`\n" 'mise run check:fast'
+            printf -- "- Command: \`%s\`\n" 'mise run validate:fast'
             printf -- '- Validation duration: %s seconds\n' "$elapsed_seconds"
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$validation_status"
@@ -137,11 +137,11 @@ jobs:
         run: |
           started_at=$SECONDS
           validation_status=0
-          mise run check:ansible || validation_status=$?
+          mise run validate:ansible || validation_status=$?
           elapsed_seconds=$((SECONDS - started_at))
           {
             printf '%s\n\n' '### Ansible validation'
-            printf -- "- Command: \`%s\`\n" 'mise run check:ansible'
+            printf -- "- Command: \`%s\`\n" 'mise run validate:ansible'
             printf -- '- Validation duration: %s seconds\n' "$elapsed_seconds"
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$validation_status"

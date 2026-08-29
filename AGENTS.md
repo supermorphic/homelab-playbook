@@ -18,7 +18,7 @@
 
 - Run `mise run bootstrap` explicitly after checkout or dependency changes.
 - Use `mise run playbook -- <playbook> <action> <inventory> [ansible-args...]` for operator execution.
-- Use focused `mise run check:fast` and `mise run check:ansible` checks while iterating.
+- Use focused `mise run validate:fast` and `mise run validate:ansible` validation while iterating.
 - Before claiming completion, run `mise run ci:changed`; use `mise run ci` to escalate.
 - The repository classifier chooses the minimum required depth. Agents may escalate but never de-escalate it.
 

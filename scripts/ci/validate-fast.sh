@@ -4,12 +4,12 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
-uv run --frozen --no-sync python scripts/ci/candidate_checks.py
+uv run --frozen --no-sync python scripts/ci/candidate_validation.py
 
 uv lock --check
 uv run --frozen --no-sync python -m unittest discover -s tests/ci -p 'test_*.py'
 uv run --frozen --no-sync python -m unittest discover -s tests/toolchain -p 'test_*.py'
-uv run --frozen --no-sync python scripts/ci/repository_checks.py
+uv run --frozen --no-sync python scripts/ci/repository_validation.py
 uv run --frozen --no-sync yamllint --strict .
 bash tests/operator/run-playbook-test.sh
 

@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 
-class CandidateCheckError(RuntimeError):
+class CandidateValidationError(RuntimeError):
     """Raised when candidate Git state cannot be validated safely."""
 
 
@@ -22,7 +22,7 @@ def _run_captured(command: list[str], repo_root: Path) -> bytes:
             stderr=subprocess.PIPE,
         )
     except (OSError, subprocess.CalledProcessError) as error:
-        raise CandidateCheckError from error
+        raise CandidateValidationError from error
     return result.stdout
 
 
@@ -36,13 +36,13 @@ def _object_id(output: bytes) -> str:
             for character in object_ids[0]
         )
     ):
-        raise CandidateCheckError
+        raise CandidateValidationError
     return object_ids[0].decode("ascii")
 
 
 def _resolve_commit(repo_root: Path, revision: str) -> str:
     if not revision or "\0" in revision:
-        raise CandidateCheckError
+        raise CandidateValidationError
     return _object_id(
         _run_captured(
             [
@@ -63,7 +63,7 @@ def _candidate_range(repo_root: Path) -> tuple[str, str] | None:
     if not base_revision and not head_revision:
         return None
     if not base_revision or not head_revision:
-        raise CandidateCheckError
+        raise CandidateValidationError
 
     resolved_base = _resolve_commit(repo_root, base_revision)
     resolved_head = _resolve_commit(repo_root, head_revision)
@@ -82,7 +82,7 @@ def _run(command: list[str], repo_root: Path) -> int:
         return 127
 
 
-def check_whitespace(
+def validate_whitespace(
     repo_root: Path,
     candidate_range: tuple[str, str] | None,
     include_worktree: bool,
@@ -107,7 +107,7 @@ def check_whitespace(
     return 0
 
 
-def check_secrets(
+def validate_secrets(
     repo_root: Path,
     candidate_range: tuple[str, str] | None,
     include_worktree: bool,
@@ -155,16 +155,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         candidate_range = _candidate_range(repo_root)
-    except CandidateCheckError:
+    except CandidateValidationError:
         print("error: could not resolve candidate Git range", file=sys.stderr)
         return 1
 
-    whitespace_status = check_whitespace(
+    whitespace_status = validate_whitespace(
         repo_root, candidate_range, include_worktree
     )
     if whitespace_status != 0:
         return whitespace_status
-    return check_secrets(
+    return validate_secrets(
         repo_root, candidate_range, include_worktree, full_history
     )
 

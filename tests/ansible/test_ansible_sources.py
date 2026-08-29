@@ -12,7 +12,7 @@ from pathlib import Path, PurePosixPath
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_BUILDER = REPOSITORY_ROOT / "scripts/ci/ansible-sources.sh"
-ANSIBLE_CHECK = REPOSITORY_ROOT / "scripts/ci/check-ansible.sh"
+ANSIBLE_VALIDATION = REPOSITORY_ROOT / "scripts/ci/validate-ansible.sh"
 ENCRYPTED_EXCLUSIONS = {
     "inventory/frozen/k3s/group_vars/k3s_cluster/vault.yml",
     "inventory/production/group_vars/pihole/vault.yml",
@@ -262,14 +262,16 @@ class AnsibleSourceContracts(unittest.TestCase):
             self.assertEqual(b"", result.stdout)
             self.assertIn(b"no explicit Ansible sources", result.stderr)
 
-    def test_ansible_check_propagates_source_builder_failure_before_lint(
+    def test_ansible_validation_propagates_source_builder_failure_before_lint(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
             repository_root = Path(temporary_name)
-            ansible_check = repository_root / "scripts" / "ci" / "check-ansible.sh"
-            ansible_check.parent.mkdir(parents=True)
-            shutil.copy2(ANSIBLE_CHECK, ansible_check)
+            ansible_validation = (
+                repository_root / "scripts" / "ci" / "validate-ansible.sh"
+            )
+            ansible_validation.parent.mkdir(parents=True)
+            shutil.copy2(ANSIBLE_VALIDATION, ansible_validation)
             source_builder = (
                 repository_root / "scripts" / "ci" / "ansible-sources.sh"
             )
@@ -309,7 +311,7 @@ class AnsibleSourceContracts(unittest.TestCase):
             environment["FAKE_UV_LOG"] = os.fspath(fake_uv_log)
 
             result = subprocess.run(
-                ["bash", str(ansible_check)],
+                ["bash", str(ansible_validation)],
                 cwd=repository_root,
                 env=environment,
                 check=False,

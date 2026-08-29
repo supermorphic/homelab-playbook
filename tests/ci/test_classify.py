@@ -119,7 +119,7 @@ class PathClassificationTests(unittest.TestCase):
             "requirements.yml": "full",
             ".github/workflows/ci.yml": "full",
             "scripts/ci/classify.py": "full",
-            "scripts/ci/check-fast.sh": "full",
+            "scripts/ci/validate-fast.sh": "full",
             "tests/ci/test_classify.py": "full",
             "tests/ansible/inventory-test.sh": "full",
             "unknown/new-surface.txt": "full",
@@ -641,8 +641,8 @@ class ChangedRunnerTests(unittest.TestCase):
             result.stdout,
         )
         self.assertEqual(1, result.stdout.count("Would run:"))
-        self.assertIn("Would run: mise run check:fast", result.stdout)
-        self.assertNotIn("check:ansible", result.stdout)
+        self.assertIn("Would run: mise run validate:fast", result.stdout)
+        self.assertNotIn("validate:ansible", result.stdout)
 
     def test_ansible_dry_run_prints_fast_then_ansible_commands(self) -> None:
         self.repository.write("roles/update_pihole/tasks/new.yml", "---\n")
@@ -653,8 +653,8 @@ class ChangedRunnerTests(unittest.TestCase):
         self.assertIn("Selected validation depth: ansible", result.stdout)
         self.assertEqual(2, result.stdout.count("Would run:"))
         self.assertLess(
-            result.stdout.index("Would run: mise run check:fast"),
-            result.stdout.index("Would run: mise run check:ansible"),
+            result.stdout.index("Would run: mise run validate:fast"),
+            result.stdout.index("Would run: mise run validate:ansible"),
         )
 
     def test_dry_run_may_escalate_to_full(self) -> None:

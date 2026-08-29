@@ -4,11 +4,11 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
-ansible_check_root="$(mktemp -d)"
-trap 'rm -rf -- "$ansible_check_root"' EXIT
+ansible_validation_root="$(mktemp -d)"
+trap 'rm -rf -- "$ansible_validation_root"' EXIT
 
-ansible_config="$ansible_check_root/ansible.cfg"
-lint_output="$ansible_check_root/ansible-lint.txt"
+ansible_config="$ansible_validation_root/ansible.cfg"
+lint_output="$ansible_validation_root/ansible-lint.txt"
 printf '[defaults]\nroles_path = %s/.ansible/roles:%s/roles\ncollections_path = %s/.ansible/collections\n' \
   "$repo_root" "$repo_root" "$repo_root" > "$ansible_config"
 export ANSIBLE_CONFIG="$ansible_config"
@@ -28,7 +28,7 @@ uv run --frozen --no-sync python -m unittest -v \
   tests/ansible/test_ansible_sources.py \
   tests/ansible/test_source_contracts.py
 
-ansible_source_manifest="$ansible_check_root/ansible-sources.bin"
+ansible_source_manifest="$ansible_validation_root/ansible-sources.bin"
 bash scripts/ci/ansible-sources.sh > "$ansible_source_manifest"
 
 ansible_sources=()

@@ -96,9 +96,9 @@ def direct_mapping_block(source: str, key: str, indent: int) -> str:
 def workflow_observability_errors(source: str) -> list[str]:
     errors: list[str] = []
     contracts = (
-        ("Run pull request fast validation", "mise run check:fast"),
-        ("Run full-history fast validation", "mise run check:fast"),
-        ("Run offline Ansible validation", "mise run check:ansible"),
+        ("Run pull request fast validation", "mise run validate:fast"),
+        ("Run full-history fast validation", "mise run validate:fast"),
+        ("Run offline Ansible validation", "mise run validate:ansible"),
     )
     for step_name, command in contracts:
         try:
@@ -372,10 +372,12 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("needs:", self.fast)
         sync = "mise exec -- uv sync --frozen --only-group fast"
         self.assertEqual(1, self.fast.count(sync))
-        self.assertLess(self.fast.index(sync), self.fast.index("mise run check:fast"))
+        self.assertLess(
+            self.fast.index(sync), self.fast.index("mise run validate:fast")
+        )
         self.assertEqual(
             2,
-            self.fast.count("mise run check:fast || validation_status=$?"),
+            self.fast.count("mise run validate:fast || validation_status=$?"),
         )
 
         pull_request_step = named_step_block(
@@ -417,11 +419,13 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(1, self.ansible.count("mise run bootstrap"))
         self.assertEqual(
             1,
-            self.ansible.count("mise run check:ansible || validation_status=$?"),
+            self.ansible.count(
+                "mise run validate:ansible || validation_status=$?"
+            ),
         )
         self.assertLess(
             self.ansible.index("mise run bootstrap"),
-            self.ansible.index("mise run check:ansible"),
+            self.ansible.index("mise run validate:ansible"),
         )
         lowered = self.ansible.lower()
         for forbidden in ("secrets.", "kubeconfig", "ssh", "inventory/production"):
@@ -435,8 +439,8 @@ class WorkflowContractTests(unittest.TestCase):
 
     def test_workflow_observability_contract_rejects_command_mutations(self) -> None:
         mutations = (
-            self.workflow.replace("mise run check:fast", "mise run ci"),
-            self.workflow.replace("mise run check:ansible", "mise run ci"),
+            self.workflow.replace("mise run validate:fast", "mise run ci"),
+            self.workflow.replace("mise run validate:ansible", "mise run ci"),
         )
 
         for mutated_workflow in mutations:
