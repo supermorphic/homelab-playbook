@@ -75,8 +75,12 @@ class GhAPI:
         method: str,
         endpoint: str,
         payload: dict[str, Any] | None = None,
+        *,
+        paginate: bool = False,
     ) -> Any:
         method = method.upper()
+        if paginate and (method != "GET" or payload is not None):
+            raise ProtectionError("pagination is supported only for GET requests")
         arguments = [
             "gh",
             "api",
@@ -86,8 +90,10 @@ class GhAPI:
             "Accept: application/vnd.github+json",
             "--header",
             "X-GitHub-Api-Version: 2022-11-28",
-            endpoint,
         ]
+        if paginate:
+            arguments.extend(["--paginate", "--slurp"])
+        arguments.append(endpoint)
         input_text = None
         if payload is not None:
             arguments.extend(["--input", "-"])
@@ -175,6 +181,22 @@ def expected_ruleset(integration_id: int) -> dict[str, Any]:
     }
 
 
+def expected_effective_rules(
+    integration_id: int,
+    ruleset_id: int,
+) -> list[dict[str, Any]]:
+    _require_int(ruleset_id, "ruleset ID")
+    return [
+        {
+            **rule,
+            "ruleset_id": ruleset_id,
+            "ruleset_source_type": "Repository",
+            "ruleset_source": REPOSITORY,
+        }
+        for rule in expected_rules(integration_id)
+    ]
+
+
 def _require_dict(value: Any, path: str) -> dict[str, Any]:
     if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
         raise ProtectionError(f"malformed GitHub response at {path}: expected object")
@@ -211,12 +233,50 @@ def _workflow_matches(path: Any) -> bool:
     return isinstance(path, str) and (path == WORKFLOW or path.endswith(f"/{WORKFLOW}"))
 
 
+def _paginated_array(api: Any, endpoint: str, path: str) -> list[Any]:
+    pages = _require_list(
+        api.request("GET", endpoint, paginate=True),
+        f"{path} pages",
+    )
+    if not pages:
+        raise ProtectionError(f"malformed GitHub response at {path} pages: empty")
+    items: list[Any] = []
+    for page_index, raw_page in enumerate(pages):
+        page = _require_list(raw_page, f"{path} pages[{page_index}]")
+        items.extend(page)
+    return items
+
+
+def _paginated_object_items(
+    api: Any,
+    endpoint: str,
+    field: str,
+    path: str,
+) -> list[Any]:
+    pages = _require_list(
+        api.request("GET", endpoint, paginate=True),
+        f"{path} pages",
+    )
+    if not pages:
+        raise ProtectionError(f"malformed GitHub response at {path} pages: empty")
+    items: list[Any] = []
+    for page_index, raw_page in enumerate(pages):
+        page = _require_dict(raw_page, f"{path} pages[{page_index}]")
+        page_items = _require_list(
+            page.get(field),
+            f"{path} pages[{page_index}].{field}",
+        )
+        items.extend(page_items)
+    return items
+
+
 def discover_integration_id(api: Any) -> int:
-    response = _require_dict(
-        api.request("GET", WORKFLOW_RUNS_ENDPOINT),
+    runs = _paginated_object_items(
+        api,
+        WORKFLOW_RUNS_ENDPOINT,
+        "workflow_runs",
         "workflow runs",
     )
-    runs = _require_list(response.get("workflow_runs"), "workflow_runs")
     for index, raw_run in enumerate(runs):
         run = _require_dict(raw_run, f"workflow_runs[{index}]")
         if (
@@ -226,17 +286,49 @@ def discover_integration_id(api: Any) -> int:
         ):
             continue
         head_sha = _require_string(run.get("head_sha"), f"workflow_runs[{index}].head_sha")
+        check_suite_id = _require_int(
+            run.get("check_suite_id"),
+            f"workflow_runs[{index}].check_suite_id",
+        )
+        check_suite_url = _require_string(
+            run.get("check_suite_url"),
+            f"workflow_runs[{index}].check_suite_url",
+        )
+        expected_check_suite_url = (
+            f"https://api.github.com/repos/{REPOSITORY}/check-suites/{check_suite_id}"
+        )
+        if check_suite_url != expected_check_suite_url:
+            raise ProtectionError(
+                f"malformed GitHub response at workflow_runs[{index}].check_suite_url: "
+                f"expected {expected_check_suite_url!r} for check_suite_id "
+                f"{check_suite_id}, got {check_suite_url!r}"
+            )
         endpoint = (
-            f"{REPOSITORY_ENDPOINT}/commits/{head_sha}/check-runs"
+            f"{REPOSITORY_ENDPOINT}/check-suites/{check_suite_id}/check-runs"
             f"?check_name={CHECK_NAME}&per_page=100"
         )
-        check_response = _require_dict(
-            api.request("GET", endpoint),
-            f"check runs for {head_sha}",
+        checks = _paginated_object_items(
+            api,
+            endpoint,
+            "check_runs",
+            f"check runs for workflow run {head_sha} suite {check_suite_id}",
         )
-        checks = _require_list(check_response.get("check_runs"), "check_runs")
         for check_index, raw_check in enumerate(checks):
             check = _require_dict(raw_check, f"check_runs[{check_index}]")
+            check_suite = _require_dict(
+                check.get("check_suite"),
+                f"check_runs[{check_index}].check_suite",
+            )
+            reported_check_suite_id = _require_int(
+                check_suite.get("id"),
+                f"check_runs[{check_index}].check_suite.id",
+            )
+            if reported_check_suite_id != check_suite_id:
+                raise ProtectionError(
+                    f"malformed GitHub response at check_runs[{check_index}]."
+                    f"check_suite.id: expected selected check suite {check_suite_id}, "
+                    f"got {reported_check_suite_id}"
+                )
             app = check.get("app")
             if (
                 check.get("name") != CHECK_NAME
@@ -394,28 +486,61 @@ def _managed_summaries(value: Any) -> list[dict[str, Any]]:
     for index, raw_summary in enumerate(summaries):
         summary = _require_dict(raw_summary, f"rulesets[{index}]")
         name = _require_string(summary.get("name"), f"rulesets[{index}].name")
-        ruleset_id = _require_int(summary.get("id"), f"rulesets[{index}].id")
-        source_type = summary.get("source_type")
-        source = summary.get("source")
+        if name != RULESET_NAME:
+            continue
+        try:
+            ruleset_id = _require_int(summary.get("id"), f"rulesets[{index}].id")
+            source_type = _require_string(
+                summary.get("source_type"),
+                f"rulesets[{index}].source_type",
+            )
+            source = _require_string(
+                summary.get("source"),
+                f"rulesets[{index}].source",
+            )
+        except ProtectionError as error:
+            raise ProtectionError(
+                f"ambiguous {RULESET_NAME} ruleset summary at rulesets[{index}]: "
+                f"ownership metadata is incomplete or malformed ({error})"
+            ) from error
         if name == RULESET_NAME and source_type == "Repository" and source == REPOSITORY:
             managed.append({"id": ruleset_id})
     return managed
 
 
-def _normalize_effective_rules(value: Any) -> tuple[dict[str, Any], ...]:
+def normalize_effective_rules(value: Any) -> tuple[dict[str, Any], ...]:
     rules = _require_list(value, "effective rules")
     normalized: list[dict[str, Any]] = []
     for index, raw_rule in enumerate(rules):
         rule = _require_dict(raw_rule, f"effective_rules[{index}]")
-        _require_string(rule.get("type"), f"effective_rules[{index}].type")
-        normalized.append(_normalize_json(rule, f"effective_rules[{index}]"))
+        path = f"effective_rules[{index}]"
+        semantic_rule = {"type": rule.get("type")}
+        if "parameters" in rule:
+            semantic_rule["parameters"] = rule["parameters"]
+        normalized_rule = _normalize_rule(semantic_rule, path)
+        normalized_rule.update(
+            {
+                "ruleset_id": _require_int(rule.get("ruleset_id"), f"{path}.ruleset_id"),
+                "ruleset_source_type": _require_string(
+                    rule.get("ruleset_source_type"),
+                    f"{path}.ruleset_source_type",
+                ),
+                "ruleset_source": _require_string(
+                    rule.get("ruleset_source"),
+                    f"{path}.ruleset_source",
+                ),
+            }
+        )
+        normalized.append(normalized_rule)
     return tuple(sorted(normalized, key=_rule_sort_key))
 
 
 def collect_state(api: Any) -> ProtectionState:
     repository = _normalize_repository(api.request("GET", REPOSITORY_ENDPOINT))
     integration_id = discover_integration_id(api)
-    summaries = _managed_summaries(api.request("GET", RULESETS_ENDPOINT))
+    summaries = _managed_summaries(
+        _paginated_array(api, RULESETS_ENDPOINT, "rulesets")
+    )
     managed_rulesets: list[dict[str, Any]] = []
     for index, summary in enumerate(summaries):
         ruleset_id = summary["id"]
@@ -426,8 +551,8 @@ def collect_state(api: Any) -> ProtectionState:
         normalized = normalize_ruleset(detail, f"managed ruleset {ruleset_id}")
         normalized["id"] = ruleset_id
         managed_rulesets.append(normalized)
-    effective_rules = _normalize_effective_rules(
-        api.request("GET", EFFECTIVE_RULES_ENDPOINT)
+    effective_rules = normalize_effective_rules(
+        _paginated_array(api, EFFECTIVE_RULES_ENDPOINT, "effective rules")
     )
     return ProtectionState(
         repository=repository,
@@ -458,7 +583,11 @@ def _diff_values(path: str, expected: Any, actual: Any) -> list[str]:
     return []
 
 
-def _rules_drift(expected: list[dict[str, Any]], actual: list[dict[str, Any]]) -> list[str]:
+def _rules_drift(
+    expected: Sequence[dict[str, Any]],
+    actual: Sequence[dict[str, Any]],
+    path_prefix: str = "rules",
+) -> list[str]:
     expected_by_type = {rule["type"]: rule for rule in expected}
     actual_by_type: dict[str, list[dict[str, Any]]] = {}
     for rule in actual:
@@ -466,7 +595,7 @@ def _rules_drift(expected: list[dict[str, Any]], actual: list[dict[str, Any]]) -
 
     messages: list[str] = []
     for rule_type in sorted(set(expected_by_type) | set(actual_by_type)):
-        path = f"rules.{rule_type}"
+        path = f"{path_prefix}.{rule_type}"
         matches = actual_by_type.get(rule_type, [])
         if rule_type not in expected_by_type:
             messages.append(f"{path}: unexpected")
@@ -498,6 +627,14 @@ def drift(state: ProtectionState) -> list[str]:
         expected_rules_value = expected.pop("rules")
         messages.extend(_diff_values("ruleset", expected, actual))
         messages.extend(_rules_drift(expected_rules_value, actual_rules))
+        managed_id = state.managed_rulesets[0]["id"]
+        messages.extend(
+            _rules_drift(
+                expected_effective_rules(state.integration_id, managed_id),
+                state.effective_rules,
+                "effective_rules",
+            )
+        )
     return messages
 
 
@@ -599,12 +736,37 @@ def apply(api: Any, confirmation: str | None) -> list[Action]:
     current = collect_state(api)
     _raise_blockers(blockers(current))
     actions = plan_actions(current)
-    for action in actions:
-        api.request(action.method, action.endpoint, action.payload)
+    write_error: ProtectionError | None = None
+    try:
+        for action in actions:
+            api.request(action.method, action.endpoint, action.payload)
+    except ProtectionError as error:
+        write_error = error
 
     if actions:
-        read_back = collect_state(api)
+        try:
+            read_back = collect_state(api)
+        except ProtectionError as read_back_error:
+            if write_error is not None:
+                raise ProtectionError(
+                    f"write failed: {write_error}; post-write read-back failed: "
+                    f"{read_back_error}; no rollback attempted"
+                ) from write_error
+            raise ProtectionError(
+                f"post-write read-back failed: {read_back_error}"
+            ) from read_back_error
+
         mismatches = [*blockers(read_back), *drift(read_back)]
+        if write_error is not None:
+            observed = (
+                "; ".join(mismatches)
+                if mismatches
+                else "state matches the desired state"
+            )
+            raise ProtectionError(
+                f"write failed: {write_error}; post-write state: {observed}; "
+                "no rollback attempted"
+            ) from write_error
         if mismatches:
             raise ProtectionError("read-back mismatch: " + "; ".join(mismatches))
     return actions

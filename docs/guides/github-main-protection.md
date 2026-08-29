@@ -41,7 +41,11 @@ One active repository Ruleset has these settings:
 - deletion and non-fast-forward updates are blocked.
 
 The GitHub Actions integration identifier is discovered from a recent successful
-`merge-gate` check produced by `ci.yml`. It is never hardcoded or stored.
+`merge-gate` check in the check suite belonging to a successful `ci.yml` workflow
+run. The workflow run's suite identifier and URL must agree, and the accepted
+check must report that same suite identifier. A same-commit check from another
+workflow is not evidence. The integration identifier is never hardcoded or
+stored.
 
 ## Inspect in the GitHub UI
 
@@ -96,16 +100,20 @@ GITHUB_PROTECTION_CONFIRM=apply:github-protection:supermorphic/homelab-playbook 
 The confirmation is deliberately exact and repository-bound, but it is only a
 safety check. It does not replace explicit authority.
 
-Immediately before mutation, `apply` recollects repository settings, all managed
-`Protect main` Rulesets, applicable effective rules, and a current GitHub Actions
-integration identifier. It stops rather than guessing when it finds duplicate
-managed Rulesets, unmanaged effective protection, unsupported visibility, or
+Immediately before mutation, `apply` recollects repository settings, every page
+of managed `Protect main` Rulesets and applicable effective rules, and a current
+GitHub Actions integration identifier. It stops rather than guessing when it
+finds duplicate managed Rulesets, incomplete same-name ownership metadata,
+unmanaged effective protection, unsupported visibility, or
 malformed/inaccessible state. It changes only the merge settings and managed
 Ruleset actions in that fresh plan.
 
 After mutation, `apply` recollects the complete state through the API and fails
-if any blocker or drift remains. A successful mutation without an exact read-back
-is a failed apply.
+if any blocker or drift remains, including any missing or incomplete effective
+rule. If one write succeeds and a later write fails, it still attempts complete
+read-back and reports both the write failure and observed post-write state. It
+does not claim or attempt rollback. A successful mutation without an exact
+read-back is a failed apply.
 
 ## Verify through the normal path
 

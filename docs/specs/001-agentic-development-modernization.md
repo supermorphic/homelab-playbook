@@ -537,19 +537,25 @@ github-protection:apply  guarded mutation followed by complete API read-back
 ```
 
 The tooling resolves the GitHub Actions integration identifier from a recent
-successful `merge-gate` check instead of retaining a global identifier. `check`
-and `plan` never mutate GitHub. `apply` requires an exact repository-scoped
-confirmation value and explicit operator authorization for that invocation. It
-refuses duplicate managed Rulesets or unexpected effective rules rather than
-guessing. Live protection checks remain outside offline CI because they require
-authenticated repository-administration access.
+successful `merge-gate` check in the check suite associated with a successful
+`ci.yml` workflow run instead of retaining a global identifier or accepting an
+unrelated same-commit check. The run's check-suite identifier and URL and the
+check's reported suite identifier must agree. `check` and `plan` never mutate
+GitHub. `apply` requires an exact repository-scoped confirmation value and
+explicit operator authorization for that invocation. It reads every API page
+and refuses duplicate managed Rulesets, incomplete same-name ownership metadata,
+or unexpected effective rules rather than guessing. Live protection checks
+remain outside offline CI because they require authenticated
+repository-administration access.
 
 The implemented desired-state module is
 `scripts/repository/github_protection.py`. It uses only the Python standard
 library and the Mise-pinned GitHub CLI, keeps the discovered integration
 identifier transient, and exposes pure protection tests through fast offline
 validation. Apply recollects immediately before its planned writes and performs
-a complete API read-back before reporting success.
+a complete API read-back before reporting success. A write failure also triggers
+post-write read-back so partial state is reported explicitly; the tool never
+claims or attempts rollback.
 
 Repository policy independently requires feature-branch publication, forbids
 committing or pushing directly to `main`, requires explicit authorization for a
