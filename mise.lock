@@ -90,6 +90,9 @@ version = "0.23.2"
 backend = "npm:markdownlint-cli2"
 specifiers = ["0.23.2"]
 
+[tools."npm:markdownlint-cli2".options]
+trust_policy_excludes = '["fastq@1.20.2"]'
+
 [[tools.pre-commit]]
 version = "4.6.2"
 backend = "aqua:pre-commit/pre-commit"

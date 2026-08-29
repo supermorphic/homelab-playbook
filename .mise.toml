@@ -13,7 +13,8 @@ github-cli = "2.96.0"
 node = "24.18.0"
 pre-commit = "4.6.2"
 "aqua:rhysd/actionlint" = "1.7.12"
-"npm:markdownlint-cli2" = "0.23.2"
+# Reviewed manual fastq release matches its upstream tag; its successor restores provenance.
+"npm:markdownlint-cli2" = { version = "0.23.2", trust_policy_excludes = ["fastq@1.20.2"] }
 
 [tasks.bootstrap]
 description = "Install the locked controller and Galaxy dependencies"

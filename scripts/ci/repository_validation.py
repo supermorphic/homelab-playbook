@@ -21,6 +21,10 @@ EXACT_TOOL_VERSION_PATTERN = re.compile(
     r"^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$"
 )
 BOOTSTRAP_RECOVERY = "run mise run bootstrap"
+TRUST_POLICY_EXCLUDES_OPTION = "trust_policy_excludes"
+APPROVED_TRUST_POLICY_EXCLUDES = {
+    "npm:markdownlint-cli2": ("fastq@1.20.2",),
+}
 
 
 def relative_name(file_path: Path, repo_root: Path) -> str:
@@ -119,6 +123,55 @@ def exact_version(tool_value: object) -> str | None:
     return normalized
 
 
+def validate_mise_trust_policy_excludes(
+    tool_name: str,
+    tool_value: object,
+    lock_entries: object,
+    requested_version: str,
+) -> list[str]:
+    if (
+        not isinstance(tool_value, dict)
+        or TRUST_POLICY_EXCLUDES_OPTION not in tool_value
+    ):
+        return []
+
+    configured_excludes = tool_value[TRUST_POLICY_EXCLUDES_OPTION]
+    approved_excludes = APPROVED_TRUST_POLICY_EXCLUDES.get(tool_name)
+    if (
+        not isinstance(configured_excludes, list)
+        or not all(isinstance(value, str) for value in configured_excludes)
+        or tuple(configured_excludes) != approved_excludes
+    ):
+        return [
+            f".mise.toml: tool {tool_name} has an unapproved "
+            f"{TRUST_POLICY_EXCLUDES_OPTION} value; {BOOTSTRAP_RECOVERY}"
+        ]
+
+    canonical_lock_value = json.dumps(configured_excludes)
+    if not isinstance(lock_entries, list):
+        lock_entries = []
+    version_entries = [
+        entry
+        for entry in lock_entries
+        if isinstance(entry, dict)
+        and entry.get("version") == requested_version
+    ]
+    represented = len(version_entries) == 1 and all(
+        isinstance(entry, dict)
+        and isinstance(entry.get("options"), dict)
+        and entry["options"].get(TRUST_POLICY_EXCLUDES_OPTION)
+        == canonical_lock_value
+        for entry in version_entries
+    )
+    if represented:
+        return []
+    return [
+        f"mise.lock: {TRUST_POLICY_EXCLUDES_OPTION} for "
+        f"{tool_name}@{requested_version} is not represented; "
+        f"{BOOTSTRAP_RECOVERY}"
+    ]
+
+
 def validate_mise_lock(repo_root: Path) -> list[str]:
     try:
         with (repo_root / ".mise.toml").open("rb") as source:
@@ -162,6 +215,14 @@ def validate_mise_lock(repo_root: Path) -> list[str]:
                 f"mise.lock: exact pin {tool_name}@{requested_version} "
                 f"is not represented; {BOOTSTRAP_RECOVERY}"
             )
+        errors.extend(
+            validate_mise_trust_policy_excludes(
+                tool_name,
+                tool_value,
+                lock_entries,
+                requested_version,
+            )
+        )
     return errors
 
 
