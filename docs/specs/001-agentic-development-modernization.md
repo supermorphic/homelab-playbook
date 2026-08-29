@@ -198,7 +198,10 @@ made available to pull-request CI.
 - encrypted variables use Ansible Vault;
 - public variables live outside encrypted files;
 - secret filenames and variable boundaries are documented;
-- production Vault material is never used by CI;
+- production and frozen Vault inputs are never decrypted, inventory-parsed, or
+  passed to Ansible semantic validation by CI;
+- broad redacted repository secret scanning may inspect encrypted file bytes and
+  history without decrypting or printing their contents;
 - CI validates Vault integration with an ephemeral generated password and fixture;
 - scripts must not dump the environment;
 - examples contain no real addresses, tokens, passwords, or private keys beyond
@@ -246,7 +249,8 @@ Galaxy version metadata with every exact role requirement, and compares each
 bootstrap-owned installed override byte-for-byte with its source. Bootstrap
 freshness evidence covers `uv.lock`, `requirements.yml`, and both the source and
 installed form of every override. Every actionable failure directs the operator
-to run `mise run bootstrap`.
+to run `mise run bootstrap`, including missing, unreadable, or malformed local
+freshness evidence.
 
 ## Operator interface
 
@@ -461,6 +465,54 @@ Workflow requirements:
 - no JUnit, Allure, permanent result catalog, or report artifact unless a future
   measured consumer justifies it.
 
+### GitHub main protection
+
+The workflow check and GitHub enforcement are separate controls. The workflow
+publishes the stable `merge-gate` conclusion; an active repository Ruleset is the
+authority that prevents `main` from changing without that conclusion.
+
+The required live GitHub state is:
+
+- repository pull-request merge methods enable squash and disable merge commits
+  and rebase merging;
+- one active repository Ruleset named `Protect main` targets only
+  `refs/heads/main`;
+- the Ruleset has no bypass actors;
+- updates require a pull request with zero required approvals and squash as the
+  only allowed merge method;
+- `merge-gate` is required from GitHub Actions and the candidate must be current
+  with `main`;
+- linear history is required; and
+- deletion and non-fast-forward updates are blocked.
+
+The Ruleset requires a GitHub plan and repository visibility combination that
+supports Rulesets. On the current account plan, public visibility is a protection
+prerequisite. A transition to private visibility without a supporting plan is
+protection drift and must fail the repository-owned check rather than silently
+degrading to advisory CI.
+
+Repository-owned GitHub protection tooling exposes three distinct Mise tasks:
+
+```text
+github-protection:check  read-only comparison of live GitHub state
+github-protection:plan   read-only preview of the exact repair
+github-protection:apply  guarded mutation followed by complete API read-back
+```
+
+The tooling resolves the GitHub Actions integration identifier from a recent
+successful `merge-gate` check instead of retaining a global identifier. `check`
+and `plan` never mutate GitHub. `apply` requires an exact repository-scoped
+confirmation value and explicit operator authorization for that invocation. It
+refuses duplicate managed Rulesets or unexpected effective rules rather than
+guessing. Live protection checks remain outside offline CI because they require
+authenticated repository-administration access.
+
+Repository policy independently requires feature-branch publication, forbids
+committing or pushing directly to `main`, requires explicit authorization for a
+merge or auto-merge action, and requires inspecting the remote feature branch and
+`origin/main` before each push. Local hooks may provide feedback, but the live
+Ruleset—not an optional client-side hook—is the enforcement boundary.
+
 ### Canonical validation ownership
 
 Each invariant runs once:
@@ -473,6 +525,12 @@ Each invariant runs once:
 - the Vault fixture owns secret integration behavior;
 - Gitleaks owns broad repository secret-pattern detection;
 - actionlint and zizmor own GitHub workflow correctness and security analysis.
+
+The explicit Ansible source builder includes tracked and untracked non-ignored
+candidate files, excludes the exact encrypted inputs, rejects symlinks rather
+than following aliases, propagates Git discovery failures, and rejects an empty
+manifest. These fail-closed behaviors prevent implicit ansible-lint discovery or
+an alternate path to encrypted inputs.
 
 Pre-commit may remain a local convenience, but CI does not run a pre-commit hook
 and then rerun the same validator separately. A separate blanket
@@ -631,4 +689,7 @@ Issue #1 is complete when:
     or implemented;
 15. no validation contacts a live host or uses production secrets;
 16. README examples match files and commands that actually exist;
-17. all implementation-plan verification commands pass from a clean checkout.
+17. all implementation-plan verification commands pass from a clean checkout;
+18. repository policy forbids direct publication to `main`, and tracked guarded
+    tooling can check, plan, and explicitly reconcile the exact `Protect main`
+    Ruleset and squash-only merge settings.
