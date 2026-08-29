@@ -44,7 +44,8 @@ Execute against production or staging only with explicit operator direction.
 Select one of these inventory arguments:
 
 - `production` contains the active off-cluster hosts.
-- `staging` is an intentionally empty environment boundary.
+- `staging` contains no hosts; it retains non-active Semaphore deployment and
+  backup inputs for future work.
 - `frozen/k3s` retains the non-active K3s inventory.
 
 Production and staging are operator inputs. Validation parses public-only
@@ -58,14 +59,15 @@ manager. Do not commit key material or embed it in Mise configuration, helper
 scripts, or pull-request CI. Do not decrypt, print, or inspect production Vault
 values during development or validation.
 
-Public group variables live in `vars.yml`; frozen K3s version pins in
-`versions.yml` are public as well. Encrypted variables live only in the sibling
-`vault.yml` files. The active boundary is
-`inventory/production/group_vars/pihole/`, while retained K3s variables are
-under `inventory/frozen/k3s/group_vars/`. Inventory parsing and Ansible semantic
-validation use the public files and never receive either encrypted `vault.yml`
-input. Broad redacted Gitleaks scans inspect repository bytes and history,
-including encrypted file bytes, without decryption or plaintext output.
+Public group variables live in `vars.yml`; version pins in `versions.yml` are
+public as well. Encrypted variables live only in sibling `vault.yml` files. The
+active boundary is `inventory/production/group_vars/pihole/`. Retained
+Semaphore inputs are under `inventory/staging/group_vars/semaphore/`, and
+retained K3s variables are under `inventory/frozen/k3s/group_vars/`. Inventory
+parsing and Ansible semantic validation use the public files and never receive
+encrypted `vault.yml` input. Broad redacted Gitleaks scans inspect repository
+bytes and history, including encrypted file bytes, without decryption or
+plaintext output.
 
 ## Validation
 

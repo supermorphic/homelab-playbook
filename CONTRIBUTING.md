@@ -73,8 +73,8 @@ The repository-root alias is an equivalent thin forwarding wrapper:
 ```
 
 Choose the `production`, `staging`, or `frozen/k3s` inventory selector.
-Production contains active off-cluster hosts, staging is intentionally empty,
-and frozen K3s is retained for static validation only.
+Production contains active off-cluster hosts, staging currently contains no
+hosts, and frozen K3s is retained for static validation only.
 
 Confirm the playbook, action, inventory selector, and additional arguments
 before execution. Run playbooks only against hosts and environments you are

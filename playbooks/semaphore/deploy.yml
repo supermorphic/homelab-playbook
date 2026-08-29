@@ -1,0 +1,5 @@
+---
+- name: Deploy Semaphore UI configuration
+  hosts: semaphore
+  roles:
+    - semaphore

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import tempfile
 import unittest
@@ -15,9 +16,13 @@ TEST_ROLES = (
     ("example.service", "v4.5.6"),
     ("l3d.unbound", "v3.4.5"),
 )
+TEST_COLLECTIONS = (("example.utilities", "7.8.9"),)
 REQUIREMENTS = "---\nroles:\n" + "".join(
     f"  - name: {role_name}\n    version: {role_version}\n"
     for role_name, role_version in TEST_ROLES
+) + "collections:\n" + "".join(
+    f"  - name: {collection_name}\n    version: {collection_version}\n"
+    for collection_name, collection_version in TEST_COLLECTIONS
 )
 
 
@@ -110,9 +115,44 @@ class DependencyVerificationTests(unittest.TestCase):
             self.override_source.read_text() if content is None else content
         )
 
+    def create_collections(
+        self,
+        *,
+        excluding: str | None = None,
+        wrong_metadata: str | None = None,
+    ) -> None:
+        for collection_name, required_version in TEST_COLLECTIONS:
+            if collection_name == excluding:
+                continue
+            namespace, name = collection_name.split(".", maxsplit=1)
+            manifest_path = (
+                self.repo_root
+                / ".ansible"
+                / "collections"
+                / "ansible_collections"
+                / namespace
+                / name
+                / "MANIFEST.json"
+            )
+            manifest_path.parent.mkdir(parents=True)
+            version = "0.0.0" if collection_name == wrong_metadata else required_version
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "collection_info": {
+                            "namespace": namespace,
+                            "name": name,
+                            "version": version,
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
     def create_current_environment(self) -> None:
         self.create_virtualenv_executable()
         self.create_roles()
+        self.create_collections()
         self.create_installed_override()
 
     def write_current_fingerprint(self) -> None:
@@ -203,6 +243,36 @@ class DependencyVerificationTests(unittest.TestCase):
             errors,
         )
 
+    def test_verify_rejects_missing_collection(self) -> None:
+        self.create_virtualenv_executable()
+        self.create_roles()
+        self.create_collections(excluding="example.utilities")
+        self.create_installed_override()
+        self.write_current_fingerprint()
+
+        errors = dependencies.verify(self.repo_root)
+
+        self.assertTrue(any("example.utilities" in error for error in errors), errors)
+
+    def test_verify_rejects_wrong_collection_version(self) -> None:
+        self.create_virtualenv_executable()
+        self.create_roles()
+        self.create_collections(wrong_metadata="example.utilities")
+        self.create_installed_override()
+        self.write_current_fingerprint()
+
+        errors = dependencies.verify(self.repo_root)
+
+        self.assertTrue(
+            any(
+                "example.utilities" in error
+                and "7.8.9" in error
+                and "0.0.0" in error
+                for error in errors
+            ),
+            errors,
+        )
+
     def test_verify_rejects_installed_override_that_differs_from_source(self) -> None:
         self.create_current_environment()
         self.write_current_fingerprint()
@@ -232,6 +302,24 @@ class DependencyVerificationTests(unittest.TestCase):
         errors = dependencies.verify(self.repo_root)
 
         self.assertTrue(any("exact version" in error for error in errors), errors)
+
+    def test_verify_rejects_non_exact_collection_version(self) -> None:
+        self.create_current_environment()
+        requirements_path = self.repo_root / "requirements.yml"
+        requirements_path.write_text(
+            requirements_path.read_text().replace("version: 7.8.9", "version: latest")
+        )
+        self.write_current_fingerprint()
+
+        errors = dependencies.verify(self.repo_root)
+
+        self.assertTrue(
+            any(
+                "example.utilities" in error and "exact version" in error
+                for error in errors
+            ),
+            errors,
+        )
 
     def test_verify_rejects_uv_environment_that_fails_frozen_check(self) -> None:
         self.create_current_environment()

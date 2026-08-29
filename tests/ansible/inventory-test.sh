@@ -19,7 +19,8 @@ unset \
 
 mkdir -p \
   "$inventory_test_root/production/group_vars/pihole" \
-  "$inventory_test_root/staging" \
+  "$inventory_test_root/staging/group_vars/semaphore" \
+  "$inventory_test_root/staging-semaphore/group_vars/semaphore" \
   "$inventory_test_root/frozen/k3s/group_vars/k3s_cluster" \
   "$inventory_test_root/frozen/k3s/group_vars/k3s_server"
 
@@ -28,8 +29,19 @@ cp "$repository_root/inventory/production/hosts.ini" \
 cp "$repository_root/inventory/production/group_vars/pihole/vars.yml" \
   "$inventory_test_root/production/group_vars/pihole/vars.yml"
 
-cp "$repository_root/inventory/staging/hosts.yml" \
-  "$inventory_test_root/staging/hosts.yml"
+cp "$repository_root/inventory/staging/hosts.ini" \
+  "$inventory_test_root/staging/hosts.ini"
+cp "$repository_root/inventory/staging/group_vars/semaphore/vars.yml" \
+  "$inventory_test_root/staging/group_vars/semaphore/vars.yml"
+cp "$repository_root/inventory/staging/group_vars/semaphore/versions.yml" \
+  "$inventory_test_root/staging/group_vars/semaphore/versions.yml"
+
+cp "$repository_root/inventory/staging/group_vars/semaphore/vars.yml" \
+  "$inventory_test_root/staging-semaphore/group_vars/semaphore/vars.yml"
+cp "$repository_root/inventory/staging/group_vars/semaphore/versions.yml" \
+  "$inventory_test_root/staging-semaphore/group_vars/semaphore/versions.yml"
+printf '%s\n' '[semaphore]' 'semaphore-test ansible_connection=local' \
+  > "$inventory_test_root/staging-semaphore/hosts.ini"
 
 cp "$repository_root/inventory/frozen/k3s/hosts.ini" \
   "$inventory_test_root/frozen/k3s/hosts.ini"
@@ -49,11 +61,15 @@ uv run --frozen --no-sync ansible-inventory \
 uv run --frozen --no-sync ansible-inventory \
   --inventory "$inventory_test_root/staging" --list \
   > "$inventory_test_root/staging.json"
+uv run --frozen --no-sync ansible-inventory \
+  --inventory "$inventory_test_root/staging-semaphore" --list \
+  > "$inventory_test_root/staging-semaphore.json"
 
 python3 - \
   "$inventory_test_root/production.json" \
   "$inventory_test_root/frozen-k3s.json" \
-  "$inventory_test_root/staging.json" <<'PY'
+  "$inventory_test_root/staging.json" \
+  "$inventory_test_root/staging-semaphore.json" <<'PY'
 import json
 import sys
 
@@ -66,6 +82,7 @@ def load_inventory(path):
 production = load_inventory(sys.argv[1])
 frozen_k3s = load_inventory(sys.argv[2])
 staging = load_inventory(sys.argv[3])
+staging_semaphore = load_inventory(sys.argv[4])
 
 assert "pihole" in production, "production inventory must contain the pihole group"
 assert "k3s_cluster" not in production, (
@@ -91,6 +108,24 @@ assert "k3s_cluster" in frozen_k3s, (
 )
 assert not staging.get("_meta", {}).get("hostvars", {}), (
     "staging inventory must not contain named hosts"
+)
+semaphore_variables = staging_semaphore.get("_meta", {}).get("hostvars", {}).get(
+    "semaphore-test", {}
+)
+required_semaphore_variables = {
+    "db_dump_cron",
+    "db_dump_retention",
+    "db_dump_target",
+    "mysql_version",
+    "semaphore_db_name",
+    "semaphore_version",
+}
+missing_semaphore_variables = required_semaphore_variables.difference(
+    semaphore_variables
+)
+assert not missing_semaphore_variables, (
+    "synthetic Semaphore staging host is missing retained public variables: "
+    f"{sorted(missing_semaphore_variables)}"
 )
 PY
 

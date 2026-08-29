@@ -41,7 +41,8 @@ own issues and specifications.
 - current-state and consumer audit;
 - repository lifecycle cleanup;
 - frozen K3s organization;
-- removal of Argo CD, KSOPS, SOPS, and obsolete Semaphore Compose automation;
+- removal of Argo CD, KSOPS, and SOPS automation;
+- retention of reusable Semaphore deployment and backup automation;
 - Ansible Vault hardening;
 - inventory restructuring;
 - Mise and uv toolchain management;
@@ -92,6 +93,14 @@ Frozen means:
 Argo CD is not part of the retained K3s boundary. K3s provisioning remains;
 Argo CD and KSOPS are retired.
 
+### Retained Semaphore automation
+
+The Semaphore Compose deployment, database backup configuration, public
+variables, version pins, and encrypted variables remain useful implementation
+source for issues #4 and #9. They are retained under the staging boundary but
+have no inventory host. This preserves the tested automation without restoring
+the former localhost deployment target or claiming that Semaphore is active.
+
 ### Retired surfaces
 
 The following have no active consumer and are removed rather than archived as
@@ -100,7 +109,6 @@ executable automation:
 - Argo CD install/uninstall automation and documentation;
 - KSOPS and repository SOPS configuration or scripts;
 - SOPS-encrypted content in this repository;
-- obsolete Semaphore Docker Compose deployment automation;
 - documentation describing removed commands or directory layouts;
 - rendered Helm helper code whose only consumer was the retired Argo path.
 
@@ -122,7 +130,8 @@ The audit identified several gaps that the implementation plan must address:
 - Pi-hole DNS update change reporting conflates failure with change;
 - system maintenance silently skips unsupported operating systems;
 - SSH host-key checking is disabled globally;
-- validation is concentrated in retiring Argo and Semaphore code;
+- validation is concentrated in retiring Argo code and non-active Semaphore
+  automation;
 - Ansible Galaxy dependencies and controller dependencies are not managed through
   one reproducible toolchain.
 
@@ -149,7 +158,10 @@ The maintained production target is deliberately narrow:
 Arch Linux and Red Hat-family logic may remain only where it is useful historical
 or experimental source. It is not a validated production contract until a real
 consumer and test target are defined. Unsupported production paths should fail
-clearly rather than silently skip required work.
+clearly rather than silently skip required work. The tested Arch Linux package
+and locale tasks remain in `roles/system_maintenance/tasks/setup-Archlinux.yml`,
+with their exact Galaxy collection dependencies, but the active role dispatcher
+remains Debian-only.
 
 ## Inventory design
 
@@ -170,6 +182,9 @@ Requirements:
 - active Pi-hole public variables live in
   `inventory/production/group_vars/pihole/vars.yml`, while encrypted variables
   live in the sibling `vault.yml`;
+- retained Semaphore public variables and version pins live under
+  `inventory/staging/group_vars/semaphore/`, while encrypted variables live in
+  the exact sibling `vault.yml`; staging defines no Semaphore host;
 - frozen K3s public variables live in `vars.yml` and `versions.yml` under
   `inventory/frozen/k3s/group_vars/`, while its encrypted variables live in the
   exact sibling `vault.yml`;
@@ -198,8 +213,8 @@ made available to pull-request CI.
 - encrypted variables use Ansible Vault;
 - public variables live outside encrypted files;
 - secret filenames and variable boundaries are documented;
-- production and frozen Vault inputs are never decrypted, inventory-parsed, or
-  passed to Ansible semantic validation by CI;
+- production, staging, and frozen Vault inputs are never decrypted,
+  inventory-parsed, or passed to Ansible semantic validation by CI;
 - broad redacted repository secret scanning may inspect encrypted file bytes and
   history without decrypting or printing their contents;
 - CI validates Vault integration with an ephemeral generated password and fixture;
@@ -706,7 +721,8 @@ The implementation plan must preserve reviewable boundaries:
 4. establish deterministic `fast`, `ansible`, and `full` validation;
 5. baseline and activate change-directed CI with the stable merge gate;
 6. restructure active and frozen inventories with parse validation;
-7. remove Argo CD, KSOPS, SOPS, obsolete Semaphore Compose, and orphaned helpers;
+7. remove Argo CD, KSOPS, SOPS, and their orphaned helpers while retaining
+   reusable Semaphore automation without a deployment target;
 8. harden Ansible Vault and active-role failure/change semantics;
 9. reconcile all documentation and run final validation.
 
@@ -719,8 +735,9 @@ Issue #1 is complete when:
 
 1. repository responsibilities and current consumers are accurately documented;
 2. Apache License 2.0 replaces GPL-3.0 and repository documentation identifies it;
-3. Argo CD, KSOPS, SOPS, obsolete Semaphore Compose, and their orphaned helpers are
-   removed without permanent absence checks;
+3. Argo CD, KSOPS, SOPS, and their orphaned helpers are removed without permanent
+   absence checks, while Semaphore deployment and backup automation remains
+   retained without an inventory host;
 4. K3s inventory remains under `inventory/frozen/k3s`, its playbooks remain
    retained, and both receive static validation without CI execution;
 5. active inventory is divided into production and staging boundaries and parses

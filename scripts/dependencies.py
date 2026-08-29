@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -37,32 +38,40 @@ def requirements_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def required_roles(path: Path) -> list[tuple[str, str | None]]:
-    roles: list[tuple[str, str | None]] = []
-    in_roles = False
-    pending_role: str | None = None
+def required_entries(path: Path, section: str) -> list[tuple[str, str | None]]:
+    entries: list[tuple[str, str | None]] = []
+    in_section = False
+    pending_name: str | None = None
 
     for line in path.read_text().splitlines():
         if line and not line[0].isspace():
-            if pending_role is not None:
-                roles.append((pending_role, None))
-                pending_role = None
-            in_roles = line.strip() == "roles:"
+            if pending_name is not None:
+                entries.append((pending_name, None))
+                pending_name = None
+            in_section = line.strip() == f"{section}:"
             continue
-        if not in_roles:
+        if not in_section:
             continue
         if match := ROLE_NAME_PATTERN.match(line):
-            if pending_role is not None:
-                roles.append((pending_role, None))
-            pending_role = match.group(1)
+            if pending_name is not None:
+                entries.append((pending_name, None))
+            pending_name = match.group(1)
             continue
-        if pending_role is not None and (match := ROLE_VERSION_PATTERN.match(line)):
-            roles.append((pending_role, match.group(1)))
-            pending_role = None
+        if pending_name is not None and (match := ROLE_VERSION_PATTERN.match(line)):
+            entries.append((pending_name, match.group(1)))
+            pending_name = None
 
-    if pending_role is not None:
-        roles.append((pending_role, None))
-    return roles
+    if pending_name is not None:
+        entries.append((pending_name, None))
+    return entries
+
+
+def required_roles(path: Path) -> list[tuple[str, str | None]]:
+    return required_entries(path, "roles")
+
+
+def required_collections(path: Path) -> list[tuple[str, str | None]]:
+    return required_entries(path, "collections")
 
 
 def required_role_names(path: Path) -> list[str]:
@@ -90,6 +99,16 @@ def installed_role_version(role_path: Path) -> str | None:
     return None
 
 
+def installed_collection_version(collection_path: Path) -> str | None:
+    manifest_path = collection_path / "MANIFEST.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        version = manifest["collection_info"]["version"]
+    except (KeyError, OSError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return version if isinstance(version, str) else None
+
+
 def recovery_error(message: str) -> str:
     return f"{message}; {RECOVERY}"
 
@@ -99,6 +118,7 @@ def verify(repo_root: Path) -> list[str]:
     requirements_path = repo_root / "requirements.yml"
     ansible_playbook = repo_root / ".venv" / "bin" / "ansible-playbook"
     roles_path = repo_root / ".ansible" / "roles"
+    collections_path = repo_root / ".ansible" / "collections" / "ansible_collections"
     fingerprint_path = repo_root / ".ansible" / "requirements.sha256"
 
     if not ansible_playbook.is_file():
@@ -108,8 +128,10 @@ def verify(repo_root: Path) -> list[str]:
 
     try:
         roles = required_roles(requirements_path)
+        collections = required_collections(requirements_path)
     except (OSError, UnicodeDecodeError):
         roles = []
+        collections = []
         errors.append(
             recovery_error(
                 f"missing or unreadable Galaxy requirements: {requirements_path}"
@@ -140,6 +162,47 @@ def verify(repo_root: Path) -> list[str]:
                 recovery_error(
                     f"Galaxy role {role_name} installed version {installed_version} "
                     f"does not match required {required_version}"
+                )
+            )
+
+    for collection_name, required_version in collections:
+        if required_version is None or not EXACT_VERSION_PATTERN.fullmatch(
+            required_version
+        ):
+            errors.append(
+                recovery_error(
+                    f"Galaxy collection {collection_name} must declare an exact version"
+                )
+            )
+        try:
+            namespace, name = collection_name.split(".", maxsplit=1)
+        except ValueError:
+            errors.append(
+                recovery_error(
+                    f"Galaxy collection {collection_name} must use namespace.name"
+                )
+            )
+            continue
+        collection_path = collections_path / namespace / name
+        if not collection_path.is_dir():
+            errors.append(
+                recovery_error(
+                    f"missing Galaxy collection {collection_name}: {collection_path}"
+                )
+            )
+            continue
+        installed_version = installed_collection_version(collection_path)
+        if installed_version is None:
+            errors.append(
+                recovery_error(
+                    f"missing Galaxy collection metadata: {collection_path}"
+                )
+            )
+        elif required_version is not None and installed_version != required_version:
+            errors.append(
+                recovery_error(
+                    f"Galaxy collection {collection_name} installed version "
+                    f"{installed_version} does not match required {required_version}"
                 )
             )
 
@@ -220,7 +283,13 @@ def main() -> int:
         return 1
 
     role_count = len(required_role_names(repo_root / "requirements.yml"))
-    print(f"Locked controller environment and {role_count} Galaxy roles are current.")
+    collection_count = len(required_collections(repo_root / "requirements.yml"))
+    collection_label = "collection" if collection_count == 1 else "collections"
+    print(
+        "Locked controller environment, "
+        f"{role_count} Galaxy roles, and {collection_count} Galaxy {collection_label} "
+        "are current."
+    )
     return 0
 
 

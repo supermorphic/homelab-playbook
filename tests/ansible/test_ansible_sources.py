@@ -16,6 +16,7 @@ ANSIBLE_VALIDATION = REPOSITORY_ROOT / "scripts/ci/validate-ansible.sh"
 ENCRYPTED_EXCLUSIONS = {
     "inventory/frozen/k3s/group_vars/k3s_cluster/vault.yml",
     "inventory/production/group_vars/pihole/vault.yml",
+    "inventory/staging/group_vars/semaphore/vault.yml",
 }
 
 

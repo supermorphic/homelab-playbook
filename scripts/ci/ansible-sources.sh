@@ -40,6 +40,7 @@ while IFS= read -r -d '' candidate_source; do
   case "$candidate_source" in
     inventory/frozen/k3s/group_vars/k3s_cluster/vault.yml) continue ;;
     inventory/production/group_vars/pihole/vault.yml) continue ;;
+    inventory/staging/group_vars/semaphore/vault.yml) continue ;;
   esac
   [[ -f "$candidate_source" ]] || continue
 

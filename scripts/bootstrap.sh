@@ -5,10 +5,14 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 uv sync --frozen
-mkdir -p .ansible/roles
+mkdir -p .ansible/collections .ansible/roles
 uv run --frozen --no-sync ansible-galaxy role install \
   --role-file requirements.yml \
   --roles-path .ansible/roles \
+  --force
+uv run --frozen --no-sync ansible-galaxy collection install \
+  --requirements-file requirements.yml \
+  --collections-path .ansible/collections \
   --force
 install -m 0644 \
   overrides/ansible-galaxy/l3d.unbound/tasks/configure.yml \

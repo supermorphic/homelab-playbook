@@ -568,6 +568,20 @@ options = { trust_policy_excludes = '["fastq@1.20.2"]' }
         self.assertIn(untracked, discovered)
         self.assertNotIn(self.repo_root / "ignored.txt", discovered)
 
+    def test_discovery_excludes_deleted_tracked_files(self) -> None:
+        subprocess.run(
+            ["git", "init", "--quiet"], cwd=self.repo_root, check=True
+        )
+        deleted = self.write("deleted.yml", "---\n")
+        subprocess.run(
+            ["git", "add", "deleted.yml"], cwd=self.repo_root, check=True
+        )
+        deleted.unlink()
+
+        discovered = repository_validation.discover_repository_files(self.repo_root)
+
+        self.assertNotIn(deleted, discovered)
+
 
 if __name__ == "__main__":
     unittest.main()

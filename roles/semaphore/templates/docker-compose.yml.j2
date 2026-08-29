@@ -1,0 +1,58 @@
+services:
+  semaphore:
+    image: semaphoreui/semaphore:{{ semaphore_version }}
+    restart: always
+    ports:
+      - 3000:3000
+    environment:
+      SEMAPHORE_DB_DIALECT: mysql
+      SEMAPHORE_DB_HOST: mysql
+      SEMAPHORE_DB_NAME: {{ semaphore_db_name }}
+      SEMAPHORE_DB_USER: {{ semaphore_db_user }}
+      SEMAPHORE_DB_PASS: {{ semaphore_db_password }}
+      SEMAPHORE_ADMIN: {{ semaphore_admin }}
+      SEMAPHORE_ADMIN_PASSWORD: {{ semaphore_admin_password }}
+      SEMAPHORE_ADMIN_NAME: {{ semaphore_admin_name }}
+      SEMAPHORE_ADMIN_EMAIL: {{ semaphore_admin_email }}
+      SEMAPHORE_ACCESS_KEY_ENCRYPTION: {{ semaphore_access_key_encryption }}
+      ANSIBLE_HOST_KEY_CHECKING: false
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:{{ mysql_version }}
+    restart: always
+    environment:
+      MYSQL_DATABASE: {{ semaphore_db_name }}
+      MYSQL_USER: {{ semaphore_db_user }}
+      MYSQL_PASSWORD: {{ semaphore_db_password }}
+      MYSQL_RANDOM_ROOT_PASSWORD: true
+      TZ: UTC
+    volumes:
+      - dbmysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  mysql-backup:
+    image: databack/mysql-backup:{{ mysql_backup_version }}
+    restart: always
+    environment:
+      DB_SERVER: mysql
+      DB_USER: {{ semaphore_db_user }}
+      DB_PASS: {{ semaphore_db_password }}
+      DB_DUMP_TARGET: {{ db_dump_target }}
+      DB_DUMP_RETENTION: {{ db_dump_retention }}
+      DB_DUMP_CRON: "{{ db_dump_cron }}"
+      COMPRESSION: bzip2
+    command: dump
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  dbmysql:
+    name: semaphore-dbmysql

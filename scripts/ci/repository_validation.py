@@ -102,7 +102,11 @@ def discover_repository_files(repo_root: Path) -> list[Path]:
         for raw_path in result.stdout.split(b"\0")
         if raw_path
     ]
-    return sorted(repo_root / relative_path for relative_path in relative_paths)
+    return sorted(
+        file_path
+        for relative_path in relative_paths
+        if os.path.lexists(file_path := repo_root / relative_path)
+    )
 
 
 def validate_license(repo_root: Path) -> list[str]:
