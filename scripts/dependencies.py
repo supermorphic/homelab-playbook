@@ -161,14 +161,19 @@ def verify(repo_root: Path) -> list[str]:
         expected_fingerprint = bootstrap_sha256(repo_root)
     except OSError:
         expected_fingerprint = None
-    if not fingerprint_path.is_file():
+
+    try:
+        actual_fingerprint = fingerprint_path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        actual_fingerprint = None
+
+    if actual_fingerprint is None:
         errors.append(
-            recovery_error(f"missing bootstrap fingerprint: {fingerprint_path}")
+            recovery_error(
+                f"missing or unreadable bootstrap fingerprint: {fingerprint_path}"
+            )
         )
-    elif (
-        expected_fingerprint is None
-        or fingerprint_path.read_text().strip() != expected_fingerprint
-    ):
+    elif expected_fingerprint is None or actual_fingerprint != expected_fingerprint:
         errors.append(
             recovery_error(f"stale bootstrap fingerprint: {fingerprint_path}")
         )

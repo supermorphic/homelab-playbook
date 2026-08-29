@@ -28,10 +28,18 @@ uv run --frozen --no-sync python -m unittest -v \
   tests/ansible/test_ansible_sources.py \
   tests/ansible/test_source_contracts.py
 
+ansible_source_manifest="$ansible_check_root/ansible-sources.bin"
+bash scripts/ci/ansible-sources.sh > "$ansible_source_manifest"
+
 ansible_sources=()
 while IFS= read -r -d '' ansible_source; do
   ansible_sources+=("$ansible_source")
-done < <(bash scripts/ci/ansible-sources.sh)
+done < "$ansible_source_manifest"
+
+if ((${#ansible_sources[@]} == 0)); then
+  printf '%s\n' 'no explicit Ansible sources are available for ansible-lint' >&2
+  exit 1
+fi
 
 set +e
 NO_COLOR=1 uv run --frozen --no-sync ansible-lint --profile production \

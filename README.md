@@ -62,8 +62,10 @@ Public group variables live in `vars.yml`; frozen K3s version pins in
 `versions.yml` are public as well. Encrypted variables live only in the sibling
 `vault.yml` files. The active boundary is
 `inventory/production/group_vars/pihole/`, while retained K3s variables are
-under `inventory/frozen/k3s/group_vars/`. Validation may use the public files but
-never opens or passes either encrypted `vault.yml` file to a validator.
+under `inventory/frozen/k3s/group_vars/`. Inventory parsing and Ansible semantic
+validation use the public files and never receive either encrypted `vault.yml`
+input. Broad redacted Gitleaks scans inspect repository bytes and history,
+including encrypted file bytes, without decryption or plaintext output.
 
 ## Validation
 

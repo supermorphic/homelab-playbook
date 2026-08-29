@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_BUILDER = REPOSITORY_ROOT / "scripts/ci/ansible-sources.sh"
+ANSIBLE_CHECK = REPOSITORY_ROOT / "scripts/ci/check-ansible.sh"
 ENCRYPTED_EXCLUSIONS = {
     "inventory/frozen/k3s/group_vars/k3s_cluster/vault.yml",
     "inventory/production/group_vars/pihole/vault.yml",
@@ -81,7 +82,8 @@ class AnsibleSourceContracts(unittest.TestCase):
         expected_sources = {
             path
             for path in candidates
-            if (REPOSITORY_ROOT / path).is_file()
+            if not (REPOSITORY_ROOT / path).is_symlink()
+            and (REPOSITORY_ROOT / path).is_file()
             and is_ansible_yaml_source(path)
             and path not in ENCRYPTED_EXCLUSIONS
         }
@@ -120,6 +122,137 @@ class AnsibleSourceContracts(unittest.TestCase):
             cwd=repository_root,
             check=True,
         )
+
+    def create_vault_alias_fixture(
+        self, repository_root: Path, *, tracked_alias: bool
+    ) -> Path:
+        source_builder = self.isolated_source_builder(repository_root)
+        vault_path = (
+            repository_root
+            / "inventory"
+            / "production"
+            / "group_vars"
+            / "pihole"
+            / "vault.yml"
+        )
+        vault_path.parent.mkdir(parents=True)
+        vault_path.write_text("encrypted fixture\n", encoding="utf-8")
+        vault_alias = repository_root / "playbooks" / "vault-alias.yml"
+        vault_alias.parent.mkdir(parents=True)
+        vault_alias.symlink_to(
+            "../inventory/production/group_vars/pihole/vault.yml"
+        )
+        subprocess.run(
+            ["git", "add", "scripts/ci/ansible-sources.sh", vault_path],
+            cwd=repository_root,
+            check=True,
+        )
+        if tracked_alias:
+            subprocess.run(
+                ["git", "add", vault_alias],
+                cwd=repository_root,
+                check=True,
+            )
+        return source_builder
+
+    def assert_vault_symlink_alias_is_rejected(self, *, tracked_alias: bool) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            repository_root = Path(temporary_name)
+            self.initialize_repository(repository_root)
+            source_builder = self.create_vault_alias_fixture(
+                repository_root, tracked_alias=tracked_alias
+            )
+
+            result = subprocess.run(
+                ["bash", str(source_builder)],
+                cwd=repository_root,
+                check=False,
+                capture_output=True,
+            )
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual(b"", result.stdout)
+            self.assertIn(b"symlink", result.stderr)
+
+    def test_tracked_vault_symlink_alias_is_rejected_without_emitting_a_source(
+        self,
+    ) -> None:
+        self.assert_vault_symlink_alias_is_rejected(tracked_alias=True)
+
+    def test_untracked_vault_symlink_alias_is_rejected_without_emitting_a_source(
+        self,
+    ) -> None:
+        self.assert_vault_symlink_alias_is_rejected(tracked_alias=False)
+
+    def test_git_discovery_failure_is_propagated(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            repository_root = Path(temporary_name)
+            source_builder = self.isolated_source_builder(repository_root)
+
+            result = subprocess.run(
+                ["bash", str(source_builder)],
+                cwd=repository_root,
+                check=False,
+                capture_output=True,
+            )
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual(b"", result.stdout)
+
+    def test_empty_explicit_manifest_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            repository_root = Path(temporary_name)
+            self.initialize_repository(repository_root)
+            source_builder = self.isolated_source_builder(repository_root)
+
+            result = subprocess.run(
+                ["bash", str(source_builder)],
+                cwd=repository_root,
+                check=False,
+                capture_output=True,
+            )
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual(b"", result.stdout)
+            self.assertIn(b"no explicit Ansible sources", result.stderr)
+
+    def test_ansible_check_propagates_source_builder_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            repository_root = Path(temporary_name)
+            self.initialize_repository(repository_root)
+            self.isolated_source_builder(repository_root)
+            ansible_check = repository_root / "scripts" / "ci" / "check-ansible.sh"
+            shutil.copy2(ANSIBLE_CHECK, ansible_check)
+
+            tests_root = repository_root / "tests" / "ansible"
+            tests_root.mkdir(parents=True)
+            for fixture_name in ("inventory-test.sh", "vault-test.sh"):
+                (tests_root / fixture_name).write_text(
+                    "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
+                )
+
+            fake_bin = repository_root / "fake-bin"
+            fake_bin.mkdir()
+            fake_uv = fake_bin / "uv"
+            fake_uv.write_text(
+                "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
+            )
+            fake_uv.chmod(0o755)
+            environment = os.environ.copy()
+            environment["PATH"] = (
+                f"{fake_bin}{os.pathsep}{environment.get('PATH', '')}"
+            )
+
+            result = subprocess.run(
+                ["bash", str(ansible_check)],
+                cwd=repository_root,
+                env=environment,
+                check=False,
+                capture_output=True,
+            )
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn(b"no explicit Ansible sources", result.stderr)
 
     def test_untracked_invalid_module_is_selected_and_fails_semantic_validation(
         self,
@@ -199,8 +332,16 @@ class AnsibleSourceContracts(unittest.TestCase):
             deleted_source = repository_root / "playbooks" / "deleted.yml"
             deleted_source.parent.mkdir(parents=True)
             deleted_source.write_text("---\n", encoding="utf-8")
+            retained_source = repository_root / "playbooks" / "retained.yml"
+            retained_source.write_text("---\n", encoding="utf-8")
             subprocess.run(
-                ["git", "add", "playbooks/deleted.yml", "scripts/ci/ansible-sources.sh"],
+                [
+                    "git",
+                    "add",
+                    "playbooks/deleted.yml",
+                    "playbooks/retained.yml",
+                    "scripts/ci/ansible-sources.sh",
+                ],
                 cwd=repository_root,
                 check=True,
             )
@@ -216,6 +357,7 @@ class AnsibleSourceContracts(unittest.TestCase):
             )
 
             self.assertNotIn("playbooks/deleted.yml", selected_sources)
+            self.assertIn("playbooks/retained.yml", selected_sources)
 
 
 if __name__ == "__main__":

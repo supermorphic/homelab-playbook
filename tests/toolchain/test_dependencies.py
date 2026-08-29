@@ -176,6 +176,20 @@ class DependencyVerificationTests(unittest.TestCase):
 
         self.assertTrue(any("stale" in error for error in errors), errors)
 
+    def test_unreadable_fingerprint_returns_bootstrap_recovery(self) -> None:
+        self.create_current_environment()
+        fingerprint = self.repo_root / ".ansible" / "requirements.sha256"
+        fingerprint.parent.mkdir(parents=True, exist_ok=True)
+        fingerprint.write_bytes(b"\xff\xfe\xfd")
+
+        errors = dependencies.verify(self.repo_root)
+
+        self.assertTrue(errors)
+        self.assertTrue(
+            all("mise run bootstrap" in error for error in errors), errors
+        )
+        self.assertTrue(any("fingerprint" in error for error in errors), errors)
+
     def test_verify_accepts_matching_roles_and_fingerprint(self) -> None:
         self.create_current_environment()
         self.write_current_fingerprint()
