@@ -19,7 +19,7 @@ ENCRYPTED_EXCLUSIONS = {
 }
 
 
-def candidate_paths() -> set[str]:
+def candidate_paths(repository_root: Path = REPOSITORY_ROOT) -> set[str]:
     result = subprocess.run(
         [
             "git",
@@ -29,7 +29,7 @@ def candidate_paths() -> set[str]:
             "--others",
             "--exclude-standard",
         ],
-        cwd=REPOSITORY_ROOT,
+        cwd=repository_root,
         check=True,
         capture_output=True,
     )
@@ -38,6 +38,15 @@ def candidate_paths() -> set[str]:
         for encoded_path in result.stdout.split(b"\0")
         if encoded_path
     }
+
+
+def has_symlink_component(repository_root: Path, relative_path: str) -> bool:
+    candidate_prefix = repository_root
+    for component in PurePosixPath(relative_path).parts:
+        candidate_prefix /= component
+        if candidate_prefix.is_symlink():
+            return True
+    return False
 
 
 def is_ansible_yaml_source(relative_path: str) -> bool:
@@ -82,7 +91,7 @@ class AnsibleSourceContracts(unittest.TestCase):
         expected_sources = {
             path
             for path in candidates
-            if not (REPOSITORY_ROOT / path).is_symlink()
+            if not has_symlink_component(REPOSITORY_ROOT, path)
             and (REPOSITORY_ROOT / path).is_file()
             and is_ansible_yaml_source(path)
             and path not in ENCRYPTED_EXCLUSIONS
@@ -147,6 +156,98 @@ class AnsibleSourceContracts(unittest.TestCase):
             cwd=repository_root,
             check=True,
         )
+
+    def replace_tracked_source_parent_with_symlink(
+        self,
+        repository_root: Path,
+        target_directory: Path,
+        *,
+        source_name: str,
+        target_bytes: bytes,
+    ) -> tuple[Path, str]:
+        source_builder = self.isolated_source_builder(repository_root)
+        alias_directory = repository_root / "playbooks" / "alias"
+        tracked_source = alias_directory / source_name
+        tracked_source.parent.mkdir(parents=True)
+        tracked_source.write_text("---\nfixture: tracked\n", encoding="utf-8")
+        relative_path = tracked_source.relative_to(repository_root).as_posix()
+        subprocess.run(
+            ["git", "add", "scripts/ci/ansible-sources.sh", relative_path],
+            cwd=repository_root,
+            check=True,
+        )
+
+        shutil.rmtree(alias_directory)
+        target_directory.mkdir(parents=True)
+        (target_directory / source_name).write_bytes(target_bytes)
+        alias_directory.symlink_to(target_directory, target_is_directory=True)
+        return source_builder, relative_path
+
+    def test_tracked_source_beneath_symlinked_directory_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            temporary_root = Path(temporary_name)
+            repository_root = temporary_root / "repository"
+            repository_root.mkdir()
+            self.initialize_repository(repository_root)
+            source_builder, relative_path = (
+                self.replace_tracked_source_parent_with_symlink(
+                    repository_root,
+                    temporary_root / "alternate-source",
+                    source_name="site.yml",
+                    target_bytes=b"---\nfixture: alternate\n",
+                )
+            )
+
+            result = subprocess.run(
+                ["bash", str(source_builder)],
+                cwd=repository_root,
+                check=False,
+                capture_output=True,
+            )
+
+            self.assertTrue(has_symlink_component(repository_root, relative_path))
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual(b"", result.stdout)
+            self.assertEqual(
+                f"refusing Ansible source symlink: {relative_path}\n".encode(),
+                result.stderr,
+            )
+
+    def test_opaque_source_beneath_symlinked_directory_is_never_read_or_leaked(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            temporary_root = Path(temporary_name)
+            repository_root = temporary_root / "repository"
+            repository_root.mkdir()
+            self.initialize_repository(repository_root)
+            opaque_target_bytes = os.urandom(128)
+            target_directory = temporary_root / "encrypted-target"
+            source_builder, relative_path = (
+                self.replace_tracked_source_parent_with_symlink(
+                    repository_root,
+                    target_directory,
+                    source_name="vault.yml",
+                    target_bytes=opaque_target_bytes,
+                )
+            )
+            target_directory.chmod(0)
+            try:
+                result = subprocess.run(
+                    ["bash", str(source_builder)],
+                    cwd=repository_root,
+                    check=False,
+                    capture_output=True,
+                )
+            finally:
+                target_directory.chmod(0o700)
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual(b"", result.stdout)
+            self.assertEqual(
+                f"refusing Ansible source symlink: {relative_path}\n".encode(),
+                result.stderr,
+            )
 
     def create_vault_alias_fixture(
         self, repository_root: Path, *, tracked_alias: bool

@@ -5,11 +5,36 @@ import subprocess
 import unittest
 from pathlib import Path
 
+import yaml
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 class CommandLifecycleTests(unittest.TestCase):
+    def test_pre_commit_repository_validation_uses_canonical_fast_task(
+        self,
+    ) -> None:
+        configuration = yaml.safe_load(
+            (REPOSITORY_ROOT / ".pre-commit-config.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        local_repositories = [
+            repository
+            for repository in configuration["repos"]
+            if repository["repo"] == "local"
+        ]
+        self.assertEqual(1, len(local_repositories))
+        validation_hooks = [
+            hook
+            for hook in local_repositories[0]["hooks"]
+            if hook["id"] == "check-fast"
+        ]
+
+        self.assertEqual(1, len(validation_hooks))
+        self.assertEqual("mise run validate:fast", validation_hooks[0]["entry"])
+
     def test_local_validation_surface_uses_validate_without_check_aliases(
         self,
     ) -> None:
