@@ -72,7 +72,8 @@ configuration fields, or quoted text solely to satisfy these style rules.
   explicit operator authorization for that exact target and action.
 - Treat `check` and `verify` commands as observational toward their targets.
   Use a registered `test` workflow when evidence requires a bounded temporary
-  mutation.
+  mutation. Classify new or renamed commands with the
+  [repository command lifecycle](docs/reference/repository-command-lifecycle.md).
 - Never execute a playbook against production or staging without explicit
   operator direction for that target and action. Reconfirm the playbook,
   action, inventory, and extra arguments immediately before execution.
@@ -136,7 +137,7 @@ configuration fields, or quoted text solely to satisfy these style rules.
 - Durable design specifications belong in `docs/specs/`; implementation plans,
   generated execution ledgers, review packages, and other transient tool state
   belong uncommitted under `.tmp/` to support execution, resumption, and
-  handoff.
+  handoff. Supporting references belong in `docs/reference/`.
 - A validation assertion must use an independent oracle or encode a current
   invariant. Remove obsolete executable checks instead of adding permanent
   forbidden-reference checks.

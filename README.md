@@ -103,7 +103,7 @@ the plan and its confirmation value do not grant that authority. See the
 [GitHub main protection guide](docs/guides/github-main-protection.md) for the
 exact Ruleset, guarded apply procedure, UI inspection, and recovery steps.
 
-Molecule is reserved as a future convention for scenarios under
+Molecule is reserved as a future `test:molecule` command for scenarios under
 `roles/<role>/molecule/<scenario>/`. This repository currently has no Molecule
 task, dependency, scenario, or CI job.
 
