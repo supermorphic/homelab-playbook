@@ -1,0 +1,4 @@
+---
+semaphore_version: v2.12.14
+mysql_version: 9.2.0
+mysql_backup_version: 1.1.0

@@ -1,3 +1,0 @@
----
-ansible_python_interpreter: auto_silent
-requirements_file: ../requirements.yml

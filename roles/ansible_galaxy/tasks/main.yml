@@ -1,7 +1,0 @@
----
-- name: Include Ansible galaxy update tasks
-  ansible.builtin.include_tasks: update-galaxy.yml
-
-- name: Include patch tasks for roles
-  ansible.builtin.include_tasks: patch-{{ item }}.yml
-  loop: [unbound, security]

@@ -3,4 +3,4 @@
   hosts: pihole
   become: true
   roles:
-    - update-pihole
+    - update_pihole

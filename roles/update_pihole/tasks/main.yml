@@ -1,0 +1,10 @@
+---
+- name: Verify Pi-hole is installed and running
+  ansible.builtin.command: pihole status
+  changed_when: false
+
+- name: Include DNS update tasks
+  ansible.builtin.include_tasks: update-dns.yml
+
+- name: Include Pi-hole update tasks
+  ansible.builtin.include_tasks: update-pihole.yml

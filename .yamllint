@@ -1,13 +1,32 @@
 ---
 extends: default
+ignore: |
+  .git/
+  .ansible/
+  .venv/
+  .tmp/
+  inventory/frozen/k3s/group_vars/k3s_cluster/vault.yml
+  inventory/production/group_vars/pihole/vault.yml
+  inventory/staging/group_vars/semaphore/vault.yml
 rules:
+  braces:
+    max-spaces-inside: 1
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: false
+  document-start:
+    present: true
+    level: error
   indentation:
-    level: warning
-    indent-sequences: false
+    level: error
+    indent-sequences: consistent
   line-length:
     max: 160
     level: warning
-  comments:
-    min-spaces-from-content: 1
-    level: warning
-  trailing-spaces: disable
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true
+  trailing-spaces:
+    level: error
+  truthy:
+    check-keys: false

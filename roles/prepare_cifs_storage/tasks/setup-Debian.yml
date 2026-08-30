@@ -1,0 +1,50 @@
+---
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install CIFS and Longhorn dependencies
+  ansible.builtin.apt:
+    name:
+      - cifs-utils
+      - open-iscsi
+      - cryptsetup
+      - dmsetup
+    state: present
+    force_apt_get: true
+  register: prepare_cifs_storage_pkg_install
+  changed_when: prepare_cifs_storage_pkg_install.changed
+
+- name: Load required kernel module dm_crypt
+  ansible.builtin.command: modprobe dm_crypt
+  changed_when: false
+  failed_when: false
+
+- name: Ensure dm_crypt module is loaded on boot
+  ansible.builtin.lineinfile:
+    path: /etc/modules
+    line: dm_crypt
+    create: true
+    mode: '0644'
+  register: prepare_cifs_storage_module_boot
+  changed_when: prepare_cifs_storage_module_boot.changed
+
+- name: Enable and start iscsid service
+  ansible.builtin.systemd:
+    name: iscsid
+    enabled: true
+    state: started
+  register: prepare_cifs_storage_svc_iscsid
+  changed_when: prepare_cifs_storage_svc_iscsid.changed
+  notify: Restart iscsid service
+
+- name: Determine if system reboot is required
+  ansible.builtin.set_fact:
+    prepare_cifs_storage_reboot_needed: >-
+      {{ prepare_cifs_storage_pkg_install.changed
+        or prepare_cifs_storage_module_boot.changed }}
+
+- name: Trigger reboot if configuration changed
+  ansible.builtin.meta: flush_handlers
+  when: prepare_cifs_storage_reboot_needed | default(false)

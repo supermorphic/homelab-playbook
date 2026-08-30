@@ -1,0 +1,48 @@
+---
+- name: Copy snippet to protect for DNS rebinding
+  become: true
+  ansible.builtin.template:
+    src: 'templates/snippets/private-addresses.conf'
+    dest: '/etc/unbound/unbound.conf.d/'
+    owner: root
+    group: root
+    mode: 'u=rw,g=r,o=r'
+  notify: 'Systemctl restart unbound'
+  when: unbount__dns_rebind_protection | bool
+
+- name: Copy snippet for qname privacy
+  become: true
+  ansible.builtin.template:
+    src: 'templates/snippets/qname-minimisation.conf'
+    dest: '/etc/unbound/unbound.conf.d/'
+    owner: root
+    group: root
+    mode: 'u=rw,g=r,o=r'
+  notify: 'Systemctl restart unbound'
+  when: unbount__dns_qname_minimisation | bool
+
+- name: Copy anchor snippet
+  become: true
+  ansible.builtin.template:
+    src: 'templates/snippets/root-auto-trust-anchor-file.conf'
+    dest: '/etc/unbound/unbound.conf.d/'
+    owner: root
+    group: root
+    mode: 'u=rw,g=r,o=r'
+  notify: 'Systemctl restart unbound'
+  when: unbound__auto_trust_anchor | bool
+
+- name: Transfer main unbound configuration
+  become: true
+  ansible.builtin.template:
+    src: 'templates/unbound.conf'
+    dest: '/etc/unbound/unbound.conf'
+    owner: root
+    group: root
+    mode: 'u=rw,g=r,o=r'
+  notify: Systemctl restart unbound
+
+- name: Validate unbound configuration
+  become: true
+  ansible.builtin.command: unbound-checkconf /etc/unbound/unbound.conf
+  changed_when: false

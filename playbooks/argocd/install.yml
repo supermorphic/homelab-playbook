@@ -1,6 +1,0 @@
----
-- name: Bootstrap Argo CD control plane
-  hosts: k3s_cluster
-  become: true
-  roles:
-    - argocd

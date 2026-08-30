@@ -1,2 +1,0 @@
-# Control-plane nodes in the cluster
-k3s_control_node: true

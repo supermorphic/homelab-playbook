@@ -1,17 +1,6 @@
 ---
 profile: production
 exclude_paths:
-  - .ansible
-warn_list:
-  - experimental  # Show experimental rules as warnings
-  - formatting
-  - unnamed-task
-  - no-changed-when
-  - command-instead-of-shell
-
-skip_list:
-  - yaml[line-length]
-  - name[casing]
-  - var-naming
-  - role-name
-  - name[play]
+  - .ansible/
+  - .venv/
+  - .tmp/

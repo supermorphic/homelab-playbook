@@ -1,6 +1,0 @@
----
-argocd_state: present
-argocd_admin_user: admin
-argocd_admin_password: ""
-argocd_admin_bcrypt_password: ""
-argocd_readonly_user: user

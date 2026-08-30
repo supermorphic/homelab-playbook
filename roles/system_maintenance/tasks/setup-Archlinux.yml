@@ -1,0 +1,60 @@
+---
+- name: Upgrade all packages (full system upgrade)
+  community.general.pacman:
+    update_cache: true
+    upgrade: true
+
+- name: Install common packages on Arch Linux
+  community.general.pacman:
+    name:
+      - qemu-guest-agent
+      - xterm
+      - vi
+      - tree
+      - which
+      - git
+      - apache
+      - iputils
+      - fail2ban
+      - python
+      - python-pip
+      - python-virtualenv
+    state: present
+    update_cache: false
+
+- name: Ensure the English locale exists
+  community.general.locale_gen:
+    name: en_US.UTF-8
+    state: present
+
+- name: Set the English locale as default
+  ansible.builtin.lineinfile:
+    path: /etc/locale.conf
+    regexp: ^LANG=
+    line: LANG=en_US.UTF-8
+    create: true
+    mode: '0644'
+
+- name: Check if pacman cache has files
+  ansible.builtin.find:
+    paths: /var/cache/pacman/pkg
+    file_type: file
+  register: system_maintenance_pacman_cache_files
+
+- name: Clean pacman cache if files exist
+  ansible.builtin.command: pacman -Scc --noconfirm
+  when: system_maintenance_pacman_cache_files.matched > 0
+  changed_when: false
+
+- name: Gather orphaned packages
+  ansible.builtin.command: pacman -Qdtq
+  register: system_maintenance_orphaned_packages
+  changed_when: false
+  failed_when: false
+
+- name: Remove orphaned packages (if any)
+  ansible.builtin.command: >-
+    pacman -Rns --noconfirm
+    {{ system_maintenance_orphaned_packages.stdout_lines | join(' ') }}
+  when: system_maintenance_orphaned_packages.stdout_lines | length > 0
+  changed_when: system_maintenance_orphaned_packages.stdout_lines | length > 0

@@ -1,0 +1,9 @@
+---
+- name: Validate ephemeral Vault fixture
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Assert decrypted fixture secret
+      ansible.builtin.assert:
+        that:
+          - fixture_secret == 'ephemeral-ci-value'

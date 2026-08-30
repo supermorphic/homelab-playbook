@@ -5,8 +5,8 @@
     state: directory
     mode: '0755'
 
-- name: Deploy docker-compose file
+- name: Deploy Docker Compose file
   ansible.builtin.template:
-    src: "templates/docker-compose.yml.j2"
+    src: docker-compose.yml.j2
     dest: "{{ ansible_user_dir }}/compose/{{ role_name }}/docker-compose.yml"
     mode: '0644'

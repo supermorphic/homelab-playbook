@@ -1,0 +1,27 @@
+---
+- name: Ensure kube-vip VIP is fully removed from all interfaces
+  become: true
+  ansible.builtin.shell: |
+    #!/bin/bash
+    set -euo pipefail
+    VIP="{{ k3s_registration_address }}"
+
+    for iface in $(ip -o link show | awk -F': ' '{print $2}'); do
+      if ip -o addr show "$iface" | grep -q "$VIP"; then
+        echo "Removing stale VIP $VIP from $iface"
+        if ! ip addr del "$VIP"/32 dev "$iface"; then
+          echo "Fallback: trying generic delete"
+          ip addr del "$VIP" dev "$iface" || true
+        fi
+      fi
+    done
+
+    ip neigh flush all || true
+    arp -d "$VIP" 2>/dev/null || true
+    ip route flush cache || true
+    echo "VIP cleanup completed."
+  args:
+    executable: /bin/bash
+  register: kube_vip_cleanup
+  changed_when: "'Removing' in kube_vip_cleanup.stdout"
+  failed_when: false

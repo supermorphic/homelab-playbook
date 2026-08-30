@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if ! command -v mise >/dev/null 2>&1; then
+  echo "Error: mise is required; install it before running playbooks." >&2
+  exit 127
+fi
+
+cd "$repo_root"
+exec mise run playbook -- "$@"

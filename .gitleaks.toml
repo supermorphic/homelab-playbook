@@ -1,0 +1,13 @@
+title = "homelab-playbook Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Exclude generated and local dependency directories"
+paths = [
+  '''(^|/)\.git(?:/|$)''',
+  '''(^|/)\.ansible(?:/|$)''',
+  '''(^|/)\.venv(?:/|$)''',
+  '''(^|/)\.tmp(?:/|$)''',
+]

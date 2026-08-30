@@ -1,76 +1,117 @@
-# Ansible Playbook Framework
+# Homelab Playbook
 
-This repository provides a flexible structure for Ansible playbooks designed to provision and manage various server configurations. The framework supports modular roles and tasks that can be easily extended to manage different applications or configurations. The initial implementation includes a setup for Podman, demonstrating the framework's capabilities.
+Ansible automation for provisioning and maintaining off-cluster homelab hosts.
 
-## Directory Structure
+## Prerequisites
 
-The repository is organized to support clarity and extensibility:
+Install [Mise](https://mise.jdx.dev/), Git, and SSH configuration appropriate
+for the hosts you are explicitly authorized to operate.
 
-- **playbooks/**: Contains specific Ansible playbooks for orchestrating roles to set up and manage applications or services. Each subdirectory corresponds to a domain or application, e.g., `podman/`.
+## Bootstrap
 
-- **roles/**: Includes modular roles encapsulating tasks and handlers. Roles can be shared across different playbooks, promoting reusability. Each role typically includes:
-  - `tasks/`: Main tasks to execute.
-  - `handlers/`: Handlers triggered by tasks when changes occur.
-  - `defaults/`: Default variables for the role.
+After checkout, install the pinned tools, then install the locked controller and
+Galaxy dependencies. Repeat both commands after a tool or dependency change:
 
-- **inventory/**: Stores host inventories divided by environment, such as:
-  - `production/`: Production environment configuration.
-  - `staging/`: Staging environment configuration.
+```bash
+mise install
+mise run bootstrap
+```
 
-- **scripts/**: Contains utility scripts for running playbooks efficiently. The `run.sh` script automates the execution of playbooks with appropriate inventories and additional options.
+## Repository layout
 
-- **ansible.cfg**: Configuration file for Ansible settings that apply globally to all playbook runs.
-## Extensibility
+`playbooks/` contains host automation, `roles/` contains reusable Ansible roles,
+and `inventory/` contains environment inventories. Durable design specifications
+live in `docs/specs/`; transient implementation plans belong in `.tmp/plans/`.
 
-The current setup is designed with future extensibility in mind:
+## Running playbooks
 
-- **Adding New Playbooks**: You can add new directories within `playbooks/` to create playbooks for other services or applications.
-- **Creating New Roles**: Within `roles/`, you can add new roles that define tasks and configurations for unique services or systems.
+Run playbooks through the repository interface:
 
-## Podman Implementation
+```bash
+mise run playbook -- <playbook> <action> <inventory> [ansible-args...]
+```
 
-The initial implementation includes playbooks and roles for managing Podman:
+The repository-root alias is an equivalent thin forwarding wrapper:
 
-- **Playbooks for Podman**:
-  - `playbooks/podman/install.yml`: Installs and configures Podman on target hosts.
-  - `playbooks/podman/uninstall.yml`: Removes Podman from target hosts.
-  - `playbooks/podman/verify.yml`: Checks the installation and configuration of Podman.
+```bash
+./run-playbook <playbook> <action> <inventory> [ansible-args...]
+```
 
-- **Roles for Podman**: Logical grouping of tasks and configurations to manage Podman installation and verification.
+Execute against production or staging only with explicit operator direction.
 
-### Running Podman Playbooks with Scripts
+## Inventories
 
-The `scripts/run.sh` script streamlines the execution of Podman-related playbooks and supports additional Ansible arguments for further customization:
+Select one of these inventory arguments:
 
-1. **Install Podman**
-   ```bash
-   scripts/run.sh podman install <inventory>
-   ```
+- `production` contains the active off-cluster hosts.
+- `staging` contains no hosts; it retains non-active Semaphore deployment and
+  backup inputs for future work.
+- `frozen/k3s` retains the non-active K3s inventory.
 
-2. **Verify Installation with Verbose Output**
-   ```bash
-   scripts/run.sh podman verify <inventory> -vvv
-   ```
-   - The `-vvv` flag increases the verbosity level of Ansible's output, providing detailed execution logs which can help in debugging and understanding the tasks performed.
+Production and staging are operator inputs. Validation parses public-only
+inventory mirrors and does not connect to their hosts.
+Each inventory directory stores its static host and group topology in
+`hosts.yml`; public variables remain under `group_vars/`.
 
-3. **Uninstall Podman for a Specific Host**
-   ```bash
-   scripts/run.sh podman uninstall <inventory> --limit <host>
-   ```
-   - The `--limit <host>` option confines the playbook execution to a specific host within the inventory, allowing for targeted operations.
+## Secrets
 
-Replace `<inventory>` with `staging` or `production`, and `<host>` with the specific host identifier.
+Ansible Vault encrypts secret variables. Operators own the Vault password or
+password-retrieval mechanism outside the repository, such as in a password
+manager. Do not commit key material or embed it in Mise configuration, helper
+scripts, or pull-request CI. Do not decrypt, print, or inspect production Vault
+values during development or validation.
 
-Including `ansible-args` enables more flexible and powerful management of your infrastructure by allowing command customization directly through the script.
+Public group variables live in `vars.yml`; version pins in `versions.yml` are
+public as well. Encrypted variables live only in sibling `vault.yml` files. The
+active boundary is `inventory/production/group_vars/pihole/`. Retained
+Semaphore inputs are under `inventory/staging/group_vars/semaphore/`, and
+retained K3s variables are under `inventory/frozen/k3s/group_vars/`. Inventory
+parsing and Ansible semantic validation use the public files and never receive
+encrypted `vault.yml` input. Broad redacted Gitleaks scans inspect repository
+bytes and history, including encrypted file bytes, without decryption or
+plaintext output.
 
-## Requirements
+## Validation
 
-- **Ansible**: Ensure Ansible is installed on the control node, as it orchestrates the configuration management processes across your servers.
+Use focused validation while iterating, then run change-directed validation before
+claiming completion:
 
-- **SSH Key-Based Authentication**: It is recommended to use SSH keys for server authentication. This method enhances security by eliminating the need for password-based logins and enabling seamless, automated connections between Ansible and your managed nodes.
+```bash
+mise run validate:fast
+mise run validate:ansible
+mise run ci:changed
+```
 
-- **Privilege Escalation**: The playbooks might require elevated permissions to execute specific tasks. The scripts are configured to prompt for the sudo password where necessary using the `--ask-become-pass` Ansible flag. This approach is preferred over configuring "passwordless sudo" (using the `NOPASSWD` directive in the sudoers file), as it offers a balance between security and convenience by ensuring that privilege escalation remains deliberate and user-approved.
+`ci:changed` classifies committed and working-tree changes and runs the minimum
+required depth. Use `mise run ci` to force all currently implemented offline
+validation. Pull-request validation is offline and secret-free.
 
-## Contribution
+## GitHub main protection
 
-Contributions are welcome. Feel free to add new features, improve existing ones, or report issues.
+Changes reach `main` through a feature branch, a current pull request, the
+required `merge-gate`, and a squash merge. Repository-owned commands can inspect
+or preview the live protection state:
+
+```bash
+mise run github-protection:check
+mise run github-protection:plan
+```
+
+Live checks require authenticated repository-administration access and remain
+outside CI. Applying a plan is a separately authorized, repository-bound action;
+the plan and its confirmation value do not grant that authority. See the
+[GitHub main protection guide](docs/guides/github-main-protection.md) for the
+exact Ruleset, guarded apply procedure, UI inspection, and recovery steps.
+
+Molecule is reserved as a future convention for scenarios under
+`roles/<role>/molecule/<scenario>/`. This repository currently has no Molecule
+task, dependency, scenario, or CI job.
+
+## Frozen K3s
+
+The retained K3s source is frozen. It receives static validation only; live
+verification remains operator-run and is not CI evidence.
+
+## License
+
+This repository is licensed under [Apache-2.0](LICENSE).

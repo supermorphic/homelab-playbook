@@ -15,7 +15,7 @@ services:
       SEMAPHORE_ADMIN_NAME: {{ semaphore_admin_name }}
       SEMAPHORE_ADMIN_EMAIL: {{ semaphore_admin_email }}
       SEMAPHORE_ACCESS_KEY_ENCRYPTION: {{ semaphore_access_key_encryption }}
-      ANSIBLE_HOST_KEY_CHECKING: False
+      ANSIBLE_HOST_KEY_CHECKING: false
     depends_on:
       mysql:
         condition: service_healthy
@@ -27,7 +27,7 @@ services:
       MYSQL_DATABASE: {{ semaphore_db_name }}
       MYSQL_USER: {{ semaphore_db_user }}
       MYSQL_PASSWORD: {{ semaphore_db_password }}
-      MYSQL_RANDOM_ROOT_PASSWORD: yes
+      MYSQL_RANDOM_ROOT_PASSWORD: true
       TZ: UTC
     volumes:
       - dbmysql:/var/lib/mysql

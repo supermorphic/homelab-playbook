@@ -1,5 +1,8 @@
 # Kube-VIP K3s Setup
 
+> This K3s automation is retained but frozen. It is not an active deployment
+> target. CI performs static validation only and never executes these playbooks.
+
 ## Overview
 
 In this cluster, **Kube-VIP** provides a high-availability control-plane endpoint for the K3s API. It operates in ARP mode to advertise a shared virtual IP (VIP) across control-plane nodes, ensuring seamless failover without external load balancers.
@@ -61,6 +64,7 @@ kube-vip manifest daemonset \
 ```
 
 This command generates a DaemonSet that:
+
 - Runs on tainted (control-plane) nodes only.
 - Advertises the VIP on the active leader.
 - Provides automatic failover without Service LB mode.
@@ -169,7 +173,7 @@ The following manifests are installed during cluster bootstrap:
 
 ```yaml
 k3s_server_manifests_templates:
-  - "{{ playbook_dir }}/../../roles/kube-vip/templates/30-kube-vip-daemonset.yaml"
+  - "{{ playbook_dir }}/../../roles/kube_vip/templates/30-kube-vip-daemonset.yaml"
 
 k3s_server_manifests_urls:
   - url: "https://kube-vip.io/manifests/rbac.yaml"
@@ -177,20 +181,29 @@ k3s_server_manifests_urls:
 ```
 
 ### Verification
+
 - Confirm the DaemonSet is running on all control-plane nodes:
-```bash
-kubectl -n kube-system get ds kube-vip-ds -o wide
-```
+
+  ```bash
+  kubectl -n kube-system get ds kube-vip-ds -o wide
+  ```
+
 - Check which node holds the control-plane lease:
-```bash
-kubectl -n kube-system get lease plndr-cp-lock -o yaml | grep holderIdentity
-```
+
+  ```bash
+  kubectl -n kube-system get lease plndr-cp-lock -o yaml | grep holderIdentity
+  ```
+
 - Verify the VIP is assigned on the leader node:
-```bash
-ssh <leader-node> "ip -brief addr | grep $VIP"
-```
+
+  ```bash
+  ssh <leader-node> "ip -brief addr | grep $VIP"
+  ```
+
 - Test failover by cordoning and draining the leader:
-```bash
-kubectl drain <leader-node> --ignore-daemonsets --delete-emptydir-data
-```
+
+  ```bash
+  kubectl drain <leader-node> --ignore-daemonsets --delete-emptydir-data
+  ```
+
 - Confirm the VIP migrates to another node and the API remains reachable.
