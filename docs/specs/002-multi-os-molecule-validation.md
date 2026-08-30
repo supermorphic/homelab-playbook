@@ -222,8 +222,9 @@ The preflight must prove:
 
 The preflight does not pull or start a separate probe image. An ARM64 default
 run omits Arch and reports that GitHub CI covers it on native AMD64. The
-workflow-only platform selector still selects one exact matrix worker; GitHub
-runs that selector on its AMD64 host.
+internal platform selector overrides the default with one exact worker. GitHub
+sets it for each matrix job and runs Arch on its AMD64 host; it is not a public
+command argument.
 
 After container creation, a bounded readiness check confirms that systemd is PID
 1 and responds inside the container. This is the authoritative proof that the

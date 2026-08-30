@@ -89,8 +89,6 @@ shape when an established convention already describes the operation.
 ```text
 mise run validate:fast
 mise run validate:ansible
-mise run ci:changed
-mise run ci
 ```
 
 These commands inspect repository-controlled inputs and produce local assurance.
@@ -112,6 +110,10 @@ The default platform set follows the Podman host architecture. ARM64 runs
 Debian and Rocky concurrently and reports Arch as skipped. AMD64 runs Debian,
 Rocky, and Arch concurrently. GitHub uses exact matrix selection on native
 AMD64 so every pull request still validates all three platforms.
+
+`mise run ci:changed` and `mise run ci` orchestrate validation and this
+controlled test when their selected depth includes Molecule. Their effects are
+the combined effects of the commands they run.
 
 ### GitHub protection administration
 
