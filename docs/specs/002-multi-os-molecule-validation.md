@@ -20,8 +20,9 @@ repository secret, or claiming VM or physical-hardware coverage.
    committed image digests.
 4. Each platform explicitly pulls its base once per invocation, then builds and
    tests without another registry check.
-5. Debian and Rocky run natively on ARM64 and AMD64. Arch runs as AMD64, with
-   emulation only when the local host is ARM64.
+5. Debian and Rocky run natively on ARM64 and AMD64. The default platform set
+   skips Arch on ARM64 hosts and includes native Arch on AMD64 hosts. GitHub's
+   AMD64 matrix always includes Arch.
 6. Local platform workers and GitHub matrix jobs use the same worker lifecycle.
 7. Local and GitHub platform validation runs concurrently.
 8. Base and built images remain cached. Test containers are recreated for every
@@ -129,7 +130,7 @@ would add friction without a proportionate safeguard.
 | --- | --- | --- | --- |
 | Debian 13 | `docker.io/library/debian:13` | native ARM64 | native AMD64 |
 | Rocky Linux 9 | `docker.io/rockylinux/rockylinux:9` | native ARM64 | native AMD64 |
-| Arch Linux | `docker.io/archlinux/archlinux:base` | emulated AMD64 | native AMD64 |
+| Arch Linux | `docker.io/archlinux/archlinux:base` | skipped | native AMD64 |
 
 The Debian and Rocky tags follow their selected major release lines. The Arch
 tag follows Arch Linux's rolling distribution model. They intentionally move as
@@ -149,8 +150,8 @@ Before local workers or a GitHub platform worker starts, the repository runner:
 3. confirms that `podman` exists in `PATH`;
 4. runs bounded `podman info` inspection as the current user;
 5. confirms rootless operation and cgroup v2;
-6. computes and validates the native/emulated platform plan without pulling a
-   probe image; and
+6. selects the default platform set for the Podman host architecture without
+   pulling a probe image; and
 7. acquires one non-blocking host-local invocation lock shared by linked
    worktrees of this repository.
 
@@ -217,11 +218,12 @@ The preflight must prove:
 - Podman is reachable without `sudo`;
 - Podman reports rootless operation;
 - the Podman host supplies cgroup v2; and
-- the requested platform matches the native/emulated architecture plan.
+- the default platform set matches the Podman host architecture.
 
-The preflight does not pull or start a separate probe image. The Arch build and
-container start prove that AMD64 emulation works on an ARM64 host. Their failure
-is reported as a platform build or start failure.
+The preflight does not pull or start a separate probe image. An ARM64 default
+run omits Arch and reports that GitHub CI covers it on native AMD64. The
+workflow-only platform selector still selects one exact matrix worker; GitHub
+runs that selector on its AMD64 host.
 
 After container creation, a bounded readiness check confirms that systemd is PID
 1 and responds inside the container. This is the authoritative proof that the
@@ -322,15 +324,16 @@ The public command is:
 mise run test:molecule -- system_maintenance/default
 ```
 
-It validates the exact role/scenario selector, runs all three platforms, and
-returns failure if any worker fails. Unknown roles, scenarios, or extra public
+It validates the exact role/scenario selector and returns failure if any worker
+fails. On ARM64 it runs Debian and Rocky and reports that Arch is skipped. On
+AMD64 it runs all three platforms. Unknown roles, scenarios, or extra public
 arguments fail with a concise usage message and status `2` before Podman is
 inspected.
 
-The local runner starts the three isolated platform workers concurrently. It
-waits for all workers so one failure does not discard useful results from the
-other platforms. Output identifies the originating platform, and the final
-summary reports every result.
+The local runner starts the selected isolated platform workers concurrently.
+It waits for all workers so one failure does not discard useful results from
+the other platforms. Output identifies the originating platform, and the final
+summary reports every result and any architecture-based skip.
 
 Molecule's experimental collection-only worker interface is not part of this
 design. Repository orchestration supplies bounded parallelism for this
@@ -462,7 +465,7 @@ GitHub workflow totals:
 - the proportion of overall platform time spent building the test image.
 
 The initial data establishes whether a later prebuilt-image design is warranted.
-No performance conclusion is made from local emulated Arch timing alone.
+Arch timing comes from the native AMD64 GitHub worker.
 
 ## Acceptance criteria
 
@@ -470,10 +473,11 @@ Issue #11 is complete when:
 
 1. Molecule and `containers.podman` are exactly pinned through uv and Galaxy
    dependency management;
-2. `mise run test:molecule -- system_maintenance/default` runs Debian 13,
-   Rocky Linux 9, and Arch Linux concurrently with Podman only;
-3. local ARM64 uses native Debian and Rocky images and AMD64 emulation only for
-   Arch, while GitHub uses native AMD64 for all platforms;
+2. `mise run test:molecule -- system_maintenance/default` runs the
+   architecture-selected platforms concurrently with Podman only;
+3. local ARM64 runs native Debian and Rocky and reports Arch as skipped, local
+   AMD64 runs all three platforms natively, and GitHub's AMD64 matrix runs all
+   three platforms natively;
 4. Podman is rootless and all scenario hosts use `container_privileged: false`,
    `container_systemd: always`, and no added capabilities;
 5. one embedded global preflight rejects invalid selectors, unavailable or
@@ -484,8 +488,8 @@ Issue #11 is complete when:
    local image identity;
 7. base and built images remain after local testing, while exact label-owned
    scenario containers are destroyed after both success and failure;
-8. converge, idempotence, and independent verification pass for all three
-   operating systems;
+8. converge, idempotence, and independent verification pass for each selected
+   operating system, including Arch in GitHub's AMD64 matrix;
 9. the role exposes an explicit reboot control whose production default remains
    enabled and whose scenario value prevents actual container reboot;
 10. verification covers representative current role invariants, including Rocky

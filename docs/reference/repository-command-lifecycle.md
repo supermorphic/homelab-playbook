@@ -108,6 +108,11 @@ container ownership, bounded cleanup, and no ordinary confirmation. The
 containers are local, unprivileged, disposable test state; a confirmation token
 would add friction without a proportionate safety benefit.
 
+The default platform set follows the Podman host architecture. ARM64 runs
+Debian and Rocky concurrently and reports Arch as skipped. AMD64 runs Debian,
+Rocky, and Arch concurrently. GitHub uses exact matrix selection on native
+AMD64 so every pull request still validates all three platforms.
+
 ### GitHub protection administration
 
 ```text

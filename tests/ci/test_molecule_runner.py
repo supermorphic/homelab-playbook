@@ -815,21 +815,41 @@ class ParallelExecutionTests(unittest.TestCase):
             ],
         )
 
-    def test_local_selection_runs_all_platforms_and_workflow_selects_one(
-        self,
-    ) -> None:
+    def test_arm64_default_selection_skips_archlinux(self) -> None:
         function = getattr(runner_module, "select_platforms", None)
         if function is None:
             self.fail("runner must provide select_platforms")
 
-        all_platforms = function({})
-        selected = function({"HOMELAB_MOLECULE_PLATFORM": "rockylinux9"})
+        selected = function({}, "arm64")
+
+        self.assertEqual(
+            ["debian13", "rockylinux9"],
+            [platform.name for platform in selected],
+        )
+
+    def test_amd64_default_selection_runs_all_platforms(self) -> None:
+        function = getattr(runner_module, "select_platforms", None)
+        if function is None:
+            self.fail("runner must provide select_platforms")
+
+        selected = function({}, "amd64")
 
         self.assertEqual(
             ["debian13", "rockylinux9", "archlinux"],
-            [platform.name for platform in all_platforms],
+            [platform.name for platform in selected],
         )
-        self.assertEqual(["rockylinux9"], [platform.name for platform in selected])
+
+    def test_explicit_platform_selection_overrides_host_default(self) -> None:
+        function = getattr(runner_module, "select_platforms", None)
+        if function is None:
+            self.fail("runner must provide select_platforms")
+
+        selected = function(
+            {"HOMELAB_MOLECULE_PLATFORM": "archlinux"},
+            "arm64",
+        )
+
+        self.assertEqual(["archlinux"], [platform.name for platform in selected])
 
     def test_unknown_workflow_platform_fails_before_any_command(self) -> None:
         fake = FakeCommandRunner()
@@ -899,9 +919,9 @@ class ParallelExecutionTests(unittest.TestCase):
 
 
 class OutputTests(unittest.TestCase):
-    def result(self):
+    def result(self, platform: str = "archlinux"):
         return runner_module.PlatformResult(
-            platform="archlinux",
+            platform=platform,
             status="pass",
             message="all Molecule phases passed",
             image_id="sha256:base-image-id",
@@ -919,7 +939,11 @@ class OutputTests(unittest.TestCase):
         return runner_module.HostPlan(
             podman_version="podman version 5.6.2",
             host_architecture="arm64",
-            requested_architectures={"archlinux": "amd64"},
+            requested_architectures={
+                "debian13": "arm64",
+                "rockylinux9": "arm64",
+                "archlinux": "amd64",
+            },
         )
 
     def test_subprocess_stream_prefixes_every_combined_output_line(self) -> None:
@@ -997,6 +1021,22 @@ class OutputTests(unittest.TestCase):
         self.assertIn("| archlinux | arm64 | amd64 | emulated |", github_summary)
         self.assertIn("Build: 2.50 seconds", github_summary)
         self.assertIn("Invocation total: 12.50 seconds", github_summary)
+
+    def test_arm64_default_summary_reports_archlinux_skip(self) -> None:
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            runner_module.emit_summary(
+                self.host_plan(),
+                [self.result("debian13"), self.result("rockylinux9")],
+                12.5,
+                {},
+            )
+
+        self.assertIn(
+            "archlinux: skipped on arm64; GitHub CI runs it on native amd64",
+            output.getvalue(),
+        )
 
     def test_summary_never_follows_a_github_summary_symlink(self) -> None:
         function = getattr(runner_module, "emit_summary", None)
