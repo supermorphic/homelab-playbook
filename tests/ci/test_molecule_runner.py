@@ -681,6 +681,10 @@ class PlatformWorkerTests(unittest.TestCase):
             str(REPOSITORY_ROOT / ".ansible/collections"),
             molecule_call[2].get("ANSIBLE_COLLECTIONS_PATH"),
         )
+        self.assertEqual(
+            "debian13",
+            molecule_call[2].get("HOMELAB_MOLECULE_PLATFORM"),
+        )
 
     def test_worker_cleans_up_after_each_primary_stage_failure(self) -> None:
         cases = (

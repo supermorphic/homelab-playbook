@@ -10,4 +10,4 @@ RUN dnf install --assumeyes \
     && rm -rf /var/cache/dnf
 
 STOPSIGNAL SIGRTMIN+3
-CMD ["/sbin/init"]
+CMD ["/usr/lib/systemd/systemd"]

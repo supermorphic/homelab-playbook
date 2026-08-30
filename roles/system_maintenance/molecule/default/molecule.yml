@@ -14,7 +14,7 @@ platforms:
       - molecule
     image: localhost/homelab-playbook-system-maintenance-debian13:local
     container_name: homelab-playbook-system-maintenance-debian13
-    container_command: /sbin/init
+    container_command: /usr/lib/systemd/systemd
     container_privileged: false
     container_systemd: always
     pull: never
@@ -27,7 +27,7 @@ platforms:
       - molecule
     image: localhost/homelab-playbook-system-maintenance-rockylinux9:local
     container_name: homelab-playbook-system-maintenance-rockylinux9
-    container_command: /sbin/init
+    container_command: /usr/lib/systemd/systemd
     container_privileged: false
     container_systemd: always
     pull: never
@@ -40,7 +40,7 @@ platforms:
       - molecule
     image: localhost/homelab-playbook-system-maintenance-archlinux:local
     container_name: homelab-playbook-system-maintenance-archlinux
-    container_command: /sbin/init
+    container_command: /usr/lib/systemd/systemd
     container_privileged: false
     container_systemd: always
     pull: never

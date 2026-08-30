@@ -4,8 +4,21 @@
   connection: local
   gather_facts: false
   vars:
-    system_maintenance_molecule_platform: "{{ molecule_yml.platforms | first }}"
+    system_maintenance_molecule_platform_name: >-
+      {{ lookup('ansible.builtin.env', 'HOMELAB_MOLECULE_PLATFORM') }}
+    system_maintenance_molecule_platforms: >-
+      {{ molecule_yml.platforms
+         | selectattr('name', 'equalto', system_maintenance_molecule_platform_name)
+         | list }}
+    system_maintenance_molecule_platform: >-
+      {{ system_maintenance_molecule_platforms | first }}
   tasks:
+    - name: Assert Molecule selected exactly one platform
+      ansible.builtin.assert:
+        that:
+          - system_maintenance_molecule_platforms | length == 1
+        fail_msg: Molecule must select exactly one platform per worker
+
     - name: Inspect the exact cleanup target
       containers.podman.podman_container_info:
         name:

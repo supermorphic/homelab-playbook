@@ -72,7 +72,10 @@ class MoleculeScenarioContractTests(unittest.TestCase):
                 self.assertEqual(image, platform["image"])
                 self.assertEqual(container_name, platform["container_name"])
                 self.assertEqual(["molecule"], platform["groups"])
-                self.assertEqual("/sbin/init", platform["container_command"])
+                self.assertEqual(
+                    "/usr/lib/systemd/systemd",
+                    platform["container_command"],
+                )
                 self.assertIs(platform["container_privileged"], False)
                 self.assertEqual("always", platform["container_systemd"])
                 self.assertEqual("never", platform["pull"])
@@ -110,6 +113,48 @@ class MoleculeScenarioContractTests(unittest.TestCase):
         )
         self.assertTrue(
             all("docker" not in module.lower() for module in destroy_modules)
+        )
+
+    def test_controller_playbooks_select_the_worker_platform_from_environment(
+        self,
+    ) -> None:
+        for name in ("create.yml", "cleanup.yml", "destroy.yml"):
+            with self.subTest(playbook=name):
+                play = load_yaml(name)[0]
+                variables = play["vars"]
+                self.assertIn(
+                    "lookup('ansible.builtin.env', 'HOMELAB_MOLECULE_PLATFORM')",
+                    variables["system_maintenance_molecule_platform_name"],
+                )
+                self.assertIn(
+                    "selectattr('name', 'equalto',",
+                    variables["system_maintenance_molecule_platforms"],
+                )
+                assertions = [
+                    task["ansible.builtin.assert"]["that"]
+                    for task in play["tasks"]
+                    if "ansible.builtin.assert" in task
+                ]
+                self.assertTrue(
+                    any(
+                        "system_maintenance_molecule_platforms | length == 1"
+                        in conditions
+                        for conditions in assertions
+                    )
+                )
+
+        create_play = load_yaml("create.yml")[0]
+        instance_fact = next(
+            task["ansible.builtin.set_fact"]
+            for task in create_play["tasks"]
+            if "ansible.builtin.set_fact" in task
+        )
+        instance = instance_fact[
+            "system_maintenance_molecule_instance_configuration"
+        ][0]
+        self.assertEqual(
+            "{{ system_maintenance_molecule_platform.container_name }}",
+            instance["address"],
         )
 
     def test_converge_suppresses_only_reboot_and_verify_is_independent(self) -> None:
@@ -154,8 +199,14 @@ class MoleculeScenarioContractTests(unittest.TestCase):
                 content = path.read_text(encoding="utf-8")
                 self.assertEqual(expected_base, content.splitlines()[0])
                 self.assertNotIn("tree", content.lower())
-                self.assertIn('CMD ["/sbin/init"]', content)
+                self.assertIn('CMD ["/usr/lib/systemd/systemd"]', content)
                 self.assertIn("STOPSIGNAL SIGRTMIN+3", content)
+
+        arch_content = (
+            SCENARIO_DIRECTORY / "Containerfile.archlinux"
+        ).read_text(encoding="utf-8")
+        self.assertIn("--disable-sandbox-syscalls", arch_content)
+        self.assertNotIn("--disable-sandbox ", arch_content)
 
 
 if __name__ == "__main__":
