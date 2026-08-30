@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import importlib.util
 import hashlib
+import gc
 import io
 import json
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+import warnings
 
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -44,6 +47,18 @@ class FakeCommandRunner:
     def __init__(self, *responses: FakeResult | Exception) -> None:
         self.responses = list(responses)
         self.calls: list[tuple[list[str], Path, float | None]] = []
+        self.operations: list[tuple[str, list[str]]] = []
+        self.stream_calls: list[
+            tuple[list[str], Path, dict[str, str] | None, float | None, str]
+        ] = []
+
+    def next_response(self, command: list[str]) -> FakeResult:
+        if not self.responses:
+            raise AssertionError(f"unexpected command: {command}")
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
     def capture(
         self,
@@ -55,12 +70,24 @@ class FakeCommandRunner:
     ) -> FakeResult:
         del env
         self.calls.append((list(command), cwd, timeout))
-        if not self.responses:
-            raise AssertionError(f"unexpected command: {command}")
-        response = self.responses.pop(0)
-        if isinstance(response, Exception):
-            raise response
-        return response
+        self.operations.append(("capture", list(command)))
+        return self.next_response(list(command))
+
+    def stream(
+        self,
+        command: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str] | None = None,
+        timeout: float | None = None,
+        line_prefix: str,
+    ) -> FakeResult:
+        copied_env = None if env is None else dict(env)
+        self.stream_calls.append(
+            (list(command), cwd, copied_env, timeout, line_prefix)
+        )
+        self.operations.append(("stream", list(command)))
+        return self.next_response(list(command))
 
 
 class RunnerCliTests(unittest.TestCase):
@@ -359,6 +386,626 @@ class InvocationLockTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "safe lock file"):
                 with self.invocation_lock(self.git_runner()):
                     self.fail("a symlink was accepted as an invocation lock")
+
+
+class ContainerOwnershipTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.platform = runner_module.Platform(
+            name="debian13",
+            base_image="docker.io/library/debian:13",
+            image="localhost/homelab-playbook-system-maintenance-debian13:local",
+            container="homelab-playbook-system-maintenance-debian13",
+            containerfile=Path("Containerfile.debian13"),
+        )
+
+    def call_remove(self, fake: FakeCommandRunner) -> bool:
+        function = getattr(runner_module, "remove_owned_container", None)
+        if function is None:
+            self.fail("runner must provide remove_owned_container")
+        return function(REPOSITORY_ROOT, fake, self.platform)
+
+    def owned_inspect(self, *, platform: str = "debian13") -> str:
+        return json.dumps(
+            [
+                {
+                    "Config": {
+                        "Labels": {
+                            "io.supermorphic.homelab-playbook.repository": (
+                                "homelab-playbook"
+                            ),
+                            "io.supermorphic.homelab-playbook.scenario": (
+                                "system_maintenance/default"
+                            ),
+                            "io.supermorphic.homelab-playbook.platform": platform,
+                        }
+                    }
+                }
+            ]
+        )
+
+    def test_absent_container_requires_no_removal(self) -> None:
+        fake = FakeCommandRunner(FakeResult(returncode=1))
+
+        removed = self.call_remove(fake)
+
+        self.assertIs(removed, False)
+        self.assertEqual(
+            [
+                (
+                    [
+                        "podman",
+                        "container",
+                        "exists",
+                        "homelab-playbook-system-maintenance-debian13",
+                    ],
+                    REPOSITORY_ROOT,
+                    None,
+                )
+            ],
+            fake.calls,
+        )
+
+    def test_owned_container_is_inspected_then_removed(self) -> None:
+        fake = FakeCommandRunner(
+            FakeResult(),
+            FakeResult(stdout=self.owned_inspect()),
+            FakeResult(),
+        )
+
+        removed = self.call_remove(fake)
+
+        self.assertIs(removed, True)
+        self.assertEqual(
+            [
+                [
+                    "podman",
+                    "container",
+                    "exists",
+                    "homelab-playbook-system-maintenance-debian13",
+                ],
+                [
+                    "podman",
+                    "container",
+                    "inspect",
+                    "homelab-playbook-system-maintenance-debian13",
+                    "--format",
+                    "json",
+                ],
+                [
+                    "podman",
+                    "rm",
+                    "--force",
+                    "homelab-playbook-system-maintenance-debian13",
+                ],
+            ],
+            [command for command, _, _ in fake.calls],
+        )
+
+    def test_colliding_container_is_never_removed(self) -> None:
+        fake = FakeCommandRunner(
+            FakeResult(),
+            FakeResult(stdout=self.owned_inspect(platform="rockylinux9")),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "collision"):
+            self.call_remove(fake)
+
+        self.assertEqual(2, len(fake.calls))
+
+    def test_container_inspection_error_is_not_treated_as_absence(self) -> None:
+        fake = FakeCommandRunner(
+            FakeResult(returncode=125, stderr="storage unavailable")
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "inspect"):
+            self.call_remove(fake)
+
+
+class QueueClock:
+    def __init__(self, *values: float) -> None:
+        self.values = list(values)
+
+    def __call__(self) -> float:
+        if not self.values:
+            raise AssertionError("worker read the clock more often than expected")
+        return self.values.pop(0)
+
+
+class PlatformWorkerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.platform = runner_module.Platform(
+            name="debian13",
+            base_image="docker.io/library/debian:13",
+            image="localhost/homelab-playbook-system-maintenance-debian13:local",
+            container="homelab-playbook-system-maintenance-debian13",
+            containerfile=Path("Containerfile.debian13"),
+        )
+        self.host_plan = runner_module.HostPlan(
+            podman_version="podman version 5.6.2",
+            host_architecture="arm64",
+            requested_architectures={"debian13": "arm64"},
+        )
+
+    def owned_inspect(self) -> str:
+        return ContainerOwnershipTests().owned_inspect()
+
+    def image_inspect(self) -> str:
+        return json.dumps(
+            [
+                {
+                    "Id": "sha256:base-image-id",
+                    "RepoDigests": [
+                        "docker.io/library/debian@sha256:observed-digest"
+                    ],
+                }
+            ]
+        )
+
+    def call_worker(
+        self,
+        fake: FakeCommandRunner,
+        clock: QueueClock,
+    ):
+        function = getattr(runner_module, "run_platform", None)
+        if function is None:
+            self.fail("runner must provide run_platform")
+        return function(
+            self.platform,
+            self.host_plan,
+            REPOSITORY_ROOT,
+            fake,
+            "run-123",
+            clock,
+        )
+
+    def test_worker_pulls_builds_and_tests_one_platform_with_exact_policy(
+        self,
+    ) -> None:
+        fake = FakeCommandRunner(
+            FakeResult(returncode=1),
+            FakeResult(),
+            FakeResult(stdout=self.image_inspect()),
+            FakeResult(),
+            FakeResult(),
+            FakeResult(returncode=1),
+        )
+        clock = QueueClock(0, 1, 3, 4, 7, 8, 13, 14, 15, 16)
+        scenario_directory = (
+            REPOSITORY_ROOT
+            / "roles"
+            / "system_maintenance"
+            / "molecule"
+            / "default"
+        )
+
+        result = self.call_worker(fake, clock)
+
+        self.assertIs(result.success, True)
+        self.assertEqual("pass", result.status)
+        self.assertEqual("sha256:base-image-id", result.image_id)
+        self.assertEqual(
+            "docker.io/library/debian@sha256:observed-digest",
+            result.repository_digest,
+        )
+        self.assertEqual(2, result.pull_seconds)
+        self.assertEqual(3, result.build_seconds)
+        self.assertEqual(5, result.molecule_seconds)
+        self.assertEqual(1, result.cleanup_seconds)
+        self.assertEqual(16, result.platform_seconds)
+        self.assertEqual(
+            [
+                (
+                    "capture",
+                    [
+                        "podman",
+                        "container",
+                        "exists",
+                        "homelab-playbook-system-maintenance-debian13",
+                    ],
+                ),
+                (
+                    "stream",
+                    [
+                        "podman",
+                        "pull",
+                        "--policy=always",
+                        "--retry=3",
+                        "--platform",
+                        "linux/arm64",
+                        "docker.io/library/debian:13",
+                    ],
+                ),
+                (
+                    "capture",
+                    [
+                        "podman",
+                        "image",
+                        "inspect",
+                        "docker.io/library/debian:13",
+                        "--format",
+                        "json",
+                    ],
+                ),
+                (
+                    "stream",
+                    [
+                        "podman",
+                        "build",
+                        "--pull=never",
+                        "--platform",
+                        "linux/arm64",
+                        "--tag",
+                        "localhost/homelab-playbook-system-maintenance-debian13:local",
+                        "--file",
+                        str(scenario_directory / "Containerfile.debian13"),
+                        str(scenario_directory),
+                    ],
+                ),
+                (
+                    "stream",
+                    [
+                        "molecule",
+                        "test",
+                        "--scenario-name",
+                        "default",
+                        "--platform-name",
+                        "debian13",
+                        "--no-report",
+                        "--no-command-borders",
+                    ],
+                ),
+                (
+                    "capture",
+                    [
+                        "podman",
+                        "container",
+                        "exists",
+                        "homelab-playbook-system-maintenance-debian13",
+                    ],
+                ),
+            ],
+            fake.operations,
+        )
+        molecule_call = fake.stream_calls[2]
+        self.assertEqual(REPOSITORY_ROOT / "roles/system_maintenance", molecule_call[1])
+        self.assertEqual("[debian13]", molecule_call[4])
+        self.assertEqual(
+            str(REPOSITORY_ROOT / ".tmp/molecule/run-123/debian13"),
+            molecule_call[2]["MOLECULE_EPHEMERAL_DIRECTORY"],
+        )
+
+    def test_worker_cleans_up_after_each_primary_stage_failure(self) -> None:
+        cases = (
+            (
+                "acquisition failure",
+                [
+                    FakeResult(returncode=1),
+                    FakeResult(returncode=1, stderr="pull failed"),
+                    FakeResult(returncode=1),
+                ],
+            ),
+            (
+                "build failure",
+                [
+                    FakeResult(returncode=1),
+                    FakeResult(),
+                    FakeResult(stdout=self.image_inspect()),
+                    FakeResult(returncode=1, stderr="build failed"),
+                    FakeResult(returncode=1),
+                ],
+            ),
+            (
+                "test failure",
+                [
+                    FakeResult(returncode=1),
+                    FakeResult(),
+                    FakeResult(stdout=self.image_inspect()),
+                    FakeResult(),
+                    FakeResult(returncode=1, stderr="molecule failed"),
+                    FakeResult(returncode=1),
+                ],
+            ),
+        )
+        for expected_status, responses in cases:
+            with self.subTest(expected_status=expected_status):
+                fake = FakeCommandRunner(*responses)
+
+                result = self.call_worker(
+                    fake,
+                    QueueClock(*range(20)),
+                )
+
+                self.assertIs(result.success, False)
+                self.assertEqual(expected_status, result.status)
+                self.assertEqual(
+                    [
+                        "podman",
+                        "container",
+                        "exists",
+                        "homelab-playbook-system-maintenance-debian13",
+                    ],
+                    fake.operations[-1][1],
+                )
+
+    def test_cleanup_failure_preserves_the_primary_failure(self) -> None:
+        fake = FakeCommandRunner(
+            FakeResult(returncode=1),
+            FakeResult(returncode=1, stderr="registry unavailable"),
+            FakeResult(),
+            FakeResult(stdout=self.owned_inspect()),
+            FakeResult(returncode=1, stderr="remove failed"),
+        )
+
+        result = self.call_worker(fake, QueueClock(*range(20)))
+
+        self.assertEqual("cleanup failure", result.status)
+        self.assertIn("acquisition failure", result.message)
+        self.assertIn("could not remove owned container", result.message)
+
+
+class ParallelExecutionTests(unittest.TestCase):
+    def platform_result(self, platform: str, status: str = "pass"):
+        return runner_module.PlatformResult(
+            platform=platform,
+            status=status,
+            message="test result",
+            image_id="sha256:image",
+            repository_digest=None,
+            pull_seconds=1,
+            build_seconds=2,
+            molecule_seconds=3,
+            cleanup_seconds=1,
+            platform_seconds=7,
+        )
+
+    def registered_platforms(self):
+        value = getattr(runner_module, "PLATFORMS", None)
+        if value is None:
+            self.fail("runner must register the platform matrix")
+        return value
+
+    def test_registered_platforms_have_stable_names_and_images(self) -> None:
+        platforms = self.registered_platforms()
+
+        self.assertEqual(
+            [
+                (
+                    "debian13",
+                    "docker.io/library/debian:13",
+                    "localhost/homelab-playbook-system-maintenance-debian13:local",
+                    "homelab-playbook-system-maintenance-debian13",
+                    "Containerfile.debian13",
+                ),
+                (
+                    "rockylinux9",
+                    "docker.io/rockylinux/rockylinux:9",
+                    "localhost/homelab-playbook-system-maintenance-rockylinux9:local",
+                    "homelab-playbook-system-maintenance-rockylinux9",
+                    "Containerfile.rockylinux9",
+                ),
+                (
+                    "archlinux",
+                    "docker.io/archlinux/archlinux:base",
+                    "localhost/homelab-playbook-system-maintenance-archlinux:local",
+                    "homelab-playbook-system-maintenance-archlinux",
+                    "Containerfile.archlinux",
+                ),
+            ],
+            [
+                (
+                    platform.name,
+                    platform.base_image,
+                    platform.image,
+                    platform.container,
+                    str(platform.containerfile),
+                )
+                for platform in platforms
+            ],
+        )
+
+    def test_local_selection_runs_all_platforms_and_workflow_selects_one(
+        self,
+    ) -> None:
+        function = getattr(runner_module, "select_platforms", None)
+        if function is None:
+            self.fail("runner must provide select_platforms")
+
+        all_platforms = function({})
+        selected = function({"HOMELAB_MOLECULE_PLATFORM": "rockylinux9"})
+
+        self.assertEqual(
+            ["debian13", "rockylinux9", "archlinux"],
+            [platform.name for platform in all_platforms],
+        )
+        self.assertEqual(["rockylinux9"], [platform.name for platform in selected])
+
+    def test_unknown_workflow_platform_fails_before_any_command(self) -> None:
+        fake = FakeCommandRunner()
+        stderr = io.StringIO()
+
+        with mock.patch.dict(
+            "os.environ",
+            {"HOMELAB_MOLECULE_PLATFORM": "unknown"},
+            clear=True,
+        ):
+            with redirect_stderr(stderr):
+                result = runner_module.run(["system_maintenance/default"], fake)
+
+        self.assertEqual(1, result)
+        self.assertIn("unknown Molecule platform", stderr.getvalue())
+        self.assertEqual([], fake.operations)
+
+    def test_all_workers_start_before_any_worker_can_finish(self) -> None:
+        function = getattr(runner_module, "run_platforms", None)
+        if function is None:
+            self.fail("runner must provide run_platforms")
+        platforms = self.registered_platforms()
+        started: set[str] = set()
+        started_lock = threading.Lock()
+        all_started = threading.Event()
+
+        def worker(platform):
+            with started_lock:
+                started.add(platform.name)
+                if len(started) == 3:
+                    all_started.set()
+            if not all_started.wait(timeout=2):
+                raise AssertionError("platform workers did not overlap")
+            return self.platform_result(platform.name)
+
+        results = function(platforms, worker)
+
+        self.assertEqual(
+            {"debian13", "rockylinux9", "archlinux"},
+            {result.platform for result in results},
+        )
+
+    def test_parallel_execution_waits_for_results_after_one_failure(self) -> None:
+        function = getattr(runner_module, "run_platforms", None)
+        if function is None:
+            self.fail("runner must provide run_platforms")
+        completed: set[str] = set()
+        completed_lock = threading.Lock()
+
+        def worker(platform):
+            with completed_lock:
+                completed.add(platform.name)
+            status = "test failure" if platform.name == "debian13" else "pass"
+            return self.platform_result(platform.name, status)
+
+        results = function(self.registered_platforms(), worker)
+
+        self.assertEqual(
+            {"debian13", "rockylinux9", "archlinux"},
+            completed,
+        )
+        self.assertEqual(3, len(results))
+        failed_result = next(
+            result for result in results if result.platform == "debian13"
+        )
+        self.assertFalse(failed_result.success)
+
+
+class OutputTests(unittest.TestCase):
+    def result(self):
+        return runner_module.PlatformResult(
+            platform="archlinux",
+            status="pass",
+            message="all Molecule phases passed",
+            image_id="sha256:base-image-id",
+            repository_digest=(
+                "docker.io/archlinux/archlinux@sha256:observed-digest"
+            ),
+            pull_seconds=1.25,
+            build_seconds=2.5,
+            molecule_seconds=3.75,
+            cleanup_seconds=0.5,
+            platform_seconds=8.0,
+        )
+
+    def host_plan(self):
+        return runner_module.HostPlan(
+            podman_version="podman version 5.6.2",
+            host_architecture="arm64",
+            requested_architectures={"archlinux": "amd64"},
+        )
+
+    def test_subprocess_stream_prefixes_every_combined_output_line(self) -> None:
+        command_runner = runner_module.SubprocessCommandRunner()
+        stream = getattr(command_runner, "stream", None)
+        if stream is None:
+            self.fail("subprocess runner must provide stream")
+        output = io.StringIO()
+
+        with tempfile.TemporaryDirectory() as directory:
+            with warnings.catch_warnings(record=True) as captured_warnings:
+                warnings.simplefilter("always", ResourceWarning)
+                with redirect_stdout(output):
+                    result = stream(
+                        [
+                            sys.executable,
+                            "-c",
+                            (
+                                "import sys; print('standard output'); "
+                                "print('standard error', file=sys.stderr)"
+                            ),
+                        ],
+                        cwd=Path(directory),
+                        line_prefix="[debian13]",
+                    )
+                gc.collect()
+
+        self.assertEqual(0, result.returncode)
+        self.assertEqual([], captured_warnings)
+        self.assertEqual(
+            {
+                "[debian13] standard output",
+                "[debian13] standard error",
+            },
+            set(output.getvalue().splitlines()),
+        )
+
+    def test_summary_reports_provenance_architecture_timings_and_result(
+        self,
+    ) -> None:
+        function = getattr(runner_module, "emit_summary", None)
+        if function is None:
+            self.fail("runner must provide emit_summary")
+        output = io.StringIO()
+
+        with tempfile.TemporaryDirectory() as directory:
+            summary_path = Path(directory) / "github-summary.md"
+            summary_path.touch(mode=0o600)
+            environment = {"GITHUB_STEP_SUMMARY": str(summary_path)}
+            with redirect_stdout(output):
+                function(self.host_plan(), [self.result()], 12.5, environment)
+            github_summary = summary_path.read_text(encoding="utf-8")
+
+        terminal_summary = output.getvalue()
+        for fragment in (
+            "podman version 5.6.2",
+            "archlinux",
+            "host=arm64",
+            "requested=amd64",
+            "emulated",
+            "docker.io/archlinux/archlinux:base",
+            "sha256:base-image-id",
+            "docker.io/archlinux/archlinux@sha256:observed-digest",
+            "pull=1.25s",
+            "build=2.50s",
+            "molecule=3.75s",
+            "cleanup=0.50s",
+            "total=8.00s",
+            "result=pass",
+            "Invocation total: 12.50s",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, terminal_summary)
+        self.assertIn("### Molecule platform summary", github_summary)
+        self.assertIn("| archlinux | arm64 | amd64 | emulated |", github_summary)
+        self.assertIn("Build: 2.50 seconds", github_summary)
+        self.assertIn("Invocation total: 12.50 seconds", github_summary)
+
+    def test_summary_never_follows_a_github_summary_symlink(self) -> None:
+        function = getattr(runner_module, "emit_summary", None)
+        if function is None:
+            self.fail("runner must provide emit_summary")
+
+        with tempfile.TemporaryDirectory() as directory:
+            directory_path = Path(directory)
+            target = directory_path / "target.md"
+            target.write_text("operator content\n", encoding="utf-8")
+            symlink = directory_path / "summary.md"
+            symlink.symlink_to(target)
+            with redirect_stdout(io.StringIO()):
+                function(
+                    self.host_plan(),
+                    [self.result()],
+                    12.5,
+                    {"GITHUB_STEP_SUMMARY": str(symlink)},
+                )
+
+            self.assertEqual("operator content\n", target.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
