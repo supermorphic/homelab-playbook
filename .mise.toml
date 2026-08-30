@@ -32,6 +32,10 @@ run = "./scripts/ci/validate-fast.sh"
 description = "Run offline Ansible, inventory, and Vault validation"
 run = "./scripts/ci/validate-ansible.sh"
 
+[tasks."test:molecule"]
+description = "Test system_maintenance in rootless Podman containers"
+run = "uv run --frozen --no-sync python scripts/molecule.py"
+
 [tasks."ci:changed"]
 description = "Classify local changes and run required offline validation"
 run = "uv run --frozen --no-sync python scripts/ci/run_changed.py"

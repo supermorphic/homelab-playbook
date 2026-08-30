@@ -54,7 +54,13 @@ class CommandLifecycleTests(unittest.TestCase):
         }
 
         self.assertTrue(
-            {"validate:fast", "validate:ansible", "ci:changed", "ci"}
+            {
+                "validate:fast",
+                "validate:ansible",
+                "test:molecule",
+                "ci:changed",
+                "ci",
+            }
             <= task_names
         )
         self.assertTrue(
@@ -66,9 +72,21 @@ class CommandLifecycleTests(unittest.TestCase):
             <= task_names
         )
         self.assertTrue(
-            {"check:fast", "check:ansible", "check:molecule"}.isdisjoint(
-                published_names
-            )
+            {
+                "check:fast",
+                "check:ansible",
+                "check:molecule",
+                "validate:molecule",
+            }.isdisjoint(published_names)
+        )
+
+        molecule_task = next(
+            task for task in tasks if task["name"] == "test:molecule"
+        )
+        self.assertEqual([], molecule_task["aliases"])
+        self.assertEqual(
+            ["uv run --frozen --no-sync python scripts/molecule.py"],
+            molecule_task["run"],
         )
 
     def test_github_protection_tasks_publish_distinct_lifecycle_commands(
