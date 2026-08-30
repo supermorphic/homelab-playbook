@@ -1,0 +1,108 @@
+---
+- name: Verify system maintenance results
+  hosts: molecule
+  gather_facts: true
+  tasks:
+    - name: Gather installed package facts
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Read PID 1 process name
+      ansible.builtin.command:
+        argv:
+          - cat
+          - /proc/1/comm
+      register: system_maintenance_molecule_verify_pid
+      changed_when: false
+
+    - name: Read systemd manager state
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-system-running
+      register: system_maintenance_molecule_verify_systemd
+      changed_when: false
+      failed_when: >-
+        system_maintenance_molecule_verify_systemd.stdout | trim not in
+        ['running', 'degraded']
+
+    - name: Assert common maintenance results
+      ansible.builtin.assert:
+        that:
+          - system_maintenance_molecule_verify_pid.stdout | trim == 'systemd'
+          - >-
+            system_maintenance_molecule_verify_systemd.stdout | trim in
+            ['running', 'degraded']
+          - "'tree' in ansible_facts.packages"
+
+    - name: Assert Debian maintenance results
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family == 'Debian'
+          - "'apache2-utils' in ansible_facts.packages"
+          - "'openssh-server' in ansible_facts.packages"
+      when: inventory_hostname == 'debian13'
+
+    - name: Read Rocky Linux DNF configuration
+      ansible.builtin.slurp:
+        src: /etc/dnf/dnf.conf
+      register: system_maintenance_molecule_rocky_dnf_configuration
+      when: inventory_hostname == 'rockylinux9'
+
+    - name: Read Rocky Linux EPEL configuration
+      ansible.builtin.slurp:
+        src: /etc/yum.repos.d/epel.repo
+      register: system_maintenance_molecule_rocky_epel_configuration
+      when: inventory_hostname == 'rockylinux9'
+
+    - name: Assert Rocky Linux maintenance results
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family == 'RedHat'
+          - "'epel-release' in ansible_facts.packages"
+          - "'httpd-tools' in ansible_facts.packages"
+          - >-
+            system_maintenance_molecule_rocky_dnf_configuration.content |
+            b64decode is
+            regex('(?m)^installonly_limit=2$')
+          - >-
+            system_maintenance_molecule_rocky_epel_configuration.content |
+            b64decode is
+            regex('(?ms)^\[epel\].*?^enabled=0$')
+      when: inventory_hostname == 'rockylinux9'
+
+    - name: Read generated Arch Linux locales
+      ansible.builtin.command:
+        argv:
+          - locale
+          - -a
+      register: system_maintenance_molecule_arch_locales
+      changed_when: false
+      when: inventory_hostname == 'archlinux'
+
+    - name: Inspect Arch Linux locale configuration
+      ansible.builtin.stat:
+        path: /etc/locale.conf
+      register: system_maintenance_molecule_arch_locale_stat
+      when: inventory_hostname == 'archlinux'
+
+    - name: Read Arch Linux locale configuration
+      ansible.builtin.slurp:
+        src: /etc/locale.conf
+      register: system_maintenance_molecule_arch_locale_configuration
+      when: inventory_hostname == 'archlinux'
+
+    - name: Assert Arch Linux maintenance results
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family == 'Archlinux'
+          - "'apache' in ansible_facts.packages"
+          - >-
+            'en_US.utf8' in
+            system_maintenance_molecule_arch_locales.stdout_lines
+          - system_maintenance_molecule_arch_locale_stat.stat.mode == '0644'
+          - >-
+            system_maintenance_molecule_arch_locale_configuration.content |
+            b64decode | trim ==
+            'LANG=en_US.UTF-8'
+      when: inventory_hostname == 'archlinux'

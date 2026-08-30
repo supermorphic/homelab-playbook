@@ -1,0 +1,110 @@
+---
+- name: Create Molecule test container
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    system_maintenance_molecule_platform: "{{ molecule_yml.platforms | first }}"
+  tasks:
+    - name: Assert Molecule selected exactly one platform
+      ansible.builtin.assert:
+        that:
+          - molecule_yml.platforms | length == 1
+        fail_msg: Molecule must select exactly one platform per worker
+
+    - name: Inspect the exact test container name before creation
+      containers.podman.podman_container_info:
+        name:
+          - "{{ system_maintenance_molecule_platform.container_name }}"
+      register: system_maintenance_existing_container
+
+    - name: Refuse a container name owned by another process
+      ansible.builtin.assert:
+        that:
+          - >-
+            system_maintenance_existing_container.containers | length == 0 or
+            system_maintenance_existing_container.containers[0].Config.Labels[
+              'io.supermorphic.homelab-playbook.repository'
+            ] | default('') == 'homelab-playbook'
+          - >-
+            system_maintenance_existing_container.containers | length == 0 or
+            system_maintenance_existing_container.containers[0].Config.Labels[
+              'io.supermorphic.homelab-playbook.scenario'
+            ] | default('') == 'system_maintenance/default'
+          - >-
+            system_maintenance_existing_container.containers | length == 0 or
+            system_maintenance_existing_container.containers[0].Config.Labels[
+              'io.supermorphic.homelab-playbook.platform'
+            ] | default('') == system_maintenance_molecule_platform.name
+        fail_msg: >-
+          Refusing container-name collision for
+          {{ system_maintenance_molecule_platform.container_name }}
+
+    - name: Start the unprivileged systemd test container
+      containers.podman.podman_container:
+        name: "{{ system_maintenance_molecule_platform.container_name }}"
+        image: "{{ system_maintenance_molecule_platform.image }}"
+        command: "{{ system_maintenance_molecule_platform.container_command }}"
+        state: started
+        detach: true
+        privileged: "{{ system_maintenance_molecule_platform.container_privileged }}"
+        systemd: "{{ system_maintenance_molecule_platform.container_systemd }}"
+        pull: "{{ system_maintenance_molecule_platform.pull }}"
+        label: "{{ system_maintenance_molecule_platform.labels }}"
+
+    - name: Wait for systemd to become PID 1
+      containers.podman.podman_container_exec:
+        name: "{{ system_maintenance_molecule_platform.container_name }}"
+        argv:
+          - cat
+          - /proc/1/comm
+      register: system_maintenance_molecule_systemd_pid
+      changed_when: false
+      failed_when: false
+      retries: 30
+      delay: 2
+      until:
+        - system_maintenance_molecule_systemd_pid.rc == 0
+        - system_maintenance_molecule_systemd_pid.stdout | trim == 'systemd'
+
+    - name: Wait for systemd manager readiness
+      containers.podman.podman_container_exec:
+        name: "{{ system_maintenance_molecule_platform.container_name }}"
+        argv:
+          - systemctl
+          - is-system-running
+      register: system_maintenance_molecule_systemd_state
+      changed_when: false
+      failed_when: false
+      retries: 30
+      delay: 2
+      until:
+        - >-
+          system_maintenance_molecule_systemd_state.stdout | trim in
+          ['running', 'degraded']
+
+    - name: Assert rootless systemd and cgroup delegation are usable
+      ansible.builtin.assert:
+        that:
+          - system_maintenance_molecule_systemd_pid.rc == 0
+          - system_maintenance_molecule_systemd_pid.stdout | trim == 'systemd'
+          - >-
+            system_maintenance_molecule_systemd_state.stdout | trim in
+            ['running', 'degraded']
+        fail_msg: >-
+          The rootless container could not start systemd with usable cgroup
+          delegation
+
+    - name: Define Molecule connection data
+      ansible.builtin.set_fact:
+        system_maintenance_molecule_instance_configuration:
+          - instance: "{{ system_maintenance_molecule_platform.name }}"
+            connection: containers.podman.podman
+
+    - name: Write Molecule instance configuration
+      ansible.builtin.copy:
+        content: |-
+          # Molecule managed
+          {{ system_maintenance_molecule_instance_configuration | to_nice_yaml }}
+        dest: "{{ molecule_instance_config }}"
+        mode: '0600'

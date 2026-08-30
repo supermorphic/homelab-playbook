@@ -1,0 +1,35 @@
+---
+- name: Confirm cleanup target ownership
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    system_maintenance_molecule_platform: "{{ molecule_yml.platforms | first }}"
+  tasks:
+    - name: Inspect the exact cleanup target
+      containers.podman.podman_container_info:
+        name:
+          - "{{ system_maintenance_molecule_platform.container_name }}"
+      register: system_maintenance_molecule_cleanup_container
+
+    - name: Assert any cleanup target remains scenario-owned
+      ansible.builtin.assert:
+        that:
+          - >-
+            system_maintenance_molecule_cleanup_container.containers | length == 0 or
+            system_maintenance_molecule_cleanup_container.containers[0].Config.Labels[
+              'io.supermorphic.homelab-playbook.repository'
+            ] | default('') == 'homelab-playbook'
+          - >-
+            system_maintenance_molecule_cleanup_container.containers | length == 0 or
+            system_maintenance_molecule_cleanup_container.containers[0].Config.Labels[
+              'io.supermorphic.homelab-playbook.scenario'
+            ] | default('') == 'system_maintenance/default'
+          - >-
+            system_maintenance_molecule_cleanup_container.containers | length == 0 or
+            system_maintenance_molecule_cleanup_container.containers[0].Config.Labels[
+              'io.supermorphic.homelab-playbook.platform'
+            ] | default('') == system_maintenance_molecule_platform.name
+        fail_msg: >-
+          Refusing cleanup target collision for
+          {{ system_maintenance_molecule_platform.container_name }}

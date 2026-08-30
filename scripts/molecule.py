@@ -547,6 +547,10 @@ def run_platform(
             / invocation_id
             / platform_definition.name
         )
+        molecule_environment["ANSIBLE_ROLES_PATH"] = str(repo_root / "roles")
+        molecule_environment["ANSIBLE_COLLECTIONS_PATH"] = str(
+            repo_root / ".ansible" / "collections"
+        )
         molecule_result = runner.stream(
             [
                 "molecule",

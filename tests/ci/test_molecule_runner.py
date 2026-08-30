@@ -673,6 +673,14 @@ class PlatformWorkerTests(unittest.TestCase):
             str(REPOSITORY_ROOT / ".tmp/molecule/run-123/debian13"),
             molecule_call[2]["MOLECULE_EPHEMERAL_DIRECTORY"],
         )
+        self.assertEqual(
+            str(REPOSITORY_ROOT / "roles"),
+            molecule_call[2].get("ANSIBLE_ROLES_PATH"),
+        )
+        self.assertEqual(
+            str(REPOSITORY_ROOT / ".ansible/collections"),
+            molecule_call[2].get("ANSIBLE_COLLECTIONS_PATH"),
+        )
 
     def test_worker_cleans_up_after_each_primary_stage_failure(self) -> None:
         cases = (

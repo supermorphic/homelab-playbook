@@ -1,0 +1,12 @@
+FROM docker.io/archlinux/archlinux:base
+
+ENV container=podman
+
+RUN pacman --sync --refresh --noconfirm \
+        dbus \
+        python \
+        systemd \
+    && pacman --sync --clean --clean --noconfirm
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
