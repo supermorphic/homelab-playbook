@@ -37,7 +37,7 @@ description = "Test system_maintenance in rootless Podman containers"
 run = "uv run --frozen --no-sync python scripts/molecule.py"
 
 [tasks."ci:changed"]
-description = "Classify local changes and run required offline validation"
+description = "Classify local changes and run required validation"
 run = "uv run --frozen --no-sync python scripts/ci/run_changed.py"
 
 [tasks."github-protection:check"]
@@ -53,8 +53,9 @@ description = "Apply explicitly authorized GitHub main protection reconciliation
 run = "uv run --frozen --no-sync python scripts/repository/github_protection.py apply"
 
 [tasks.ci]
-description = "Run complete offline validation"
+description = "Run complete validation"
 run = '''
 FULL_SECRET_SCAN=1 mise run validate:fast
 mise run validate:ansible
+mise run test:molecule -- system_maintenance/default
 '''

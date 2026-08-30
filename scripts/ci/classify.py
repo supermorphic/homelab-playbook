@@ -8,7 +8,7 @@ from collections.abc import Sequence
 
 
 DEPTH_ORDER = {"fast": 0, "ansible": 1, "molecule": 2, "full": 3}
-EMITTED_DEPTHS = ("fast", "ansible", "full")
+EMITTED_DEPTHS = ("fast", "ansible", "molecule", "full")
 DIFF_DISCOVERY_OPTIONS = [
     "diff",
     "--name-status",
@@ -92,6 +92,11 @@ def classify_path(path: str) -> tuple[str, str]:
     ):
         return "full", "validation implementation changes require full validation"
 
+    if _has_prefix(path, ("roles/system_maintenance/",)):
+        return (
+            "molecule",
+            "system_maintenance changes require container validation",
+        )
     if _has_prefix(path, ("inventory/", "playbooks/", "roles/", "overrides/")):
         return "ansible", "Ansible source changes require Ansible validation"
     if path in ANSIBLE_CONFIG_PATHS:
@@ -119,7 +124,7 @@ def _result(
         "depth": depth,
         "run_fast": True,
         "run_ansible": DEPTH_ORDER[depth] >= DEPTH_ORDER["ansible"],
-        "run_molecule": False,
+        "run_molecule": DEPTH_ORDER[depth] >= DEPTH_ORDER["molecule"],
         "paths": paths,
         "reasons": reasons,
     }

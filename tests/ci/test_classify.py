@@ -158,7 +158,8 @@ class PathClassificationTests(unittest.TestCase):
             "roles/enable_cgroup/tasks/main.yml": "ansible",
             "roles/kube_vip/tasks/main.yml": "ansible",
             "roles/prepare_cifs_storage/tasks/main.yml": "ansible",
-            "roles/system_maintenance/tasks/main.yml": "ansible",
+            "roles/system_maintenance/tasks/main.yml": "molecule",
+            "roles/system_maintenance/molecule/default/molecule.yml": "molecule",
             "roles/update_pihole/tasks/main.yml": "ansible",
         }
 
@@ -209,7 +210,7 @@ class PathClassificationTests(unittest.TestCase):
         self.assertEqual("full", result["depth"])
         self.assertTrue(result["run_fast"])
         self.assertTrue(result["run_ansible"])
-        self.assertFalse(result["run_molecule"])
+        self.assertTrue(result["run_molecule"])
         self.assertEqual(
             [
                 "README.md",
@@ -233,17 +234,37 @@ class PathClassificationTests(unittest.TestCase):
         self.assertEqual("full", invalid_result["depth"])
         self.assertEqual([""], invalid_result["paths"])
 
-    def test_reserved_molecule_depth_is_declared_but_never_selected(self) -> None:
+    def test_molecule_depth_selects_all_prerequisite_validation(self) -> None:
         self.assertEqual(
             {"fast": 0, "ansible": 1, "molecule": 2, "full": 3},
             classifier.DEPTH_ORDER,
         )
 
-        for paths in (["README.md"], ["roles/update_pihole/tasks/main.yml"], []):
-            with self.subTest(paths=paths):
-                result = classifier.classify_paths(list(paths))
-                self.assertNotEqual("molecule", result["depth"])
-                self.assertFalse(result["run_molecule"])
+        result = classifier.classify_paths(
+            ["roles/system_maintenance/tasks/main.yml"]
+        )
+
+        self.assertEqual("molecule", result["depth"])
+        self.assertTrue(result["run_fast"])
+        self.assertTrue(result["run_ansible"])
+        self.assertTrue(result["run_molecule"])
+
+    def test_only_molecule_and_full_depths_run_container_tests(self) -> None:
+        results = {
+            "fast": classifier.classify_paths(["README.md"]),
+            "ansible": classifier.classify_paths(
+                ["roles/update_pihole/tasks/main.yml"]
+            ),
+            "molecule": classifier.classify_paths(
+                ["roles/system_maintenance/tasks/main.yml"]
+            ),
+            "full": classifier.classify_paths(["scripts/ci/classify.py"]),
+        }
+
+        self.assertFalse(results["fast"]["run_molecule"])
+        self.assertFalse(results["ansible"]["run_molecule"])
+        self.assertTrue(results["molecule"]["run_molecule"])
+        self.assertTrue(results["full"]["run_molecule"])
 
 
 class OutputFormatTests(unittest.TestCase):
@@ -482,7 +503,7 @@ class GitDiscoveryTests(unittest.TestCase):
         self.assertEqual("full", payload["depth"])
         self.assertTrue(payload["run_fast"])
         self.assertTrue(payload["run_ansible"])
-        self.assertFalse(payload["run_molecule"])
+        self.assertTrue(payload["run_molecule"])
 
     def test_git_error_outside_repository_selects_full(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -624,14 +645,43 @@ class ClassifierCliTests(unittest.TestCase):
         self.assertIn("cannot de-escalate from ansible to fast", result.stderr)
         self.assertEqual("", result.stdout)
 
-    def test_force_depth_rejects_reserved_molecule(self) -> None:
+    def test_force_depth_escalates_fast_result_to_molecule(self) -> None:
+        self.repository.write("docs/new.md", "documentation\n")
+
         result = self.repository.run_python(
             CLASSIFIER_PATH,
-            ["--base", "HEAD", "--force-depth", "molecule"],
+            [
+                "--base",
+                "HEAD",
+                "--include-worktree",
+                "--force-depth",
+                "molecule",
+                "--format",
+                "json",
+            ],
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual("molecule", payload["depth"])
+        self.assertTrue(payload["run_molecule"])
+
+    def test_force_depth_rejects_molecule_to_ansible_deescalation(self) -> None:
+        self.repository.write("roles/system_maintenance/tasks/new.yml", "---\n")
+
+        result = self.repository.run_python(
+            CLASSIFIER_PATH,
+            [
+                "--base",
+                "HEAD",
+                "--include-worktree",
+                "--force-depth",
+                "ansible",
+            ],
         )
 
         self.assertEqual(2, result.returncode)
-        self.assertIn("invalid choice: 'molecule'", result.stderr)
+        self.assertIn("cannot de-escalate from molecule to ansible", result.stderr)
 
 
 class ChangedRunnerTests(unittest.TestCase):
@@ -684,7 +734,11 @@ class ChangedRunnerTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("Selected validation depth: full", result.stdout)
         self.assertIn("Escalated validation depth: fast -> full", result.stdout)
-        self.assertEqual(2, result.stdout.count("Would run:"))
+        self.assertEqual(3, result.stdout.count("Would run:"))
+        self.assertIn(
+            "Would run: mise run test:molecule -- system_maintenance/default",
+            result.stdout,
+        )
 
     def test_dry_run_rejects_requested_deescalation(self) -> None:
         self.repository.write("roles/update_pihole/tasks/new.yml", "---\n")
@@ -697,13 +751,24 @@ class ChangedRunnerTests(unittest.TestCase):
         self.assertIn("cannot de-escalate from ansible to fast", result.stderr)
         self.assertNotIn("Would run:", result.stdout)
 
-    def test_runner_rejects_reserved_molecule(self) -> None:
+    def test_molecule_dry_run_prints_fast_ansible_and_test_commands(self) -> None:
+        self.repository.write("roles/system_maintenance/tasks/new.yml", "---\n")
+
         result = self.run_changed(
-            "--dry-run", "--base", "HEAD", "--force-depth", "molecule"
+            "--dry-run",
+            "--base",
+            "HEAD",
         )
 
-        self.assertEqual(2, result.returncode)
-        self.assertIn("invalid choice: 'molecule'", result.stderr)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("Selected validation depth: molecule", result.stdout)
+        self.assertEqual(3, result.stdout.count("Would run:"))
+        self.assertIn("Would run: mise run validate:fast", result.stdout)
+        self.assertIn("Would run: mise run validate:ansible", result.stdout)
+        self.assertIn(
+            "Would run: mise run test:molecule -- system_maintenance/default",
+            result.stdout,
+        )
 
     def test_runner_passes_resolved_range_and_local_union_mode_to_fast(self) -> None:
         self.repository.write("docs/new.md", "documentation\n")
