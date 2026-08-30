@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import configparser
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -22,6 +23,34 @@ def load_tasks(relative_path: str) -> list[dict[str, object]]:
 
 
 class SourceContractTests(unittest.TestCase):
+    def test_os_provision_rejects_arch_before_configuration_roles(self) -> None:
+        """Complete provisioning must not apply unsupported hardening to Arch."""
+        result = subprocess.run(
+            [
+                "ansible-playbook",
+                "playbooks/os/provision.yml",
+                "--inventory",
+                "servers,",
+                "--connection",
+                "local",
+                "--limit",
+                "servers",
+                "--start-at-task",
+                "Validate complete provisioning platform support",
+                "--extra-vars",
+                '{"ansible_become": false, "ansible_os_family": "Archlinux"}',
+            ],
+            cwd=REPOSITORY_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        output = result.stdout + result.stderr
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not support Archlinux", output)
+        self.assertNotIn("Install common packages on Arch Linux", output)
+
     def test_frozen_k3s_manifest_templates_resolve_to_files(self) -> None:
         """Every configured local K3s manifest template must exist."""
         variables = load_yaml_documents(

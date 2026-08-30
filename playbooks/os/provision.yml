@@ -10,6 +10,15 @@
   hosts: servers
   become: true
   gather_facts: true
+  pre_tasks:
+    - name: Validate complete provisioning platform support
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family in ['Debian', 'RedHat']
+        fail_msg: >-
+          os provision does not support {{ ansible_os_family }} because its
+          complete security baseline supports only Debian and RedHat
   roles:
     - system_maintenance
-    - geerlingguy.security
+    - role: geerlingguy.security
+      when: ansible_os_family in ['Debian', 'RedHat']
