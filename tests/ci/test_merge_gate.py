@@ -129,45 +129,45 @@ class MergeGateReconciliationTests(unittest.TestCase):
         classify: str = "success",
         fast: str = "success",
         ansible: str = "success",
+        molecule: str = "success",
     ) -> None:
         self.assertEqual(
             [],
-            merge_gate.reconcile(depth, classify, fast, ansible),
+            merge_gate.reconcile(depth, classify, fast, ansible, molecule),
         )
 
-    def test_fast_depth_accepts_skipped_ansible(self) -> None:
-        self.assert_accepted("fast", ansible="skipped")
+    def test_fast_depth_accepts_skipped_ansible_and_molecule(self) -> None:
+        self.assert_accepted("fast", ansible="skipped", molecule="skipped")
 
-    def test_fast_depth_accepts_successful_shadow_ansible(self) -> None:
-        self.assert_accepted("fast", ansible="success")
+    def test_fast_depth_accepts_successful_shadow_jobs(self) -> None:
+        self.assert_accepted("fast", ansible="success", molecule="success")
 
-    def test_ansible_depth_requires_both_validation_jobs(self) -> None:
-        self.assert_accepted("ansible")
+    def test_ansible_depth_accepts_skipped_molecule(self) -> None:
+        self.assert_accepted("ansible", molecule="skipped")
 
-    def test_full_depth_requires_both_validation_jobs(self) -> None:
+    def test_molecule_and_full_depths_require_all_validation_jobs(self) -> None:
+        self.assert_accepted("molecule")
         self.assert_accepted("full")
-
-    def test_molecule_depth_fails_as_unimplemented(self) -> None:
-        self.assertEqual(
-            ["validation depth 'molecule' is not implemented"],
-            merge_gate.reconcile("molecule", "success", "success", "success"),
-        )
 
     def test_selected_fast_job_rejects_non_success_conclusions(self) -> None:
         for result in ("skipped", "failure", "cancelled"):
             with self.subTest(result=result):
                 self.assertEqual(
                     [f"fast job result is '{result}', expected 'success'"],
-                    merge_gate.reconcile("fast", "success", result, "skipped"),
+                    merge_gate.reconcile(
+                        "fast", "success", result, "skipped", "skipped"
+                    ),
                 )
 
     def test_selected_ansible_job_rejects_non_success_conclusions(self) -> None:
-        for depth in ("ansible", "full"):
+        for depth in ("ansible", "molecule", "full"):
             for result in ("skipped", "failure", "cancelled"):
                 with self.subTest(depth=depth, result=result):
                     self.assertEqual(
                         [f"ansible job result is '{result}', expected 'success'"],
-                        merge_gate.reconcile(depth, "success", "success", result),
+                        merge_gate.reconcile(
+                            depth, "success", "success", result, "success"
+                        ),
                     )
 
     def test_non_selected_ansible_rejects_failure_or_cancellation(self) -> None:
@@ -178,8 +178,35 @@ class MergeGateReconciliationTests(unittest.TestCase):
                         f"ansible job result is '{result}', expected 'success' or "
                         "'skipped'"
                     ],
-                    merge_gate.reconcile("fast", "success", "success", result),
+                    merge_gate.reconcile(
+                        "fast", "success", "success", result, "skipped"
+                    ),
                 )
+
+    def test_selected_molecule_job_rejects_non_success_conclusions(self) -> None:
+        for depth in ("molecule", "full"):
+            for result in ("skipped", "failure", "cancelled"):
+                with self.subTest(depth=depth, result=result):
+                    self.assertEqual(
+                        [f"molecule job result is '{result}', expected 'success'"],
+                        merge_gate.reconcile(
+                            depth, "success", "success", "success", result
+                        ),
+                    )
+
+    def test_non_selected_molecule_rejects_failure_or_cancellation(self) -> None:
+        for depth in ("fast", "ansible"):
+            for result in ("failure", "cancelled"):
+                with self.subTest(depth=depth, result=result):
+                    self.assertEqual(
+                        [
+                            f"molecule job result is '{result}', expected 'success' "
+                            "or 'skipped'"
+                        ],
+                        merge_gate.reconcile(
+                            depth, "success", "success", "success", result
+                        ),
+                    )
 
     def test_missing_or_unknown_depth_fails_closed(self) -> None:
         cases = {
@@ -190,13 +217,14 @@ class MergeGateReconciliationTests(unittest.TestCase):
             with self.subTest(depth=depth):
                 self.assertEqual(
                     [expected],
-                    merge_gate.reconcile(depth, "success", "success", "success"),
+                    merge_gate.reconcile(
+                        depth, "success", "success", "success", "success"
+                    ),
                 )
 
     def test_invalid_depths_still_report_classifier_and_fast_mismatches(self) -> None:
         cases = {
             "": "validation depth is missing",
-            "molecule": "validation depth 'molecule' is not implemented",
             "unexpected": "validation depth 'unexpected' is unknown",
         }
         for depth, depth_error in cases.items():
@@ -212,13 +240,16 @@ class MergeGateReconciliationTests(unittest.TestCase):
                         "failure",
                         "cancelled",
                         "failure",
+                        "failure",
                     ),
                 )
 
     def test_classifier_failure_fails_gate(self) -> None:
         self.assertEqual(
             ["classify job result is 'failure', expected 'success'"],
-            merge_gate.reconcile("full", "failure", "success", "success"),
+            merge_gate.reconcile(
+                "full", "failure", "success", "success", "success"
+            ),
         )
 
     def test_cli_prints_every_mismatch_and_exits_one(self) -> None:
@@ -234,6 +265,8 @@ class MergeGateReconciliationTests(unittest.TestCase):
                 "cancelled",
                 "--ansible-result",
                 "skipped",
+                "--molecule-result",
+                "failure",
             ],
             cwd=REPOSITORY_ROOT,
             check=False,
@@ -249,6 +282,7 @@ class MergeGateReconciliationTests(unittest.TestCase):
                     "classify job result is 'failure', expected 'success'",
                     "fast job result is 'cancelled', expected 'success'",
                     "ansible job result is 'skipped', expected 'success'",
+                    "molecule job result is 'failure', expected 'success' or 'skipped'",
                     "",
                 ]
             ),
@@ -260,7 +294,6 @@ class MergeGateReconciliationTests(unittest.TestCase):
     ) -> None:
         cases = {
             "": "validation depth is missing",
-            "molecule": "validation depth 'molecule' is not implemented",
             "unexpected": "validation depth 'unexpected' is unknown",
         }
         for depth, depth_error in cases.items():
@@ -276,6 +309,8 @@ class MergeGateReconciliationTests(unittest.TestCase):
                         "--fast-result",
                         "cancelled",
                         "--ansible-result",
+                        "failure",
+                        "--molecule-result",
                         "failure",
                     ],
                     cwd=REPOSITORY_ROOT,
@@ -309,6 +344,7 @@ class WorkflowContractTests(unittest.TestCase):
         cls.classify = indented_block(cls.workflow, "classify", 2)
         cls.fast = indented_block(cls.workflow, "fast", 2)
         cls.ansible = indented_block(cls.workflow, "ansible", 2)
+        cls.molecule = indented_block(cls.workflow, "molecule", 2)
         cls.merge_gate = indented_block(cls.workflow, "merge-gate", 2)
 
     def test_triggers_permissions_and_concurrency_are_always_present(self) -> None:
@@ -329,12 +365,12 @@ class WorkflowContractTests(unittest.TestCase):
             "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
         )
         mise = "jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c"
-        self.assertEqual(4, self.workflow.count(f"uses: {checkout}"))
-        self.assertEqual(4, self.workflow.count(f"uses: {mise}"))
-        self.assertEqual(4, self.workflow.count("persist-credentials: false"))
-        self.assertEqual(4, self.workflow.count("fetch-depth: 0"))
-        self.assertEqual(4, self.workflow.count("install: true"))
-        self.assertEqual(4, self.workflow.count("cache: true"))
+        self.assertEqual(5, self.workflow.count(f"uses: {checkout}"))
+        self.assertEqual(5, self.workflow.count(f"uses: {mise}"))
+        self.assertEqual(5, self.workflow.count("persist-credentials: false"))
+        self.assertEqual(5, self.workflow.count("fetch-depth: 0"))
+        self.assertEqual(5, self.workflow.count("install: true"))
+        self.assertEqual(5, self.workflow.count("cache: true"))
         for line in self.workflow.splitlines():
             if "uses:" in line:
                 self.assertRegex(line, r"@[0-9a-f]{40}(?:\s+#.*)?$")
@@ -455,6 +491,48 @@ class WorkflowContractTests(unittest.TestCase):
 
         self.assertTrue(workflow_observability_errors(mutated_workflow))
 
+    def test_molecule_runs_an_exact_bounded_three_platform_matrix(self) -> None:
+        self.assertIn("needs: classify", self.molecule)
+        self.assertEqual(
+            ["needs.classify.outputs.run_molecule == 'true'"],
+            direct_mapping_values(self.molecule, "if", 4),
+        )
+        self.assertIn("runs-on: ubuntu-24.04", self.molecule)
+        self.assertIn("timeout-minutes: 30", self.molecule)
+        expected_strategy = "\n".join(
+            [
+                "    strategy:",
+                "      fail-fast: false",
+                "      max-parallel: 3",
+                "      matrix:",
+                "        platform:",
+                "          - debian13",
+                "          - rockylinux9",
+                "          - archlinux",
+            ]
+        )
+        self.assertIn(expected_strategy, self.molecule)
+        self.assertEqual(1, self.molecule.count("mise run bootstrap"))
+        self.assertIn(
+            "HOMELAB_MOLECULE_PLATFORM: ${{ matrix.platform }}", self.molecule
+        )
+        self.assertEqual(
+            1,
+            self.molecule.count(
+                "run: mise run test:molecule -- system_maintenance/default"
+            ),
+        )
+        lowered = self.molecule.lower()
+        for forbidden in (
+            "sudo",
+            "docker",
+            "upload-artifact",
+            "download-artifact",
+            "apt-get",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, lowered)
+
     def test_merge_gate_always_reconciles_classifier_and_job_results(self) -> None:
         self.assertIn("name: merge-gate", self.merge_gate)
         self.assertEqual(
@@ -463,13 +541,15 @@ class WorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("timeout-minutes: 2", self.merge_gate)
         self.assertIn(
-            "needs:\n      - classify\n      - fast\n      - ansible", self.merge_gate
+            "needs:\n      - classify\n      - fast\n      - ansible\n      - molecule",
+            self.merge_gate,
         )
         expected_environment = {
             "SELECTED_DEPTH: ${{ needs.classify.outputs.depth }}",
             "CLASSIFY_RESULT: ${{ needs.classify.result }}",
             "FAST_RESULT: ${{ needs.fast.result }}",
             "ANSIBLE_RESULT: ${{ needs.ansible.result }}",
+            "MOLECULE_RESULT: ${{ needs.molecule.result }}",
         }
         for variable in expected_environment:
             with self.subTest(variable=variable):
@@ -479,10 +559,14 @@ class WorkflowContractTests(unittest.TestCase):
             '--classify-result "$CLASSIFY_RESULT"',
             '--fast-result "$FAST_RESULT"',
             '--ansible-result "$ANSIBLE_RESULT"',
+            '--molecule-result "$MOLECULE_RESULT"',
         ):
             with self.subTest(argument=argument):
                 self.assertIn(argument, self.merge_gate)
         self.assertIn("REASONS: ${{ needs.classify.outputs.reasons }}", self.merge_gate)
+        self.assertIn(
+            "classify=%s, fast=%s, ansible=%s, molecule=%s", self.merge_gate
+        )
         self.assertIn('>> "$GITHUB_STEP_SUMMARY"', self.merge_gate)
         self.assertNotIn("upload-artifact", self.workflow)
         self.assertNotIn("junit", self.workflow.lower())

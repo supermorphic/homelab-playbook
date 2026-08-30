@@ -5,7 +5,7 @@ import sys
 from collections.abc import Sequence
 
 
-IMPLEMENTED_DEPTHS = ("fast", "ansible", "full")
+IMPLEMENTED_DEPTHS = ("fast", "ansible", "molecule", "full")
 
 
 def _result_error(job: str, result: str, expected: str) -> str:
@@ -17,6 +17,7 @@ def reconcile(
     classify_result: str,
     fast_result: str,
     ansible_result: str,
+    molecule_result: str,
 ) -> list[str]:
     errors: list[str] = []
     if classify_result != "success":
@@ -26,9 +27,6 @@ def reconcile(
 
     if not depth:
         errors.append("validation depth is missing")
-        return errors
-    if depth == "molecule":
-        errors.append("validation depth 'molecule' is not implemented")
         return errors
     if depth not in IMPLEMENTED_DEPTHS:
         errors.append(f"validation depth '{depth}' is unknown")
@@ -42,6 +40,16 @@ def reconcile(
     elif ansible_result != "success":
         errors.append(_result_error("ansible", ansible_result, "'success'"))
 
+    if depth in {"fast", "ansible"}:
+        if molecule_result not in {"success", "skipped"}:
+            errors.append(
+                _result_error(
+                    "molecule", molecule_result, "'success' or 'skipped'"
+                )
+            )
+    elif molecule_result != "success":
+        errors.append(_result_error("molecule", molecule_result, "'success'"))
+
     return errors
 
 
@@ -53,6 +61,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--classify-result", required=True)
     parser.add_argument("--fast-result", required=True)
     parser.add_argument("--ansible-result", required=True)
+    parser.add_argument("--molecule-result", required=True)
     return parser
 
 
@@ -63,6 +72,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         arguments.classify_result,
         arguments.fast_result,
         arguments.ansible_result,
+        arguments.molecule_result,
     )
     for error in errors:
         print(error, file=sys.stderr)
