@@ -68,4 +68,6 @@
     connect_timeout: 5
     reboot_timeout: 600
     test_command: whoami
-  when: system_maintenance_needs_restart.rc == 1
+  when:
+    - system_maintenance_needs_restart.rc == 1
+    - system_maintenance_reboot_enabled | bool
