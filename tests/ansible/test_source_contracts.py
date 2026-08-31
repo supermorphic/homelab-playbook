@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import configparser
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -264,6 +265,83 @@ class SourceContractTests(unittest.TestCase):
                 ]
                 self.assertEqual(1, len(reboot_tasks))
                 self.assertEqual(conditions, reboot_tasks[0]["when"])
+
+    def test_system_maintenance_idempotence_skips_only_live_upgrades(self) -> None:
+        """Live upgrades must run during converge but not strict idempotence."""
+        imported_task_files = [
+            "setup-Debian.yml",
+            "setup-RedHat.yml",
+            "setup-Archlinux.yml",
+        ]
+        playbook = [
+            {
+                "name": "List system maintenance tasks",
+                "hosts": "localhost",
+                "gather_facts": False,
+                "tasks": [
+                    {
+                        "name": f"Import {task_file}",
+                        "ansible.builtin.import_tasks": str(
+                            REPOSITORY_ROOT
+                            / "roles/system_maintenance/tasks"
+                            / task_file
+                        ),
+                    }
+                    for task_file in imported_task_files
+                ],
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            playbook_path = Path(temporary_directory) / "list-maintenance.yml"
+            playbook_path.write_text(
+                yaml.safe_dump(playbook, sort_keys=False),
+                encoding="utf-8",
+            )
+
+            def list_tasks(*extra_arguments: str) -> str:
+                result = subprocess.run(
+                    [
+                        "ansible-playbook",
+                        str(playbook_path),
+                        "--inventory",
+                        "localhost,",
+                        "--connection",
+                        "local",
+                        "--list-tasks",
+                        *extra_arguments,
+                    ],
+                    cwd=REPOSITORY_ROOT,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                return result.stdout
+
+            converge_tasks = list_tasks()
+            idempotence_tasks = list_tasks(
+                "--skip-tags", "molecule-idempotence-notest"
+            )
+
+        live_upgrade_tasks = [
+            "Update package cache and upgrade all packages",
+            "Fully update installed packages",
+            "Upgrade all packages (full system upgrade)",
+        ]
+        for task_name in live_upgrade_tasks:
+            with self.subTest(task_name=task_name):
+                self.assertIn(task_name, converge_tasks)
+                self.assertNotIn(task_name, idempotence_tasks)
+
+        stable_tasks = [
+            "Autoremove unused packages",
+            "Retain the two most recent kernels",
+            "Enable the English locale definition",
+        ]
+        for task_name in stable_tasks:
+            with self.subTest(task_name=task_name):
+                self.assertIn(task_name, idempotence_tasks)
 
     def test_update_pihole_has_no_end_play(self) -> None:
         """A Pi-hole command failure must fail normally instead of ending a play."""

@@ -6,6 +6,8 @@
     force_apt_get: true
   register: system_maintenance_apt_upgrade
   changed_when: system_maintenance_apt_upgrade.changed
+  tags:
+    - molecule-idempotence-notest
 
 - name: Autoremove unused packages
   ansible.builtin.apt:

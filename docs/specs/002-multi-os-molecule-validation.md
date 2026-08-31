@@ -42,7 +42,8 @@ behavior, change-directed validation, and container-only boundaries.
 - Debian 13, Rocky Linux 9, and Arch Linux container platforms;
 - rootless Podman preflight, image acquisition, image building, container
   lifecycle, and cleanup;
-- converge, idempotence, and independent verification phases;
+- converge, deterministic-task idempotence, and independent verification
+  phases;
 - explicit suppression of real reboot attempts during container tests while
   retaining the production default;
 - a public scenario test command and shared per-platform worker;
@@ -293,8 +294,16 @@ role behavior.
 ## Verification contract
 
 Molecule's idempotence phase runs the role a second time and requires no changed
-tasks. Verification then uses Ansible modules and commands that observe the
-result rather than calling the role again.
+deterministic tasks. Each operating system's live full-upgrade task carries
+Molecule's `molecule-idempotence-notest` tag. Molecule runs these tasks during
+convergence and automatically skips that tag during idempotence. This prevents a
+package or repository-metadata publication between the two runs from being
+reported as role non-idempotence. Package installation, cleanup, configuration,
+reboot-signal inspection, and all other maintenance tasks remain part of the
+strict second pass.
+
+Verification then uses Ansible modules and commands that observe the result
+rather than calling the role again.
 
 The initial assertions cover current role-owned invariants:
 
@@ -489,8 +498,11 @@ Issue #11 is complete when:
    local image identity;
 7. base and built images remain after local testing, while exact label-owned
    scenario containers are destroyed after both success and failure;
-8. converge, idempotence, and independent verification pass for each selected
-   operating system, including Arch in GitHub's AMD64 matrix;
+8. converge, deterministic-task idempotence, and independent verification pass
+   for each selected operating system, including Arch in GitHub's AMD64 matrix;
+   live full-upgrade tasks run during converge and are excluded only from the
+   idempotence pass because maintained package repositories can change during a
+   scenario run;
 9. the role exposes an explicit reboot control whose production default remains
    enabled and whose scenario value prevents actual container reboot;
 10. verification covers representative current role invariants, including Rocky
