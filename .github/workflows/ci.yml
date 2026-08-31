@@ -146,12 +146,45 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$validation_status"
 
+  molecule:
+    name: molecule (${{ matrix.platform }})
+    needs: classify
+    if: needs.classify.outputs.run_molecule == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        platform:
+          - debian13
+          - rockylinux9
+          - archlinux
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install locked tools
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install: true
+          cache: true
+      - name: Bootstrap controller dependencies
+        run: mise run bootstrap
+      - name: Run Molecule platform validation
+        env:
+          HOMELAB_MOLECULE_PLATFORM: ${{ matrix.platform }}
+        run: mise run test:molecule -- system_maintenance/default
+
   merge-gate:
     name: merge-gate
     needs:
       - classify
       - fast
       - ansible
+      - molecule
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -172,12 +205,14 @@ jobs:
           CLASSIFY_RESULT: ${{ needs.classify.result }}
           FAST_RESULT: ${{ needs.fast.result }}
           ANSIBLE_RESULT: ${{ needs.ansible.result }}
+          MOLECULE_RESULT: ${{ needs.molecule.result }}
         run: |
           mise exec -- python scripts/ci/merge_gate.py \
             --depth "$SELECTED_DEPTH" \
             --classify-result "$CLASSIFY_RESULT" \
             --fast-result "$FAST_RESULT" \
-            --ansible-result "$ANSIBLE_RESULT"
+            --ansible-result "$ANSIBLE_RESULT" \
+            --molecule-result "$MOLECULE_RESULT"
       - name: Write validation summary
         if: always()
         env:
@@ -186,11 +221,13 @@ jobs:
           CLASSIFY_RESULT: ${{ needs.classify.result }}
           FAST_RESULT: ${{ needs.fast.result }}
           ANSIBLE_RESULT: ${{ needs.ansible.result }}
+          MOLECULE_RESULT: ${{ needs.molecule.result }}
         run: |
           {
             printf '%s\n\n' '### CI summary'
             printf -- '- Selected depth: %s\n' "${SELECTED_DEPTH:-missing}"
             printf -- '- Reasons: %s\n' "${REASONS:-missing}"
-            printf -- '- Results: classify=%s, fast=%s, ansible=%s\n' \
-              "$CLASSIFY_RESULT" "$FAST_RESULT" "$ANSIBLE_RESULT"
+            printf -- '- Results: classify=%s, fast=%s, ansible=%s, molecule=%s\n' \
+              "$CLASSIFY_RESULT" "$FAST_RESULT" "$ANSIBLE_RESULT" \
+              "$MOLECULE_RESULT"
           } >> "$GITHUB_STEP_SUMMARY"

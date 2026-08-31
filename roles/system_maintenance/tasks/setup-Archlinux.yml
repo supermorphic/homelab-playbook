@@ -22,10 +22,30 @@
     state: present
     update_cache: false
 
-- name: Ensure the English locale exists
-  community.general.locale_gen:
-    name: en_US.UTF-8
-    state: present
+- name: Inspect generated locales
+  ansible.builtin.command:
+    argv:
+      - locale
+      - -a
+  register: system_maintenance_arch_available_locales
+  changed_when: false
+
+- name: Enable the English locale definition
+  ansible.builtin.lineinfile:
+    path: /etc/locale.gen
+    regexp: '^#?\s*en_US\.UTF-8\s+UTF-8$'
+    line: en_US.UTF-8 UTF-8
+    mode: '0644'
+  register: system_maintenance_arch_locale_definition
+
+- name: Generate the English locale
+  ansible.builtin.command:
+    argv:
+      - locale-gen
+  when: >-
+    system_maintenance_arch_locale_definition.changed or
+    'en_US.utf8' not in system_maintenance_arch_available_locales.stdout_lines
+  changed_when: true
 
 - name: Set the English locale as default
   ansible.builtin.lineinfile:

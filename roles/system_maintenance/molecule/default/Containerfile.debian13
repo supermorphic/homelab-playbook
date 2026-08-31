@@ -1,0 +1,14 @@
+FROM docker.io/library/debian:13
+
+ENV container=podman
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+        dbus \
+        python3 \
+        systemd \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/usr/lib/systemd/systemd"]

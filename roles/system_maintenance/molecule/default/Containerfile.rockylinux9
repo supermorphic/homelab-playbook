@@ -1,0 +1,13 @@
+FROM docker.io/rockylinux/rockylinux:9
+
+ENV container=podman
+
+RUN dnf install --assumeyes \
+        dbus-daemon \
+        python3 \
+        systemd \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/usr/lib/systemd/systemd"]

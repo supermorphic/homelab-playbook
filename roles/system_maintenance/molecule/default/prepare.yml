@@ -1,0 +1,28 @@
+---
+- name: Confirm Molecule container readiness
+  hosts: molecule
+  gather_facts: true
+  tasks:
+    - name: Read PID 1 process name
+      ansible.builtin.command:
+        argv:
+          - cat
+          - /proc/1/comm
+      register: system_maintenance_molecule_prepare_pid
+      changed_when: false
+
+    - name: Read systemd manager state
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-system-running
+      register: system_maintenance_molecule_prepare_systemd
+      changed_when: false
+      failed_when: >-
+        system_maintenance_molecule_prepare_systemd.stdout | trim not in
+        ['running', 'degraded']
+
+    - name: Assert systemd is PID 1
+      ansible.builtin.assert:
+        that:
+          - system_maintenance_molecule_prepare_pid.stdout | trim == 'systemd'

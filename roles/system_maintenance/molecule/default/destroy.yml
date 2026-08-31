@@ -1,0 +1,62 @@
+---
+- name: Destroy Molecule test container
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    system_maintenance_molecule_platform_name: >-
+      {{ lookup('ansible.builtin.env', 'HOMELAB_MOLECULE_PLATFORM') }}
+    system_maintenance_molecule_platforms: >-
+      {{ molecule_yml.platforms
+         | selectattr('name', 'equalto', system_maintenance_molecule_platform_name)
+         | list }}
+    system_maintenance_molecule_platform: >-
+      {{ system_maintenance_molecule_platforms | first }}
+  tasks:
+    - name: Assert Molecule selected exactly one platform
+      ansible.builtin.assert:
+        that:
+          - system_maintenance_molecule_platforms | length == 1
+        fail_msg: Molecule must select exactly one platform per worker
+
+    - name: Inspect the exact test container name before destruction
+      containers.podman.podman_container_info:
+        name:
+          - "{{ system_maintenance_molecule_platform.container_name }}"
+      register: system_maintenance_existing_container
+
+    - name: Refuse to destroy a container owned by another process
+      ansible.builtin.assert:
+        that:
+          - >-
+            system_maintenance_existing_container.containers | length == 0 or
+            system_maintenance_existing_container.containers[0].Config.Labels[
+              'io.supermorphic.homelab-playbook.repository'
+            ] | default('') == 'homelab-playbook'
+          - >-
+            system_maintenance_existing_container.containers | length == 0 or
+            system_maintenance_existing_container.containers[0].Config.Labels[
+              'io.supermorphic.homelab-playbook.scenario'
+            ] | default('') == 'system_maintenance/default'
+          - >-
+            system_maintenance_existing_container.containers | length == 0 or
+            system_maintenance_existing_container.containers[0].Config.Labels[
+              'io.supermorphic.homelab-playbook.platform'
+            ] | default('') == system_maintenance_molecule_platform.name
+        fail_msg: >-
+          Refusing container-name collision for
+          {{ system_maintenance_molecule_platform.container_name }}
+
+    - name: Remove the owned test container
+      containers.podman.podman_container:
+        name: "{{ system_maintenance_molecule_platform.container_name }}"
+        state: absent
+      when: system_maintenance_existing_container.containers | length > 0
+
+    - name: Clear Molecule instance configuration
+      ansible.builtin.copy:
+        content: |-
+          # Molecule managed
+          []
+        dest: "{{ molecule_instance_config }}"
+        mode: '0600'

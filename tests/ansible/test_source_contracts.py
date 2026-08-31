@@ -174,6 +174,97 @@ class SourceContractTests(unittest.TestCase):
             )
         )
 
+    def test_arch_maintenance_generates_the_configured_english_locale(self) -> None:
+        """Arch locale setup must use its native locale.gen source."""
+        tasks = load_tasks("roles/system_maintenance/tasks/setup-Archlinux.yml")
+
+        self.assertFalse(
+            any("community.general.locale_gen" in task for task in tasks)
+        )
+
+        inspect_task = next(
+            task for task in tasks if task["name"] == "Inspect generated locales"
+        )
+        self.assertEqual(
+            inspect_task["ansible.builtin.command"],
+            {"argv": ["locale", "-a"]},
+        )
+        self.assertEqual(
+            inspect_task["register"],
+            "system_maintenance_arch_available_locales",
+        )
+        self.assertIs(inspect_task["changed_when"], False)
+
+        definition_task = next(
+            task
+            for task in tasks
+            if task["name"] == "Enable the English locale definition"
+        )
+        self.assertEqual(
+            definition_task["ansible.builtin.lineinfile"],
+            {
+                "path": "/etc/locale.gen",
+                "regexp": r"^#?\s*en_US\.UTF-8\s+UTF-8$",
+                "line": "en_US.UTF-8 UTF-8",
+                "mode": "0644",
+            },
+        )
+        self.assertEqual(
+            definition_task["register"],
+            "system_maintenance_arch_locale_definition",
+        )
+
+        generate_task = next(
+            task for task in tasks if task["name"] == "Generate the English locale"
+        )
+        self.assertEqual(
+            generate_task["ansible.builtin.command"],
+            {"argv": ["locale-gen"]},
+        )
+        self.assertEqual(
+            generate_task["when"],
+            (
+                "system_maintenance_arch_locale_definition.changed or "
+                "'en_US.utf8' not in "
+                "system_maintenance_arch_available_locales.stdout_lines"
+            ),
+        )
+        self.assertIs(generate_task["changed_when"], True)
+
+    def test_system_maintenance_reboots_are_enabled_by_default_and_controllable(
+        self,
+    ) -> None:
+        """Container tests may suppress reboots without changing production."""
+        defaults_path = REPOSITORY_ROOT / "roles/system_maintenance/defaults/main.yml"
+        self.assertTrue(defaults_path.is_file())
+        defaults = load_yaml_documents(
+            "roles/system_maintenance/defaults/main.yml"
+        )[0]
+        self.assertEqual(
+            True,
+            defaults["system_maintenance_reboot_enabled"],
+        )
+
+        expected_conditions = {
+            "roles/system_maintenance/tasks/setup-Debian.yml": [
+                "system_maintenance_reboot_required_file.stat.exists",
+                "system_maintenance_reboot_enabled | bool",
+            ],
+            "roles/system_maintenance/tasks/setup-RedHat.yml": [
+                "system_maintenance_needs_restart.rc == 1",
+                "system_maintenance_reboot_enabled | bool",
+            ],
+        }
+        for task_path, conditions in expected_conditions.items():
+            with self.subTest(task_path=task_path):
+                reboot_tasks = [
+                    task
+                    for task in load_tasks(task_path)
+                    if task["name"] == "Reboot if required"
+                ]
+                self.assertEqual(1, len(reboot_tasks))
+                self.assertEqual(conditions, reboot_tasks[0]["when"])
+
     def test_update_pihole_has_no_end_play(self) -> None:
         """A Pi-hole command failure must fail normally instead of ending a play."""
         tasks = load_tasks("roles/update_pihole/tasks/main.yml")

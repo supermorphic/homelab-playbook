@@ -16,9 +16,27 @@ COMMANDS = {
         ["mise", "run", "validate:fast"],
         ["mise", "run", "validate:ansible"],
     ],
+    "molecule": [
+        ["mise", "run", "validate:fast"],
+        ["mise", "run", "validate:ansible"],
+        [
+            "mise",
+            "run",
+            "test:molecule",
+            "--",
+            "system_maintenance/default",
+        ],
+    ],
     "full": [
         ["mise", "run", "validate:fast"],
         ["mise", "run", "validate:ansible"],
+        [
+            "mise",
+            "run",
+            "test:molecule",
+            "--",
+            "system_maintenance/default",
+        ],
     ],
 }
 

@@ -15,9 +15,13 @@ ansible = [
   "ansible-lint==26.8.0",
   "PyYAML==6.0.3",
 ]
+molecule = [
+  "molecule==26.6.0",
+]
 dev = [
   { include-group = "fast" },
   { include-group = "ansible" },
+  { include-group = "molecule" },
 ]
 
 [tool.uv]

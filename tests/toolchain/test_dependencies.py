@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from types import ModuleType
@@ -36,6 +37,23 @@ def load_dependencies() -> ModuleType:
 
 
 dependencies = load_dependencies()
+
+
+class RepositoryDependencyContractTests(unittest.TestCase):
+    def test_molecule_controller_dependency_is_locked_and_bootstrapped(self) -> None:
+        with (REPO_ROOT / "pyproject.toml").open("rb") as source:
+            project = tomllib.load(source)
+
+        groups = project["dependency-groups"]
+        self.assertEqual(["molecule==26.6.0"], groups.get("molecule"))
+        self.assertIn({"include-group": "molecule"}, groups["dev"])
+
+    def test_podman_collection_is_exactly_pinned(self) -> None:
+        collections = dependencies.required_collections(
+            REPO_ROOT / "requirements.yml"
+        )
+
+        self.assertIn(("containers.podman", "1.20.2"), collections)
 
 
 class DependencyVerificationTests(unittest.TestCase):
