@@ -24,6 +24,38 @@ def load_tasks(relative_path: str) -> list[dict[str, object]]:
 
 
 class SourceContractTests(unittest.TestCase):
+    def test_os_bootstrap_uses_only_raw_until_python_is_available(self) -> None:
+        tasks = load_tasks("roles/os_bootstrap/tasks/main.yml")
+        python_task = next(
+            task for task in tasks
+            if task["name"] == "Install Python only when it is absent"
+        )
+        python_index = tasks.index(python_task)
+
+        self.assertTrue(
+            all(
+                "ansible.builtin.raw" in task
+                for task in tasks[: python_index + 1]
+            )
+        )
+        self.assertIn("sudo -n", python_task["ansible.builtin.raw"])
+        self.assertNotIn("become", python_task)
+        self.assertEqual(
+            "'HOMELAB_PYTHON_INSTALLED' in os_bootstrap_python.stdout",
+            python_task["changed_when"],
+        )
+
+    def test_os_bootstrap_has_no_root_or_password_fallback(self) -> None:
+        source = (
+            REPOSITORY_ROOT / "roles/os_bootstrap/tasks/main.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("id -un", source)
+        self.assertIn("sudo -n true", source)
+        self.assertNotIn("ansible_password", source)
+        self.assertNotIn("ansible_become_password", source)
+        self.assertNotIn("PermitRootLogin", source)
+
     def test_os_provision_rejects_arch_before_configuration_roles(self) -> None:
         """Complete provisioning must not apply unsupported hardening to Arch."""
         result = subprocess.run(
