@@ -86,6 +86,16 @@ class RepositoryDependencyContractTests(unittest.TestCase):
         )
         self.assertEqual("git", scm_match.group(1))
 
+    def test_pinned_sshd_role_validates_candidates_before_reload(self) -> None:
+        source = (
+            REPO_ROOT
+            / ".ansible/roles/willshersystems.sshd/tasks/install_config.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("ansible.builtin.template:", source)
+        self.assertIn("{{ sshd_binary | quote }} -t -f %s", source)
+        self.assertLess(source.index("validate:"), source.index("notify: sshd_reload"))
+
 
 class DependencyVerificationTests(unittest.TestCase):
     def setUp(self) -> None:

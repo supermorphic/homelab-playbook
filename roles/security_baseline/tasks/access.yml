@@ -1,0 +1,82 @@
+---
+- name: Reconcile ansible administrative account
+  ansible.builtin.user:
+    name: ansible
+    create_home: true
+    shell: /bin/bash
+    password_lock: true
+
+- name: Reconcile authorized controller keys
+  ansible.posix.authorized_key:
+    user: ansible
+    key: "{{ security_baseline_authorized_keys | join('\n') }}"
+    exclusive: true
+    manage_dir: true
+  no_log: true
+
+- name: Install validated ansible sudo policy
+  ansible.builtin.template:
+    src: ansible-sudoers.j2
+    dest: /etc/sudoers.d/90-ansible
+    owner: root
+    group: root
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+
+- name: Prove ansible non-interactive sudo access
+  become: true
+  become_user: ansible
+  ansible.builtin.command:
+    argv: [sudo, -n, "true"]
+  changed_when: false
+
+- name: Configure focused SSH policy
+  ansible.builtin.include_role:
+    name: willshersystems.sshd
+  vars:
+    sshd_config_file: /etc/ssh/sshd_config.d/00-homelab.conf
+    sshd_main_config_file: /etc/ssh/sshd_config
+    sshd_manage_firewall: false
+    sshd_manage_selinux: false
+    sshd_sysconfig_override_crypto_policy: false
+    sshd_config:
+      AllowUsers: ansible
+      PubkeyAuthentication: true
+      PasswordAuthentication: false
+      KbdInteractiveAuthentication: false
+      PermitEmptyPasswords: false
+      PermitRootLogin: false
+      AllowAgentForwarding: false
+      AllowTcpForwarding: false
+      X11Forwarding: false
+      PermitTunnel: false
+
+- name: Activate focused SSH policy
+  ansible.builtin.meta: flush_handlers
+
+- name: Reset connection after SSH policy activation
+  ansible.builtin.meta: reset_connection
+
+- name: Wait for connection after SSH policy activation
+  ansible.builtin.wait_for_connection:
+
+- name: Read effective SSH policy
+  ansible.builtin.command:
+    argv: [/usr/sbin/sshd, -T]
+  register: security_baseline_sshd_effective
+  changed_when: false
+
+- name: Verify effective SSH policy
+  ansible.builtin.assert:
+    that:
+      - "'allowusers ansible' in security_baseline_sshd_effective.stdout_lines"
+      - "'pubkeyauthentication yes' in security_baseline_sshd_effective.stdout_lines"
+      - "'passwordauthentication no' in security_baseline_sshd_effective.stdout_lines"
+      - "'kbdinteractiveauthentication no' in security_baseline_sshd_effective.stdout_lines"
+      - "'permitemptypasswords no' in security_baseline_sshd_effective.stdout_lines"
+      - "'permitrootlogin no' in security_baseline_sshd_effective.stdout_lines"
+      - "'allowagentforwarding no' in security_baseline_sshd_effective.stdout_lines"
+      - "'allowtcpforwarding no' in security_baseline_sshd_effective.stdout_lines"
+      - "'x11forwarding no' in security_baseline_sshd_effective.stdout_lines"
+      - "'permittunnel no' in security_baseline_sshd_effective.stdout_lines"
+    fail_msg: Effective SSH policy does not match the repository-owned policy

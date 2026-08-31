@@ -229,6 +229,37 @@ class SourceContractTests(unittest.TestCase):
             )
         )
 
+    def test_security_baseline_access_inputs_fail_closed(self) -> None:
+        defaults = load_yaml_documents(
+            "roles/security_baseline/defaults/main.yml"
+        )[0]
+        self.assertEqual([], defaults["security_baseline_authorized_keys"])
+        self.assertEqual([], defaults["security_baseline_management_sources"])
+        self.assertEqual([], defaults["security_baseline_firewall_services"])
+
+    def test_security_baseline_validates_sudo_and_owns_keys_authoritatively(
+        self,
+    ) -> None:
+        tasks = load_tasks("roles/security_baseline/tasks/access.yml")
+        sudo = next(
+            task
+            for task in tasks
+            if task["name"] == "Install validated ansible sudo policy"
+        )
+        keys = next(
+            task
+            for task in tasks
+            if task["name"] == "Reconcile authorized controller keys"
+        )
+
+        self.assertEqual(
+            "/usr/sbin/visudo -cf %s",
+            sudo["ansible.builtin.template"]["validate"],
+        )
+        self.assertEqual("0440", sudo["ansible.builtin.template"]["mode"])
+        self.assertIs(keys["ansible.posix.authorized_key"]["exclusive"], True)
+        self.assertIs(keys["no_log"], True)
+
     def test_system_maintenance_managed_packages_are_minimal(self) -> None:
         source = "\n".join(
             (REPOSITORY_ROOT / path).read_text(encoding="utf-8")

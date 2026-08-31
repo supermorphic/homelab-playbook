@@ -1,0 +1,32 @@
+---
+- name: Validate security baseline execution inputs
+  ansible.builtin.assert:
+    that:
+      - >-
+        (ansible_distribution == 'Debian' and
+         ansible_distribution_major_version == '13') or
+        (ansible_distribution == 'Rocky' and
+         ansible_distribution_major_version == '9')
+      - ansible_user | default('') == 'ansible'
+      - security_baseline_authorized_keys | length > 0
+      - security_baseline_management_sources | length > 0
+    fail_msg: >-
+      security baseline requires Debian 13 or Rocky Linux 9, an ansible
+      connection user, authorized controller keys, and management sources
+  no_log: true
+
+- name: Validate authorized controller key formats
+  ansible.builtin.assert:
+    that:
+      - >-
+        item is match(
+          '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|'
+          ~ 'sk-ssh-ed25519@openssh\\.com|'
+          ~ 'sk-ecdsa-sha2-nistp256@openssh\\.com) '
+        )
+    fail_msg: Authorized controller keys must use a supported OpenSSH key type
+  loop: "{{ security_baseline_authorized_keys }}"
+  no_log: true
+
+- name: Configure administrative access and SSH policy
+  ansible.builtin.import_tasks: access.yml
