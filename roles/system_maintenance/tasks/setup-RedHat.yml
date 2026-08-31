@@ -20,6 +20,8 @@
     state: latest
     update_cache: true
     update_only: true
+  tags:
+    - molecule-idempotence-notest
 
 - name: Remove unneeded packages
   ansible.builtin.dnf:
