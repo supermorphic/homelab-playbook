@@ -12,6 +12,10 @@ roles:
     version: 3.0.4
   - name: l3d.unbound
     version: v1.1.0
+  - name: willshersystems.sshd
+    version: v0.34.0
+    src: https://github.com/willshersystems/ansible-sshd.git
+    scm: git
 collections:
   - name: community.general
     version: 13.3.0
@@ -19,3 +23,5 @@ collections:
     version: 1.1.5
   - name: containers.podman
     version: 1.20.2
+  - name: ansible.posix
+    version: 2.2.2
