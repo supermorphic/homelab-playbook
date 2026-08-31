@@ -1,0 +1,11 @@
+---
+- name: Restart chrony
+  ansible.builtin.systemd_service:
+    name: "{{ security_baseline_chrony_service_name }}"
+    state: restarted
+  when: security_baseline_apply_time_runtime | bool
+
+- name: Restart journald
+  ansible.builtin.systemd_service:
+    name: systemd-journald
+    state: restarted

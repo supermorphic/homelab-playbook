@@ -1,0 +1,64 @@
+---
+- name: Create persistent journal storage
+  ansible.builtin.file:
+    path: /var/log/journal
+    state: directory
+    owner: root
+    group: root
+    mode: "2755"
+
+- name: Create journald drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Render bounded persistent journal configuration
+  ansible.builtin.template:
+    src: journald-homelab.conf.j2
+    dest: /etc/systemd/journald.conf.d/90-homelab.conf
+    owner: root
+    group: root
+    mode: "0644"
+  register: security_baseline_journald_config
+
+- name: Read effective journald configuration
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemd-analyze
+      - cat-config
+      - systemd/journald.conf
+  register: security_baseline_journald_effective
+  changed_when: false
+
+- name: Validate bounded persistent journald configuration
+  ansible.builtin.assert:
+    that:
+      - "'Storage=persistent' in security_baseline_journald_effective.stdout_lines"
+      - >-
+        'SystemMaxUse=' ~ security_baseline_journal_system_max_use
+        in security_baseline_journald_effective.stdout_lines
+      - >-
+        'SystemKeepFree=' ~ security_baseline_journal_system_keep_free
+        in security_baseline_journald_effective.stdout_lines
+    fail_msg: Effective journald configuration does not match the baseline
+
+- name: Queue journald restart after validated configuration change
+  ansible.builtin.debug:
+    msg: Bounded persistent journald configuration passed read-back
+  changed_when: security_baseline_journald_config.changed
+  notify: Restart journald
+
+- name: Install auditd with vendor rules
+  ansible.builtin.package:
+    name: auditd
+    state: present
+
+- name: Enable and start auditd with vendor rules
+  ansible.builtin.systemd_service:
+    name: auditd
+    enabled: true
+    state: started
+  when: security_baseline_apply_audit_runtime | bool

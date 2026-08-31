@@ -260,6 +260,74 @@ class SourceContractTests(unittest.TestCase):
         self.assertIs(keys["ansible.posix.authorized_key"]["exclusive"], True)
         self.assertIs(keys["no_log"], True)
 
+    def test_firewall_policy_is_private_source_only_and_runtime_guarded(
+        self,
+    ) -> None:
+        source = (
+            REPOSITORY_ROOT / "roles/security_baseline/tasks/firewall.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("security_baseline_management_sources", source)
+        self.assertIn('service name="ssh"', source)
+        self.assertIn("security_baseline_apply_firewall_runtime", source)
+        for forbidden in ("tailscale0", "http", "https", "dns", "public"):
+            self.assertNotIn(forbidden, source.lower())
+
+    def test_platform_mac_policy_does_not_mix_frameworks(self) -> None:
+        tasks = load_tasks("roles/security_baseline/tasks/mac.yml")
+        selinux = next(
+            task
+            for task in tasks
+            if task.get("ansible.posix.selinux", {}).get("state") == "enforcing"
+        )
+        apparmor = next(
+            task
+            for task in tasks
+            if task["name"] == "Install Debian AppArmor packages"
+        )
+        self.assertEqual("targeted", selinux["ansible.posix.selinux"]["policy"])
+        self.assertEqual("enforcing", selinux["ansible.posix.selinux"]["state"])
+        self.assertIn("ansible_os_family == 'RedHat'", selinux["when"])
+        self.assertIn("ansible_os_family == 'Debian'", apparmor["when"])
+
+    def test_logging_uses_persistent_bounded_journal_and_vendor_audit_rules(
+        self,
+    ) -> None:
+        template = (
+            REPOSITORY_ROOT
+            / "roles/security_baseline/templates/journald-homelab.conf.j2"
+        ).read_text(encoding="utf-8")
+        audit_source = (
+            REPOSITORY_ROOT / "roles/security_baseline/tasks/logging.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Storage=persistent", template)
+        self.assertIn("SystemMaxUse=", template)
+        self.assertIn("SystemKeepFree=", template)
+        self.assertNotIn("audit.rules", audit_source)
+
+    def test_chrony_override_keeps_managed_sources_active(self) -> None:
+        tasks = load_tasks("roles/security_baseline/tasks/pre-update.yml")
+        add_sources = next(
+            task
+            for task in tasks
+            if task["name"]
+            == "Add trusted chrony sources before disabling vendor sources"
+        )
+        disable_vendor = next(
+            task
+            for task in tasks
+            if task["name"]
+            == "Disable vendor chrony sources after adding trusted sources"
+        )
+
+        self.assertEqual(
+            "BOF",
+            add_sources["ansible.builtin.blockinfile"]["insertbefore"],
+        )
+        self.assertEqual(
+            "(?m)^# END ANSIBLE MANAGED TRUSTED CHRONY SOURCES$",
+            disable_vendor["ansible.builtin.replace"]["after"],
+        )
+
     def test_system_maintenance_managed_packages_are_minimal(self) -> None:
         source = "\n".join(
             (REPOSITORY_ROOT / path).read_text(encoding="utf-8")

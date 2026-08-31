@@ -10,6 +10,8 @@
   hosts: servers
   become: true
   gather_facts: true
+  vars:
+    security_baseline_reboot_required: false
   pre_tasks:
     - name: Validate complete provisioning platform support
       ansible.builtin.assert:
@@ -18,7 +20,16 @@
         fail_msg: >-
           os provision does not support {{ ansible_os_family }} because its
           complete security baseline supports only Debian and RedHat
+    - name: Configure repository trust and time policy before updates
+      ansible.builtin.import_role:
+        name: security_baseline
+        tasks_from: pre-update.yml
   roles:
     - system_maintenance
     - role: geerlingguy.security
       when: ansible_os_family in ['Debian', 'RedHat']
+  post_tasks:
+    - name: Configure host security policy after updates
+      ansible.builtin.import_role:
+        name: security_baseline
+        tasks_from: post-update.yml
