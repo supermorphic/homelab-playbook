@@ -7,5 +7,11 @@
       system-maintenance does not support operating-system family
       received {{ ansible_os_family }}
 
-- name: Include setup tasks for the operating system family
-  ansible.builtin.include_tasks: 'setup-{{ ansible_os_family }}.yml'
+- name: Run the explicit full update
+  ansible.builtin.import_tasks: full-update.yml
+
+- name: Configure native automatic security updates
+  ansible.builtin.import_tasks: automatic-updates.yml
+
+- name: Inspect reboot-required state
+  ansible.builtin.import_tasks: reboot-state.yml

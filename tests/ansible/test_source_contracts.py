@@ -154,7 +154,6 @@ class SourceContractTests(unittest.TestCase):
         """Debian and RedHat hosts must resolve to maintained task files."""
         tasks = load_tasks("roles/system_maintenance/tasks/main.yml")
         first_task = tasks[0]
-        second_task = tasks[1]
 
         self.assertIn("ansible.builtin.assert", first_task)
         self.assertEqual(
@@ -170,19 +169,23 @@ class SourceContractTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            second_task["ansible.builtin.include_tasks"],
-            "setup-{{ ansible_os_family }}.yml",
+            [task["ansible.builtin.import_tasks"] for task in tasks[1:]],
+            ["full-update.yml", "automatic-updates.yml", "reboot-state.yml"],
         )
-        self.assertNotIn("when", second_task)
         for os_family in ("Debian", "RedHat"):
-            self.assertTrue(
-                (
-                    REPOSITORY_ROOT
-                    / "roles/system_maintenance/tasks"
-                    / f"setup-{os_family}.yml"
-                ).is_file(),
-                f"missing system-maintenance tasks for {os_family}",
-            )
+            for task_file in (
+                f"setup-{os_family}.yml",
+                f"automatic-updates-{os_family}.yml",
+                f"reboot-state-{os_family}.yml",
+            ):
+                self.assertTrue(
+                    (
+                        REPOSITORY_ROOT
+                        / "roles/system_maintenance/tasks"
+                        / task_file
+                    ).is_file(),
+                    f"missing system-maintenance tasks: {task_file}",
+                )
 
     def test_prepare_cifs_storage_dispatches_only_implemented_families(self) -> None:
         """Every accepted CIFS operating-system family must have setup tasks."""
@@ -208,75 +211,65 @@ class SourceContractTests(unittest.TestCase):
                 f"missing prepare-cifs-storage tasks for {os_family}",
             )
 
-    def test_redhat_maintenance_sets_kernel_retention_before_upgrade(self) -> None:
-        """RedHat updates must retain two kernels through supported DNF policy."""
-        tasks = load_tasks("roles/system_maintenance/tasks/setup-RedHat.yml")
-        retention_tasks = [
-            (index, task)
-            for index, task in enumerate(tasks)
-            if task.get("community.general.ini_file", {}).get("option")
-            == "installonly_limit"
+    def test_system_maintenance_never_reboots_or_reduces_kernel_retention(
+        self,
+    ) -> None:
+        task_paths = [
+            "roles/system_maintenance/tasks/setup-Debian.yml",
+            "roles/system_maintenance/tasks/setup-RedHat.yml",
         ]
-        upgrade_index = next(
-            index
-            for index, task in enumerate(tasks)
-            if task.get("ansible.builtin.dnf", {}).get("update_only") is True
-        )
+        tasks = [task for path in task_paths for task in load_tasks(path)]
 
-        self.assertEqual(len(retention_tasks), 1)
-        retention_index, retention_task = retention_tasks[0]
-        self.assertLess(retention_index, upgrade_index)
-        self.assertEqual(
-            retention_task["community.general.ini_file"],
-            {
-                "path": "/etc/dnf/dnf.conf",
-                "section": "main",
-                "option": "installonly_limit",
-                "value": "2",
-                "no_extra_spaces": True,
-                "mode": "0644",
-            },
-        )
-        self.assertTrue(
+        self.assertFalse(any("ansible.builtin.reboot" in task for task in tasks))
+        self.assertFalse(
             any(
-                task.get("ansible.builtin.dnf", {}).get("autoremove") is True
+                task.get("community.general.ini_file", {}).get("option")
+                == "installonly_limit"
                 for task in tasks
             )
         )
 
-    def test_system_maintenance_reboots_are_enabled_by_default_and_controllable(
-        self,
-    ) -> None:
-        """Container tests may suppress reboots without changing production."""
-        defaults_path = REPOSITORY_ROOT / "roles/system_maintenance/defaults/main.yml"
-        self.assertTrue(defaults_path.is_file())
+    def test_system_maintenance_managed_packages_are_minimal(self) -> None:
+        source = "\n".join(
+            (REPOSITORY_ROOT / path).read_text(encoding="utf-8")
+            for path in (
+                "roles/system_maintenance/tasks/setup-Debian.yml",
+                "roles/system_maintenance/tasks/setup-RedHat.yml",
+            )
+        )
+        for forbidden in (
+            "qemu-guest-agent",
+            "xterm",
+            "vim",
+            "tree",
+            "git",
+            "python3-pip",
+            "python3-venv",
+            "python3-netaddr",
+            "apache2-utils",
+            "httpd-tools",
+            "epel-release",
+            "fail2ban",
+        ):
+            with self.subTest(package=forbidden):
+                self.assertNotIn(forbidden, source)
+
+    def test_native_security_updates_are_daily_and_reboot_controllable(self) -> None:
         defaults = load_yaml_documents(
             "roles/system_maintenance/defaults/main.yml"
         )[0]
         self.assertEqual(
-            True,
-            defaults["system_maintenance_reboot_enabled"],
+            "*-*-* 04:00:00",
+            defaults["system_maintenance_security_update_calendar"],
         )
-
-        expected_conditions = {
-            "roles/system_maintenance/tasks/setup-Debian.yml": [
-                "system_maintenance_reboot_required_file.stat.exists",
-                "system_maintenance_reboot_enabled | bool",
-            ],
-            "roles/system_maintenance/tasks/setup-RedHat.yml": [
-                "system_maintenance_needs_restart.rc == 1",
-                "system_maintenance_reboot_enabled | bool",
-            ],
-        }
-        for task_path, conditions in expected_conditions.items():
-            with self.subTest(task_path=task_path):
-                reboot_tasks = [
-                    task
-                    for task in load_tasks(task_path)
-                    if task["name"] == "Reboot if required"
-                ]
-                self.assertEqual(1, len(reboot_tasks))
-                self.assertEqual(conditions, reboot_tasks[0]["when"])
+        self.assertEqual(
+            "04:30",
+            defaults["system_maintenance_security_reboot_time"],
+        )
+        self.assertIs(
+            defaults["system_maintenance_native_reboot_enabled"],
+            True,
+        )
 
     def test_system_maintenance_idempotence_skips_only_live_upgrades(self) -> None:
         """Live upgrades must run during converge but not strict idempotence."""
@@ -346,7 +339,7 @@ class SourceContractTests(unittest.TestCase):
 
         stable_tasks = [
             "Autoremove unused packages",
-            "Retain the two most recent kernels",
+            "Install package-management utilities",
         ]
         for task_name in stable_tasks:
             with self.subTest(task_name=task_name):

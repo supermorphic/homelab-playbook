@@ -1,0 +1,10 @@
+---
+- name: Inspect the Debian reboot-required marker
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: system_maintenance_reboot_required_file
+
+- name: Record Debian reboot-required state
+  ansible.builtin.set_fact:
+    system_maintenance_reboot_required: >-
+      {{ system_maintenance_reboot_required_file.stat.exists | bool }}

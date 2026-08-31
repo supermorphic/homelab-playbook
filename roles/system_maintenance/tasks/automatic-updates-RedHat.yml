@@ -1,0 +1,31 @@
+---
+- name: Configure automatic DNF security updates
+  ansible.builtin.template:
+    src: dnf-automatic.conf.j2
+    dest: /etc/dnf/automatic.conf
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Create the DNF security update timer drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/dnf-automatic.timer.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Bound the DNF security update timer
+  ansible.builtin.template:
+    src: security-update-timer.conf.j2
+    dest: /etc/systemd/system/dnf-automatic.timer.d/override.conf
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Enable the DNF security update timer
+  ansible.builtin.systemd_service:
+    name: dnf-automatic.timer
+    enabled: true
+    state: started
+    daemon_reload: true

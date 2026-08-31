@@ -1,2 +1,6 @@
 ---
-system_maintenance_reboot_enabled: true
+system_maintenance_configure_automatic_updates: true
+system_maintenance_native_reboot_enabled: true
+system_maintenance_security_update_calendar: '*-*-* 04:00:00'
+system_maintenance_security_reboot_time: '04:30'
+system_maintenance_package_lock_timeout: 300

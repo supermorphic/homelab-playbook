@@ -1,0 +1,8 @@
+[commands]
+upgrade_type = security
+download_updates = yes
+apply_updates = yes
+reboot = {{ 'when-needed' if system_maintenance_native_reboot_enabled else 'never' }}
+
+[emitters]
+emit_via = stdio
