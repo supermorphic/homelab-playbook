@@ -86,6 +86,12 @@ mise run ci:changed
 required depth. Use `mise run ci` to force all currently implemented offline
 validation. Pull-request validation is offline and secret-free.
 
+### Molecule tests
+
+`mise run test:molecule -- system_maintenance/default` runs the repository's
+rootless Podman scenario. ARM64 hosts run Debian and Rocky Linux locally;
+GitHub's native AMD64 matrix also runs Arch Linux.
+
 ## GitHub main protection
 
 Changes reach `main` through a feature branch, a current pull request, the
@@ -102,10 +108,6 @@ outside CI. Applying a plan is a separately authorized, repository-bound action;
 the plan and its confirmation value do not grant that authority. See the
 [GitHub main protection guide](docs/guides/github-main-protection.md) for the
 exact Ruleset, guarded apply procedure, UI inspection, and recovery steps.
-
-`mise run test:molecule -- system_maintenance/default` runs the repository's
-rootless Podman scenario. ARM64 hosts run Debian and Rocky Linux locally;
-GitHub's native AMD64 matrix also runs Arch Linux.
 
 ## Frozen K3s
 
