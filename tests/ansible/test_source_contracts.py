@@ -45,6 +45,19 @@ class SourceContractTests(unittest.TestCase):
             python_task["changed_when"],
         )
 
+        post_bootstrap_task = next(
+            task for task in tasks
+            if task["name"] == "Validate facts and passwordless sudo after bootstrap"
+        )
+        sudo_task = next(
+            task for task in post_bootstrap_task["block"]
+            if task["name"] == "Recheck non-interactive sudo"
+        )
+        self.assertEqual(
+            ["sudo", "-n", "true"],
+            sudo_task["ansible.builtin.command"]["argv"],
+        )
+
     def test_os_bootstrap_has_no_root_or_password_fallback(self) -> None:
         source = (
             REPOSITORY_ROOT / "roles/os_bootstrap/tasks/main.yml"

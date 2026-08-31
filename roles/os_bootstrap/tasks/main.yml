@@ -73,5 +73,5 @@
 
     - name: Recheck non-interactive sudo
       ansible.builtin.command:
-        argv: [sudo, -n, true]
+        argv: [sudo, -n, "true"]
       changed_when: false
