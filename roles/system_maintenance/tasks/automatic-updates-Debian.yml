@@ -1,4 +1,10 @@
 ---
+- name: Install the native APT security updater
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+    lock_timeout: "{{ system_maintenance_package_lock_timeout }}"
+
 - name: Configure periodic APT security updates
   ansible.builtin.template:
     src: apt-auto-upgrades.j2

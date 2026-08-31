@@ -271,6 +271,102 @@ class SourceContractTests(unittest.TestCase):
             True,
         )
 
+    def test_system_maintenance_configures_native_security_updater_mechanisms(
+        self,
+    ) -> None:
+        platform_contracts = {
+            "Debian": {
+                "module": "ansible.builtin.apt",
+                "package": "unattended-upgrades",
+                "timer": "apt-daily-upgrade.timer",
+            },
+            "RedHat": {
+                "module": "ansible.builtin.dnf",
+                "package": "dnf-automatic",
+                "timer": "dnf-automatic.timer",
+            },
+        }
+        for os_family, contract in platform_contracts.items():
+            with self.subTest(os_family=os_family):
+                tasks = load_tasks(
+                    "roles/system_maintenance/tasks/"
+                    f"automatic-updates-{os_family}.yml"
+                )
+                package_tasks = [
+                    task
+                    for task in tasks
+                    if task.get(contract["module"], {}).get("name")
+                    == contract["package"]
+                ]
+                self.assertEqual(1, len(package_tasks))
+                if not package_tasks:
+                    continue
+
+                package_task = package_tasks[0]
+                self.assertEqual(
+                    {
+                        "name": contract["package"],
+                        "state": "present",
+                        "lock_timeout": (
+                            "{{ system_maintenance_package_lock_timeout }}"
+                        ),
+                    },
+                    package_task[contract["module"]],
+                )
+                timer_task = next(
+                    task for task in tasks
+                    if "ansible.builtin.systemd_service" in task
+                )
+                self.assertEqual(
+                    {
+                        "name": contract["timer"],
+                        "enabled": True,
+                        "state": "started",
+                        "daemon_reload": True,
+                    },
+                    timer_task["ansible.builtin.systemd_service"],
+                )
+                self.assertLess(tasks.index(package_task), tasks.index(timer_task))
+
+        apt_policy = (
+            REPOSITORY_ROOT
+            / "roles/system_maintenance/templates/apt-unattended-upgrades.j2"
+        ).read_text(encoding="utf-8")
+        apt_origins = [
+            line.strip()
+            for line in apt_policy.splitlines()
+            if line.strip().startswith('"origin=')
+        ]
+        self.assertEqual(
+            [
+                '"origin=Debian,codename=${distro_codename}-security,'
+                'label=Debian-Security";'
+            ],
+            apt_origins,
+        )
+
+        dnf_policy = (
+            REPOSITORY_ROOT
+            / "roles/system_maintenance/templates/dnf-automatic.conf.j2"
+        ).read_text(encoding="utf-8")
+        dnf_policy = dnf_policy.replace(
+            "{{ 'when-needed' if system_maintenance_native_reboot_enabled "
+            "else 'never' }}",
+            "when-needed",
+        )
+        dnf_config = configparser.ConfigParser()
+        dnf_config.read_string(dnf_policy)
+        self.assertEqual("security", dnf_config["commands"]["upgrade_type"])
+        self.assertEqual("yes", dnf_config["commands"]["download_updates"])
+        self.assertEqual("yes", dnf_config["commands"]["apply_updates"])
+
+        self.assertEqual(
+            [],
+            load_tasks(
+                "roles/system_maintenance/tasks/automatic-updates-Archlinux.yml"
+            ),
+        )
+
     def test_system_maintenance_idempotence_skips_only_live_upgrades(self) -> None:
         """Live upgrades must run during converge but not strict idempotence."""
         imported_task_files = [

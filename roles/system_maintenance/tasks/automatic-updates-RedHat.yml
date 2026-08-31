@@ -1,4 +1,10 @@
 ---
+- name: Install the native DNF security updater
+  ansible.builtin.dnf:
+    name: dnf-automatic
+    state: present
+    lock_timeout: "{{ system_maintenance_package_lock_timeout }}"
+
 - name: Configure automatic DNF security updates
   ansible.builtin.template:
     src: dnf-automatic.conf.j2
