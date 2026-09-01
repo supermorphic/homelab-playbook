@@ -426,6 +426,25 @@ class AnsibleSourceContracts(unittest.TestCase):
                 "ansible-lint", fake_uv_log.read_text(encoding="utf-8")
             )
 
+    def test_ansible_validation_registers_exact_offline_python_suites(self) -> None:
+        registered_suites = [
+            line.strip().removesuffix("\\").strip()
+            for line in ANSIBLE_VALIDATION.read_text(encoding="utf-8").splitlines()
+            if line.strip().startswith("tests/ansible/test_")
+        ]
+
+        self.assertEqual(
+            [
+                "tests/ansible/test_ansible_sources.py",
+                "tests/ansible/test_baseline_molecule_controls.py",
+                "tests/ansible/test_molecule_contract.py",
+                "tests/ansible/test_os_baseline_verify_controls.py",
+                "tests/ansible/test_platform_control_contracts.py",
+                "tests/ansible/test_source_contracts.py",
+            ],
+            registered_suites,
+        )
+
     def test_untracked_invalid_module_is_selected_and_fails_semantic_validation(
         self,
     ) -> None:
