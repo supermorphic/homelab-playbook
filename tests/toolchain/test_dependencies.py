@@ -64,8 +64,8 @@ class RepositoryDependencyContractTests(unittest.TestCase):
 
         self.assertIn(("willshersystems.sshd", "v0.34.0"), roles)
         self.assertIn(("ansible.posix", "2.2.2"), collections)
-        self.assertIn(("robertdebock.bootstrap", "7.1.5"), roles)
-        self.assertIn(("geerlingguy.security", "3.0.0"), roles)
+        self.assertNotIn("robertdebock.bootstrap", dict(roles))
+        self.assertNotIn("geerlingguy.security", dict(roles))
 
     def test_sshd_dependency_uses_canonical_git_source(self) -> None:
         requirements = (REPO_ROOT / "requirements.yml").read_text(encoding="utf-8")

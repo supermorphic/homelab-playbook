@@ -1,9 +1,5 @@
 ---
 roles:
-  - name: robertdebock.bootstrap
-    version: 7.1.5
-  - name: geerlingguy.security
-    version: 3.0.0
   - name: geerlingguy.docker
     version: 7.6.0
   - name: xanmanning.k3s
