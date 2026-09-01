@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import unittest
 from pathlib import Path
 
@@ -52,6 +53,53 @@ class VerifierControlTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertTrue(self.controls.os_baseline_verify_firewall_state_errors(mutated, desired, "eth0"))
 
+    def test_firewall_result_layout_reduces_clean_and_mutated_state(self) -> None:
+        desired = ['rule family="ipv4" source address="192.168.1.0/24" service name="ssh" accept']
+        results = [
+            {"stdout": "homelab (active)\n  target: DROP", "stdout_lines": []},
+            {"stdout": "eth0\n", "stdout_lines": ["eth0"]},
+            {"stdout": "", "stdout_lines": []}, {"stdout": "", "stdout_lines": []},
+            {"stdout": "", "stdout_lines": []}, {"stdout": "", "stdout_lines": []},
+            {"stdout": "", "stdout_lines": []}, {"stdout": "", "stdout_lines": []},
+            {"stdout": desired[0], "stdout_lines": desired}, {"rc": 1}, {"rc": 1},
+        ]
+        state = self.controls.os_baseline_verify_firewall_state_from_results(results, "homelab")
+        self.assertEqual([], self.controls.os_baseline_verify_firewall_state_errors(state, desired, "eth0"))
+
+        mutations = {
+            0: {"stdout": "  target: ACCEPT", "stdout_lines": []},
+            1: {"stdout": "eth0 eth1", "stdout_lines": ["eth0", "eth1"]},
+            2: {"stdout": "source", "stdout_lines": ["source"]},
+            3: {"stdout": "service", "stdout_lines": ["service"]},
+            4: {"stdout": "22/tcp", "stdout_lines": ["22/tcp"]},
+            5: {"stdout": "icmp", "stdout_lines": ["icmp"]},
+            6: {"stdout": "1024-65535", "stdout_lines": ["1024-65535"]},
+            7: {"stdout": "22:proto=tcp:toport=22", "stdout_lines": ["22:proto=tcp:toport=22"]},
+            8: {"stdout": "unexpected", "stdout_lines": ["unexpected"]},
+            9: {"rc": 0}, 10: {"rc": 0},
+        }
+        for index, replacement in mutations.items():
+            with self.subTest(index=index):
+                changed = [dict(result) for result in results]
+                changed[index] = replacement
+                mutated = self.controls.os_baseline_verify_firewall_state_from_results(changed, "homelab")
+                self.assertTrue(self.controls.os_baseline_verify_firewall_state_errors(mutated, desired, "eth0"))
+
+    def test_firewall_result_layout_rejects_malformed_results_and_active_peer_conflicts(self) -> None:
+        with self.assertRaises(ValueError):
+            self.controls.os_baseline_verify_firewall_state_from_results([], "homelab")
+        active = """\
+homelab
+  interfaces: eth0
+  sources:
+trusted
+  sources: 192.168.1.0/24
+"""
+        self.assertEqual(["192.168.1.0/24"], self.controls.os_baseline_verify_conflicting_sources(active, "192.168.1.10"))
+        self.assertEqual([], self.controls.os_baseline_verify_conflicting_sources(active, "10.1.2.3"))
+        malformed = "external\n  sources: not-a-network\n"
+        self.assertEqual(["not-a-network"], self.controls.os_baseline_verify_conflicting_sources(malformed, "192.168.1.10"))
+
     def test_ordered_journald_reducer_keeps_empty_last_assignment(self) -> None:
         text = """\
 [Other]
@@ -68,18 +116,43 @@ SystemMaxUse=
             self.controls.os_baseline_verify_journald_values(text),
         )
 
-    def test_updater_parsers_reject_later_override_and_extra_origin(self) -> None:
+    def test_apt_policy_parses_exact_real_dump_origin_list(self) -> None:
         apt = """\
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
-Unattended-Upgrade::Origins-Pattern { "origin=Debian,codename=${distro_codename}-security,label=Debian-Security"; "origin=Debian"; };
+Unattended-Upgrade::Origins-Pattern "";
+Unattended-Upgrade::Origins-Pattern:: "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
 Unattended-Upgrade::Automatic-Reboot "true";
 Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
 Unattended-Upgrade::Automatic-Reboot-Time "04:30";
 Unattended-Upgrade::Remove-Unused-Dependencies "false";
 """
-        with self.assertRaises(ValueError):
-            self.controls.os_baseline_verify_apt_policy(apt)
+        policy = self.controls.os_baseline_verify_apt_policy(apt)
+        self.assertEqual(
+            ["origin=Debian,codename=${distro_codename}-security,label=Debian-Security"],
+            policy["origins"],
+        )
+
+    def test_apt_policy_rejects_missing_extra_and_replaced_dump_origins(self) -> None:
+        prefix = 'Unattended-Upgrade::Origins-Pattern "";\n'
+        expected = 'Unattended-Upgrade::Origins-Pattern:: "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";\n'
+        for output in (
+            prefix,
+            prefix + expected + 'Unattended-Upgrade::Origins-Pattern:: "origin=Debian";\n',
+            prefix + 'Unattended-Upgrade::Origins-Pattern:: "origin=Debian";\n',
+        ):
+            with self.subTest(output=output):
+                with self.assertRaises(ValueError):
+                    self.controls.os_baseline_verify_apt_policy(output)
+
+    def test_updater_parsers_reject_later_override_and_extra_origin(self) -> None:
+        apt = """\
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Update-Package-Lists "0";
+Unattended-Upgrade::Origins-Pattern "";
+Unattended-Upgrade::Origins-Pattern:: "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+"""
+        self.assertEqual("0", self.controls.os_baseline_verify_apt_policy(apt)["scalar"]["APT::Periodic::Update-Package-Lists"])
         dnf = """\
 [commands]
 upgrade_type = security
@@ -98,10 +171,43 @@ emit_via = stdio
                 'APT::Periodic::Unattended-Upgrade "1";\n'
             )
 
+    def test_chrony_policy_requires_complete_vendor_or_approved_source_decision(self) -> None:
+        vendor = "pool 2.debian.pool.ntp.org iburst\n"
+        self.assertEqual(["2.debian.pool.ntp.org"], self.controls.os_baseline_verify_chrony_policy(vendor, []))
+        approved = """\
+# BEGIN ANSIBLE MANAGED TRUSTED CHRONY SOURCES
+server approved.example iburst
+# END ANSIBLE MANAGED TRUSTED CHRONY SOURCES
+# homelab-disabled: pool vendor.example iburst
+"""
+        self.assertEqual(["approved.example"], self.controls.os_baseline_verify_chrony_policy(approved, ["approved.example"]))
+        for text, requested in (
+            ("server arbitrary.example iburst\n", []),
+            (approved + "confdir /etc/chrony/conf.d\n", ["approved.example"]),
+            (approved.replace("# homelab-disabled", "pool vendor.example"), ["approved.example"]),
+            (approved.replace("approved.example", "other.example"), ["approved.example"]),
+        ):
+            with self.subTest(text=text):
+                with self.assertRaises(ValueError):
+                    self.controls.os_baseline_verify_chrony_policy(text, requested)
+
     def test_verifier_owns_management_interface_discovery_script(self) -> None:
         script = REPOSITORY_ROOT / "roles/os_baseline_verify/files/discover_management_interface.py"
         self.assertTrue(script.is_file())
+        self.assertTrue(os.access(script, os.X_OK))
         self.assertIn("SSH_CONNECTION", script.read_text(encoding="utf-8"))
+
+    def test_apparmor_distribution_profile_names_match_path_and_filename_forms(self) -> None:
+        self.assertEqual(
+            ["usr.sbin.tcpdump", "/usr/sbin/tcpdump", "usr.bin.man", "/usr/bin/man"],
+            self.controls.os_baseline_verify_apparmor_profile_names(
+                [
+                    "/etc/apparmor.d/abstractions/base",
+                    "/etc/apparmor.d/usr.sbin.tcpdump",
+                    "/etc/apparmor.d/usr.bin.man",
+                ]
+            ),
+        )
 
     def test_timer_parser_honors_reset_and_rejects_extra_calendar(self) -> None:
         text = """\

@@ -32,20 +32,23 @@
   failed_when: os_baseline_verify_permanent_firewall.rc not in [0, 1]
   no_log: true
 
-- name: Verify permanent firewall default and zero direct openings
+- name: Reduce permanent firewall state from ordered reads
+  ansible.builtin.set_fact:
+    os_baseline_verify_permanent_firewall_state: >-
+      {{ os_baseline_verify_permanent_firewall.results
+         | os_baseline_verify_firewall_state_from_results('homelab') }}
+  no_log: true
+
+- name: Verify permanent firewall default and exact policy
   ansible.builtin.assert:
     that:
       - os_baseline_verify_firewalld_configuration.content | b64decode | regex_findall('(?m)^DefaultZone=([^\\s#]+)\\s*$') == ['homelab']
-      - os_baseline_verify_permanent_firewall.results[0].stdout is search('(?m)^\\s*target:\\s*DROP\\s*$')
-      - os_baseline_verify_permanent_firewall.results[9].rc == 1
-      - os_baseline_verify_permanent_firewall.results[10].rc == 1
-      - os_baseline_verify_permanent_firewall.results[2].stdout | trim == ''
-      - os_baseline_verify_permanent_firewall.results[3].stdout | trim == ''
-      - os_baseline_verify_permanent_firewall.results[4].stdout | trim == ''
-      - os_baseline_verify_permanent_firewall.results[5].stdout | trim == ''
-      - os_baseline_verify_permanent_firewall.results[6].stdout | trim == ''
-      - os_baseline_verify_permanent_firewall.results[7].stdout | trim == ''
-      - os_baseline_verify_permanent_firewall.results[8].stdout_lines | sort == os_baseline_verify_firewall_rules | sort
+      - >-
+        os_baseline_verify_permanent_firewall_state
+        | os_baseline_verify_firewall_state_errors(
+            os_baseline_verify_firewall_rules,
+            os_baseline_verify_permanent_firewall_state.interfaces | first | default(''))
+        | length == 0
     fail_msg: Permanent homelab firewall policy does not match repository policy
   no_log: true
 
@@ -105,6 +108,15 @@
   no_log: true
   when: os_baseline_verify_runtime_controls | bool
 
+- name: Reduce runtime firewall state from ordered reads
+  ansible.builtin.set_fact:
+    os_baseline_verify_runtime_firewall_state: >-
+      {{ os_baseline_verify_runtime_firewall.results
+         | os_baseline_verify_firewall_state_from_results(
+              os_baseline_verify_runtime_firewall_globals.results[1].stdout | trim) }}
+  no_log: true
+  when: os_baseline_verify_runtime_controls | bool
+
 - name: Verify exact runtime firewall policy
   vars:
     os_baseline_verify_active_conflicts: >-
@@ -112,18 +124,12 @@
   ansible.builtin.assert:
     that:
       - os_baseline_verify_runtime_firewall_globals.results[0].stdout | trim == 'homelab'
-      - os_baseline_verify_runtime_firewall.results[0].stdout is search('(?m)^\\s*target:\\s*DROP\\s*$')
-      - os_baseline_verify_runtime_firewall.results[9].rc == 1
-      - os_baseline_verify_runtime_firewall.results[10].rc == 1
-      - os_baseline_verify_runtime_firewall_globals.results[1].stdout | trim == 'homelab'
-      - os_baseline_verify_runtime_firewall.results[1].stdout.split() == [os_baseline_verify_management.interface]
-      - os_baseline_verify_runtime_firewall.results[2].stdout | trim == ''
-      - os_baseline_verify_runtime_firewall.results[3].stdout | trim == ''
-      - os_baseline_verify_runtime_firewall.results[4].stdout | trim == ''
-      - os_baseline_verify_runtime_firewall.results[5].stdout | trim == ''
-      - os_baseline_verify_runtime_firewall.results[6].stdout | trim == ''
-      - os_baseline_verify_runtime_firewall.results[7].stdout | trim == ''
-      - os_baseline_verify_runtime_firewall.results[8].stdout_lines | sort == os_baseline_verify_firewall_rules | sort
+      - >-
+        os_baseline_verify_runtime_firewall_state
+        | os_baseline_verify_firewall_state_errors(
+            os_baseline_verify_firewall_rules,
+            os_baseline_verify_management.interface)
+        | length == 0
       - os_baseline_verify_active_conflicts | length == 0
     fail_msg: Runtime homelab firewall policy does not match repository policy
   no_log: true

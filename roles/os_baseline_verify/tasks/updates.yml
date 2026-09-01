@@ -14,6 +14,9 @@
       {{ os_baseline_verify_debian_updater_configuration.stdout | os_baseline_verify_apt_policy }}
   ansible.builtin.assert:
     that:
+      - >-
+        os_baseline_verify_debian_policy.origins
+        == ['origin=Debian,codename=${distro_codename}-security,label=Debian-Security']
       - os_baseline_verify_debian_periodic.scalar['APT::Periodic::Update-Package-Lists'] == '1'
       - os_baseline_verify_debian_periodic.scalar['APT::Periodic::Unattended-Upgrade'] == '1'
       - os_baseline_verify_debian_policy.scalar['Unattended-Upgrade::Automatic-Reboot'] == (system_maintenance_native_reboot_enabled | bool | lower)

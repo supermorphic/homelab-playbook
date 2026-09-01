@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import configparser
+import ast
 import subprocess
 import tempfile
 import unittest
@@ -30,28 +31,136 @@ OBSERVATIONAL_VERIFIER_MODULES = {
     "ansible.builtin.slurp", "ansible.builtin.stat",
 }
 
+TASK_META_KEYS = {
+    "name", "when", "register", "changed_when", "failed_when", "no_log",
+    "become", "become_user", "become_flags", "loop", "loop_control", "vars",
+    "tags", "delegate_to", "delegate_facts", "environment", "run_once",
+    "check_mode", "ignore_errors", "any_errors_fatal", "throttle", "timeout",
+    "until", "retries", "delay", "notify", "listen", "args",
+}
+
+READ_ONLY_ARGV = {
+    ("sudo", "-n", "true"),
+    ("/usr/sbin/sshd", "-T"),
+    ("/usr/sbin/getenforce",),
+    ("/usr/sbin/aa-status", "--enabled"),
+    ("/usr/sbin/aa-status", "--json"),
+    ("/usr/bin/chronyc", "tracking"),
+    ("/usr/bin/chronyc", "sources"),
+    ("/usr/bin/apt-config", "dump"),
+    ("/usr/bin/dpkg", "--audit"),
+    ("/usr/bin/dpkg-query", "-L", "apparmor", "apparmor-profiles"),
+    ("/usr/bin/dnf", "check"),
+    ("/usr/bin/dnf", "needs-restarting", "-r"),
+    ("/usr/bin/systemd-analyze", "cat-config", "systemd/journald.conf"),
+    ("/usr/bin/systemctl", "is-active", "auditd"),
+    ("/usr/bin/systemctl", "--failed", "--no-legend", "--plain"),
+}
+
+READ_ONLY_ARGV_TEMPLATES = {
+    "{{ ['/usr/bin/firewall-offline-cmd', '--zone=homelab', item] }}",
+    "{{ ['/usr/bin/firewall-cmd', '--zone=homelab', item] }}",
+    "{{ ['/usr/bin/firewall-cmd', item] }}",
+    "{{ ['/usr/bin/systemctl', 'is-enabled',\n    {{ 'apt-daily-upgrade.timer' if ansible_os_family == 'Debian'\n       else 'dnf-automatic.timer' }}] }}",
+    "{{ ['/usr/bin/systemd-analyze', 'cat-config',\n    {{ 'systemd/system/apt-daily-upgrade.timer'\n       if ansible_os_family == 'Debian'\n       else 'systemd/system/dnf-automatic.timer' }}] }}",
+}
+
+READ_ONLY_ARGV_DYNAMIC_LISTS = {
+    (
+        "/usr/bin/systemctl", "is-enabled",
+        "{{ 'apt-daily-upgrade.timer' if ansible_os_family == 'Debian'\n   else 'dnf-automatic.timer' }}",
+    ),
+    (
+        "/usr/bin/systemd-analyze", "cat-config",
+        "{{ 'systemd/system/apt-daily-upgrade.timer'\n   if ansible_os_family == 'Debian'\n   else 'systemd/system/dnf-automatic.timer' }}",
+    ),
+}
+
+
+def assert_observational_script(path: Path) -> None:
+    if not path.is_file():
+        raise AssertionError(f"verifier script is missing: {path}")
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    allowed_imports = {"__future__", "ipaddress", "json", "os", "pathlib", "subprocess"}
+    imported = {
+        alias.name.split(".", 1)[0]
+        for node in ast.walk(tree) if isinstance(node, ast.Import)
+        for alias in node.names
+    } | {
+        (node.module or "").split(".", 1)[0]
+        for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+    }
+    if not imported <= allowed_imports:
+        raise AssertionError(f"verifier script has an unapproved import: {imported - allowed_imports}")
+    allowed_calls = {
+        "Path", "ValueError", "decode", "discover", "dumps", "get", "getpid",
+        "int", "ip_address", "isinstance", "len", "loads", "print", "read_bytes",
+        "read_text", "rsplit", "run", "split", "startswith", "str",
+    }
+    for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+        function = call.func
+        name = function.id if isinstance(function, ast.Name) else function.attr if isinstance(function, ast.Attribute) else ""
+        if name not in allowed_calls:
+            raise AssertionError(f"verifier script call is not a permitted read operation: {name}")
+    subprocess_calls = [
+        call for call in ast.walk(tree)
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name) and call.func.value.id == "subprocess"
+        and call.func.attr == "run"
+    ]
+    if len(subprocess_calls) != 1:
+        raise AssertionError("verifier script must make exactly one state-read command")
+    command = subprocess_calls[0].args[0] if subprocess_calls[0].args else None
+    if not isinstance(command, ast.List) or [item.value for item in command.elts[:-1] if isinstance(item, ast.Constant)] != ["/usr/sbin/ip", "-json", "route", "get"]:
+        raise AssertionError("verifier script command is not the exact route-state read")
+
+
+def assert_read_only_command(task: dict[str, object], command: object) -> None:
+    if not isinstance(command, dict) or set(command) != {"argv"}:
+        raise AssertionError("verifier command must use only list-form argv")
+    argv = command["argv"]
+    if isinstance(argv, str):
+        normalized = "\n".join(line.strip() for line in argv.strip().splitlines())
+        allowed_templates = {"\n".join(line.strip() for line in value.splitlines()) for value in READ_ONLY_ARGV_TEMPLATES}
+        if normalized not in allowed_templates:
+            raise AssertionError(f"command argv template is not allowlisted: {argv}")
+    elif not isinstance(argv, list) or tuple(argv) not in READ_ONLY_ARGV | READ_ONLY_ARGV_DYNAMIC_LISTS:
+        raise AssertionError(f"command argv is not allowlisted: {argv}")
+    if task.get("changed_when") is not False:
+        raise AssertionError("verifier command must declare changed_when: false")
+    if task.get("failed_when") is False:
+        raise AssertionError("verifier command must preserve failure semantics")
+
 
 def assert_observational_verifier_task(task: dict[str, object]) -> None:
     aliases = {key.removeprefix("ansible.builtin."): key for key in OBSERVATIONAL_VERIFIER_MODULES}
-    action_keys = [key for key in task if key not in {"name", "when", "register", "changed_when", "failed_when", "no_log", "become", "become_user", "loop", "vars", "tags"} and key not in {"block", "rescue", "always"}]
+    wrappers = [name for name in ("block", "rescue", "always") if name in task]
+    action_keys = [key for key in task if key not in TASK_META_KEYS and key not in wrappers]
     normalized = [aliases.get(key, key) for key in action_keys]
+    if wrappers:
+        if normalized:
+            raise AssertionError(f"wrapper has a direct action: {task.get('name')}")
+        for nested in wrappers:
+            children = task[nested]
+            if not isinstance(children, list) or not children:
+                raise AssertionError(f"empty verifier {nested} wrapper")
+            for child in children:
+                if not isinstance(child, dict):
+                    raise AssertionError(f"invalid verifier {nested} child")
+                assert_observational_verifier_task(child)
+        return
     if len(normalized) != 1 or normalized[0] not in OBSERVATIONAL_VERIFIER_MODULES:
         raise AssertionError(f"non-observational verifier task: {task.get('name')}")
-    for nested in ("block", "rescue", "always"):
-        for child in task.get(nested, []) or []:
-            assert_observational_verifier_task(child)
     command = task.get("ansible.builtin.command", task.get("command"))
-    if isinstance(command, dict):
-        argv = command.get("argv", [])
-        allowed = {"sudo", "/usr/sbin/sshd", "/usr/bin/firewall-cmd", "/usr/bin/firewall-offline-cmd", "/usr/bin/systemctl", "/usr/bin/chronyc", "/usr/sbin/getenforce", "/usr/sbin/aa-status", "/usr/bin/dpkg", "/usr/bin/dnf", "/usr/bin/systemd-analyze", "/usr/bin/apt-config"}
-        if isinstance(argv, str):
-            if not any(executable in argv for executable in allowed):
-                raise AssertionError(f"command executable is not allowlisted: {argv}")
-        elif not argv or str(argv[0]) not in allowed:
-            raise AssertionError(f"command executable is not allowlisted: {argv}")
+    if command is not None:
+        assert_read_only_command(task, command)
     script = task.get("ansible.builtin.script", task.get("script"))
-    if isinstance(script, dict) and script.get("cmd") != "discover_management_interface.py":
-        raise AssertionError("verifier script is not allowlisted")
+    if script is not None:
+        if not isinstance(script, dict) or script != {"cmd": "discover_management_interface.py", "executable": "/usr/bin/python3"}:
+            raise AssertionError("verifier script invocation is not allowlisted")
+        if task.get("changed_when") is not False:
+            raise AssertionError("verifier script must declare changed_when: false")
+        assert_observational_script(REPOSITORY_ROOT / "roles/os_baseline_verify/files/discover_management_interface.py")
 
 
 class SourceContractTests(unittest.TestCase):
@@ -68,12 +177,31 @@ class SourceContractTests(unittest.TestCase):
             assert_observational_verifier_task({"ansible.builtin.file": {}})
         with self.assertRaises(AssertionError):
             assert_observational_verifier_task(
-                {"ansible.builtin.command": {"argv": ["firewall-cmd", "--reload"]}}
+                {"ansible.builtin.command": {"argv": ["/usr/bin/firewall-cmd", "--reload"]}, "changed_when": False}
             )
         with self.assertRaises(AssertionError):
-            assert_observational_verifier_task({"command": {"argv": ["/usr/bin/rm", "-f", "/tmp/x"]}})
+            assert_observational_verifier_task({"command": "/usr/bin/rm -f /tmp/x", "changed_when": False})
         with self.assertRaises(AssertionError):
-            assert_observational_verifier_task({"block": [{"file": {"path": "/tmp/x"}}]})
+            assert_observational_verifier_task({"command": {"argv": "prefix /usr/bin/dpkg --audit"}, "changed_when": False})
+        for wrapper in ("block", "rescue", "always"):
+            with self.subTest(wrapper=wrapper):
+                assert_observational_verifier_task({wrapper: [{"assert": {"that": ["true"]}}]})
+                with self.assertRaises(AssertionError):
+                    assert_observational_verifier_task({wrapper: [{"file": {"path": "/tmp/x"}}]})
+
+    def test_os_baseline_verifier_script_contract_rejects_missing_and_mutating_sources(self) -> None:
+        with self.assertRaises(AssertionError):
+            assert_observational_script(REPOSITORY_ROOT / "roles/os_baseline_verify/files/missing.py")
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            source = Path(temporary_directory) / "mutating.py"
+            source.write_text(
+                "import subprocess\nfrom pathlib import Path\n"
+                "subprocess.run(['/usr/sbin/ip', '-json', 'route', 'get', 'peer'])\n"
+                "Path('/tmp/x').touch()\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(AssertionError):
+                assert_observational_script(source)
 
     def test_os_bootstrap_uses_only_raw_until_python_is_available(self) -> None:
         tasks = load_tasks("roles/os_bootstrap/tasks/main.yml")
@@ -381,6 +509,37 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual(
             "(?m)^# END ANSIBLE MANAGED TRUSTED CHRONY SOURCES$",
             disable_vendor["ansible.builtin.replace"]["after"],
+        )
+
+    def test_chrony_override_disables_other_active_source_inputs(self) -> None:
+        tasks = load_tasks("roles/security_baseline/tasks/pre-update.yml")
+        disable_vendor = next(
+            task for task in tasks
+            if task["name"] == "Disable vendor chrony sources after adding trusted sources"
+        )
+        self.assertIn(
+            "include|confdir|sourcedir",
+            disable_vendor["ansible.builtin.replace"]["regexp"],
+        )
+
+    def test_verifier_platform_policy_evidence_is_unguarded_and_semantic(self) -> None:
+        tasks = load_tasks("roles/os_baseline_verify/tasks/platform.yml")
+        configuration = next(task for task in tasks if task["name"] == "Read native MAC and chrony configuration")
+        evidence = next(task for task in tasks if task["name"] == "Verify native MAC and chrony policy evidence")
+        apparmor_read = next(task for task in tasks if task["name"] == "Read Debian AppArmor enforcing profile state")
+        apparmor = next(task for task in tasks if task["name"] == "Verify Debian AppArmor enforcing profiles")
+
+        self.assertNotIn("when", configuration)
+        self.assertNotIn("when", evidence)
+        self.assertIn("os_baseline_verify_chrony_policy", evidence["vars"]["os_baseline_verify_chrony_values"])
+        self.assertEqual(["/usr/sbin/aa-status", "--json"], apparmor_read["ansible.builtin.command"]["argv"])
+        self.assertIn("os_baseline_verify_apparmor_distribution_profiles", apparmor["vars"])
+
+    def test_verifier_debian_updater_asserts_the_effective_origin_list(self) -> None:
+        tasks = load_tasks("roles/os_baseline_verify/tasks/updates.yml")
+        verify = next(task for task in tasks if task["name"] == "Verify Debian security-only updater configuration")
+        self.assertTrue(
+            any("os_baseline_verify_debian_policy.origins" in assertion for assertion in verify["ansible.builtin.assert"]["that"])
         )
 
     def test_system_maintenance_managed_packages_are_minimal(self) -> None:

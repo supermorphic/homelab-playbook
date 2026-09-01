@@ -70,6 +70,54 @@ def os_baseline_verify_firewall_state_errors(state: Mapping[str, object], desire
     return errors
 
 
+def os_baseline_verify_firewall_state_from_results(results: object, interface_zone: str) -> dict[str, object]:
+    """Reduce the exact ordered firewalld read command result layout."""
+    if not isinstance(results, list) or len(results) != 11:
+        raise ValueError("firewall read result layout is invalid")
+    if not isinstance(interface_zone, str) or not interface_zone:
+        raise ValueError("firewall interface zone is invalid")
+
+    def result(index: int) -> Mapping[str, object]:
+        value = results[index]
+        if not isinstance(value, Mapping):
+            raise ValueError("firewall read result is invalid")
+        return value
+
+    def stdout(index: int) -> str:
+        value = result(index).get("stdout")
+        if not isinstance(value, str):
+            raise ValueError("firewall command output is invalid")
+        return value
+
+    def stdout_lines(index: int) -> list[str]:
+        value = result(index).get("stdout_lines")
+        if not isinstance(value, list) or not all(isinstance(line, str) for line in value):
+            raise ValueError("firewall command output lines are invalid")
+        return value
+
+    def query(index: int) -> bool:
+        value = result(index).get("rc")
+        if value not in (0, 1):
+            raise ValueError("firewall query result is invalid")
+        return value == 0
+
+    target = re.search(r"(?m)^\s*target:\s*(\S+)\s*$", stdout(0))
+    return {
+        "target": target.group(1) if target else "",
+        "forward": query(9),
+        "masquerade": query(10),
+        "interface_zone": interface_zone,
+        "interfaces": stdout(1).split(),
+        "sources": stdout(2).split(),
+        "services": stdout(3).split(),
+        "ports": stdout(4).split(),
+        "protocols": stdout(5).split(),
+        "source_ports": stdout(6).split(),
+        "forward_ports": stdout(7).split(),
+        "rich_rules": stdout_lines(8),
+    }
+
+
 def os_baseline_verify_conflicting_sources(text: str, peer: str) -> list[str]:
     """Find source-zone bindings outside homelab that include the management peer."""
     address = ipaddress.ip_address(peer)
@@ -126,16 +174,17 @@ def os_baseline_verify_ini_values(text: str) -> dict[str, dict[str, str]]:
 
 
 def os_baseline_verify_apt_policy(text: str) -> dict[str, object]:
-    """Parse the selected APT policy and reject ambiguous origin blocks."""
+    """Parse `apt-config dump` output and reject non-exact origin lists."""
     stripped = "\n".join(line.split("//", 1)[0] for line in text.splitlines())
-    scalar = dict(re.findall(r'(?m)^\s*([^\s{]+)\s+"([^"]*)"\s*;', stripped))
-    origin = re.search(r"Unattended-Upgrade::Origins-Pattern\s*\{(.*?)\};", stripped, re.S)
-    if origin is None:
-        raise ValueError("APT security origins are absent")
-    origins = re.findall(r'"([^"]*)"\s*;', origin.group(1))
+    assignments = re.findall(r'(?m)^\s*([^\s]+)\s+"([^"]*)"\s*;', stripped)
+    scalar = dict(assignments)
+    origins = [
+        value for key, value in assignments
+        if key == "Unattended-Upgrade::Origins-Pattern::" and value
+    ]
     expected_origin = "origin=Debian,codename=${distro_codename}-security,label=Debian-Security"
     if origins != [expected_origin]:
-        raise ValueError("APT security origins are not exact")
+        raise ValueError("APT security origins are absent or not exact")
     return {"scalar": scalar, "origins": origins}
 
 
@@ -182,11 +231,69 @@ def os_baseline_verify_chrony_sources(text: str) -> list[str]:
     return sources
 
 
+def os_baseline_verify_chrony_policy(text: str, requested: object) -> list[str]:
+    """Validate the complete source decision from the primary chrony file.
+
+    Active include, confdir, and sourcedir inputs fail closed because this
+    verifier intentionally reads only the repository-owned primary file.
+    """
+    if not isinstance(requested, list) or not all(isinstance(source, str) and source for source in requested):
+        raise ValueError("chrony requested sources are invalid")
+    active_sources: list[str] = []
+    disabled_sources: list[str] = []
+    markers = {"begin": 0, "end": 0}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line == "# BEGIN ANSIBLE MANAGED TRUSTED CHRONY SOURCES":
+            markers["begin"] += 1
+            continue
+        if line == "# END ANSIBLE MANAGED TRUSTED CHRONY SOURCES":
+            markers["end"] += 1
+            continue
+        if line.startswith("# homelab-disabled: "):
+            disabled = line.removeprefix("# homelab-disabled: ").split()
+            if len(disabled) >= 2 and disabled[0] in {"server", "pool"}:
+                disabled_sources.append(disabled[1])
+            continue
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if fields[0] in {"include", "confdir", "sourcedir"}:
+            raise ValueError("chrony has an uninspected active source input")
+        if len(fields) >= 2 and fields[0] in {"server", "pool"}:
+            active_sources.append(fields[1])
+    if requested:
+        if markers != {"begin": 1, "end": 1} or active_sources != requested or not disabled_sources:
+            raise ValueError("chrony approved-source policy is not exact")
+    else:
+        vendor = re.compile(r"^(?:[0-9]+\.)?(?:debian|rocky)\.pool\.ntp\.org$")
+        if markers != {"begin": 0, "end": 0} or disabled_sources or not active_sources or not all(vendor.fullmatch(source) for source in active_sources):
+            raise ValueError("chrony vendor-source policy is not exact")
+    return active_sources
+
+
+def os_baseline_verify_apparmor_profile_names(paths: object) -> list[str]:
+    """Map package-owned AppArmor profile filenames to status name forms."""
+    if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+        raise ValueError("AppArmor package file list is invalid")
+    names: list[str] = []
+    for path in paths:
+        prefix = "/etc/apparmor.d/"
+        if not path.startswith(prefix):
+            continue
+        name = path.removeprefix(prefix)
+        if not name or "/" in name or name.startswith(("abstractions/", "tunables/", "local/", "disable/", "force-complain/")):
+            continue
+        names.extend((name, f"/{name.replace('.', '/')}"))
+    return names
+
+
 class FilterModule:
     def filters(self) -> dict[str, object]:
         return {
             "os_baseline_verify_firewall_rules": os_baseline_verify_firewall_rules,
             "os_baseline_verify_firewall_state_errors": os_baseline_verify_firewall_state_errors,
+            "os_baseline_verify_firewall_state_from_results": os_baseline_verify_firewall_state_from_results,
             "os_baseline_verify_conflicting_sources": os_baseline_verify_conflicting_sources,
             "os_baseline_verify_journald_values": os_baseline_verify_journald_values,
             "os_baseline_verify_ini_values": os_baseline_verify_ini_values,
@@ -194,4 +301,6 @@ class FilterModule:
             "os_baseline_verify_timer_values": os_baseline_verify_timer_values,
             "os_baseline_verify_assignments": os_baseline_verify_assignments,
             "os_baseline_verify_chrony_sources": os_baseline_verify_chrony_sources,
+            "os_baseline_verify_chrony_policy": os_baseline_verify_chrony_policy,
+            "os_baseline_verify_apparmor_profile_names": os_baseline_verify_apparmor_profile_names,
         }

@@ -66,7 +66,7 @@
 - name: Disable vendor chrony sources after adding trusted sources
   ansible.builtin.replace:
     path: "{{ security_baseline_chrony_config_path }}"
-    regexp: '^(?!# homelab-disabled: )([ \t]*(?:pool|server)[ \t]+[^\n]+)$'
+    regexp: '^(?!# homelab-disabled: )([ \t]*(?:(?:pool|server)[ \t]+[^\n]+|(?:include|confdir|sourcedir)[ \t]+[^\n]+))$'
     replace: '# homelab-disabled: \g<1>'
     after: '(?m)^# END ANSIBLE MANAGED TRUSTED CHRONY SOURCES$'
     validate: /usr/sbin/chronyd -p -f %s
