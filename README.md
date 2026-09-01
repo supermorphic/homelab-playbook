@@ -39,6 +39,30 @@ The repository-root alias is an equivalent thin forwarding wrapper:
 
 Execute against production or staging only with explicit operator direction.
 
+### OS baseline operations
+
+The [OS baseline guide](playbooks/os/README.md) documents the supported
+platforms, required operator inputs, reboot guard, native update policy, and
+evidence limits. The three operator actions are:
+
+```bash
+mise run playbook -- os inspect <inventory> --limit <host>
+mise run playbook -- os provision <inventory> --limit <host>
+mise run playbook -- os maintain <inventory> --limit <host>
+```
+
+`inspect` is read-only. `provision` supports complete Debian 13 and Rocky
+Linux 9 provisioning. `maintain` performs an explicit full update on Debian,
+Rocky, or Arch; Arch is not a complete-provisioning target. Provisioning and
+maintenance default to `os_reboot_enabled=false`. A reboot requires an
+explicitly authorized invocation with `-e os_reboot_enabled=true`.
+
+Routine full updates have no host-local timer or cron job. Issue #4 will use
+Semaphore as the scheduler for the maintenance playbook. Native Debian and
+Rocky security updaters remain independent and may perform their own required
+reboots. The NUC/Semaphore full-update and self-reboot policy is deferred to
+Issue #4.
+
 ## Inventories
 
 Select one of these inventory arguments:
@@ -91,6 +115,13 @@ validation. Pull-request validation is offline and secret-free.
 `mise run test:molecule -- system_maintenance/default` runs the repository's
 rootless Podman scenario for Debian 13 and Rocky Linux 9. The same platform set
 runs locally and in GitHub's native AMD64 matrix.
+
+`mise run test:molecule -- system_maintenance/baseline` runs complete Debian
+and Rocky composition. Local ARM64 skips Arch because that platform is only in
+the default maintenance scenario; CI runs the two baseline platforms and the
+three default platforms as five native AMD64 matrix jobs. Container results do
+not prove physical reboot, host-kernel enforcement, real network reachability,
+or Semaphore scheduling and notification delivery.
 
 ## GitHub main protection
 
