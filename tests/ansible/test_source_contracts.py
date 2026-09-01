@@ -55,6 +55,11 @@ READ_ONLY_ARGV = {
     ("/usr/bin/dnf", "check"),
     ("/usr/bin/dnf", "needs-restarting", "-r"),
     ("/usr/bin/systemd-analyze", "cat-config", "systemd/journald.conf"),
+    ("/usr/bin/systemctl", "is-enabled", "systemd-timesyncd.service"),
+    ("/usr/bin/systemctl", "is-active", "systemd-timesyncd.service"),
+    ("/usr/bin/timedatectl", "show", "--property=NTPSynchronized", "--value"),
+    ("/usr/bin/systemctl", "is-enabled", "chronyd.service"),
+    ("/usr/bin/systemctl", "is-active", "chronyd.service"),
     ("/usr/bin/systemctl", "is-active", "auditd"),
     ("/usr/bin/systemctl", "--failed", "--no-legend", "--plain"),
 }
@@ -101,7 +106,6 @@ def assert_observational_script(path: Path) -> None:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     contracts = {
         "discover_management_interface.py": {"ipaddress", "json", "os", "pathlib", "subprocess"},
-        "discover_chrony_sources.py": {"glob", "json", "pathlib", "sys"},
     }
     if path.name not in contracts:
         raise AssertionError(f"verifier script is not allowlisted: {path.name}")
@@ -114,46 +118,6 @@ def assert_observational_script(path: Path) -> None:
     from_imports = [node for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
     if len(from_imports) != 1 or from_imports[0].module != "__future__" or [alias.name for alias in from_imports[0].names] != ["annotations"]:
         raise AssertionError("verifier script direct callable imports are not allowed")
-    if path.name == "discover_chrony_sources.py":
-        function_names = [node.name for node in tree.body if isinstance(node, ast.FunctionDef)]
-        if function_names != ["_target_path", "_host_path", "discover"]:
-            raise AssertionError("chrony script function graph is not exact")
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
-                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                if any(
-                    isinstance(target, ast.Name) and target.id in imported
-                    for target in targets
-                ):
-                    raise AssertionError("chrony script cannot shadow imported modules")
-                value = node.value
-                if (isinstance(value, ast.Attribute)
-                        and any(isinstance(target, ast.Name) for target in targets)):
-                    raise AssertionError("chrony script cannot bind callable attributes")
-        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
-        call_counts = Counter(ast.unparse(call.func) for call in calls)
-        expected_call_counts = Counter({
-            "ValueError": 12, "pathlib.Path": 6, "len": 4, "str": 5,
-            "read": 3, "_host_path": 3, "configured_path": 3,
-            "state[key].append": 2, "print": 1, "resolved.is_relative_to": 2,
-            "json.dumps": 1, "line.startswith": 2, "discover": 1,
-            "_target_path": 2, "add_input": 2, "sorted": 2,
-            "platform.lower": 1, "root.resolve": 1, "set": 1,
-            "candidate.is_absolute": 1, "configured.is_absolute": 1,
-            "configured.relative_to": 1, "path.resolve": 1, "host.resolve": 1,
-            "stack.add": 1, "resolved.relative_to": 1, "resolved.is_file": 1,
-            "resolved.read_text(encoding='utf-8').splitlines": 1,
-            "stack.remove": 1, "SystemExit": 1, "raw.strip": 1,
-            "line.split": 1, "fields[0].lower": 1, "resolved.read_text": 1,
-            "line.removeprefix('# homelab-disabled: ').strip": 1,
-            "add_source": 1, "line.removeprefix": 1,
-            "pathlib.Path(value).is_file": 1, "directory.is_dir": 1,
-            "directory.glob": 1, "selected.values": 1, "glob.glob": 1,
-            "child.is_file": 1,
-        })
-        if call_counts != expected_call_counts:
-            raise AssertionError("chrony script call receivers are not exact")
-        return
     allowed_calls = {
         "os.getpid", "connection.split", "str", "subprocess.run", "json.loads", "print",
         "len", "ValueError", "ipaddress.ip_address", "json.dumps",
@@ -242,7 +206,6 @@ def assert_observational_verifier_task(task: dict[str, object]) -> None:
     if script is not None:
         scripts = {
             ("discover_management_interface.py", "/usr/bin/python3"),
-            ("discover_chrony_sources.py {{ 'rocky' if ansible_os_family == 'RedHat' else 'debian' }} {{ '/etc/chrony.conf' if ansible_os_family == 'RedHat'\n   else '/etc/chrony/chrony.conf' }}", "/usr/bin/python3"),
         }
         if not isinstance(script, dict) or set(script) != {"cmd", "executable"} or (script["cmd"], script["executable"]) not in scripts:
             raise AssertionError("verifier script invocation is not allowlisted")
@@ -279,6 +242,18 @@ class SourceContractTests(unittest.TestCase):
                     "changed_when": False,
                 }
             )
+        for argv in (
+            ["/usr/bin/systemctl", "restart", "chronyd.service"],
+            ["/usr/bin/systemctl", "enable", "systemd-timesyncd.service"],
+            ["/usr/bin/timedatectl", "set-ntp", "true"],
+            ["/usr/bin/chronyc", "makestep"],
+            ["/usr/bin/chronyc", "burst", "4/4"],
+        ):
+            with self.subTest(argv=argv):
+                with self.assertRaises(AssertionError):
+                    assert_observational_verifier_task(
+                        {"command": {"argv": argv}, "changed_when": False}
+                    )
         for wrapper in ("block", "rescue", "always"):
             with self.subTest(wrapper=wrapper):
                 assert_observational_verifier_task({wrapper: [{"assert": {"that": ["true"]}}]})
@@ -300,17 +275,6 @@ class SourceContractTests(unittest.TestCase):
                 source.write_text(contents, encoding="utf-8")
                 with self.assertRaises(AssertionError):
                     assert_observational_script(source)
-
-            source = Path(temporary_directory) / "discover_chrony_sources.py"
-            source.write_text(
-                "from __future__ import annotations\n"
-                "import glob\nimport json\nimport pathlib\nimport sys\n"
-                "read_text = pathlib.Path.unlink\n"
-                "read_text(pathlib.Path('/tmp/x'))\n",
-                encoding="utf-8",
-            )
-            with self.assertRaises(AssertionError):
-                assert_observational_script(source)
 
     def test_os_bootstrap_uses_only_raw_until_python_is_available(self) -> None:
         tasks = load_tasks("roles/os_bootstrap/tasks/main.yml")
@@ -596,89 +560,73 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("SystemKeepFree=", template)
         self.assertNotIn("audit.rules", audit_source)
 
-    def test_chrony_override_keeps_managed_sources_active(self) -> None:
+    def test_time_provider_uses_platform_defaults(self) -> None:
+        """A provider change must not edit operator-owned time sources."""
+        defaults = load_yaml_documents("roles/security_baseline/defaults/main.yml")[0]
         tasks = load_tasks("roles/security_baseline/tasks/pre-update.yml")
-        add_sources = next(
-            task
-            for task in tasks
-            if task["name"]
-            == "Add trusted chrony sources before disabling vendor sources"
-        )
-        disable_vendor = next(
-            task
-            for task in tasks
-            if task["name"]
-            == "Disable vendor chrony sources after adding trusted sources"
-        )
+        tasks_by_name = {task["name"]: task for task in tasks}
+        self.assertIn("Install Debian repository trust and time packages", tasks_by_name)
+        self.assertIn("Install Rocky repository trust and time packages", tasks_by_name)
+        self.assertIn("Enable and start platform time synchronization", tasks_by_name)
+        debian = tasks_by_name["Install Debian repository trust and time packages"]
+        rocky = tasks_by_name["Install Rocky repository trust and time packages"]
+        runtime = tasks_by_name["Enable and start platform time synchronization"]
 
+        self.assertNotIn("security_baseline_chrony_sources", defaults)
         self.assertEqual(
-            "BOF",
-            add_sources["ansible.builtin.blockinfile"]["insertbefore"],
+            {"name": ["ca-certificates", "systemd-timesyncd"], "state": "present", "fail_on_autoremove": True, "lock_timeout": 300},
+            debian["ansible.builtin.apt"],
         )
+        self.assertEqual("ansible_os_family == 'Debian'", debian["when"])
+        self.assertNotIn("security_baseline_apply_time_runtime", str(debian))
         self.assertEqual(
-            "(?m)^# END ANSIBLE MANAGED TRUSTED CHRONY SOURCES$",
-            disable_vendor["ansible.builtin.replace"]["after"],
+            {"name": ["ca-certificates", "chrony"], "state": "present", "lock_timeout": 300},
+            rocky["ansible.builtin.dnf"],
         )
-
-    def test_chrony_override_disables_other_active_source_inputs(self) -> None:
-        tasks = load_tasks("roles/security_baseline/tasks/pre-update.yml")
-        disable_vendor = next(
-            task for task in tasks
-            if task["name"] == "Disable vendor chrony sources after adding trusted sources"
+        self.assertEqual("ansible_os_family == 'RedHat'", rocky["when"])
+        self.assertNotIn("security_baseline_apply_time_runtime", str(rocky))
+        self.assertEqual(
+            "{{ 'systemd-timesyncd' if ansible_os_family == 'Debian' else 'chronyd' }}",
+            runtime["ansible.builtin.systemd_service"]["name"],
         )
-        self.assertIn(
-            "include|confdir|sourcedir",
-            disable_vendor["ansible.builtin.replace"]["regexp"],
-        )
+        self.assertEqual("security_baseline_apply_time_runtime | bool", runtime["when"])
+        source = (REPOSITORY_ROOT / "roles/security_baseline/tasks/pre-update.yml").read_text(encoding="utf-8")
+        self.assertNotIn("blockinfile", source)
+        self.assertNotIn("replace", source)
+        self.assertNotIn("chrony.conf", source)
+        self.assertNotIn("Restart chrony", (REPOSITORY_ROOT / "roles/security_baseline/handlers/main.yml").read_text(encoding="utf-8"))
+        self.assertFalse((REPOSITORY_ROOT / "roles/os_baseline_verify/files/discover_chrony_sources.py").exists())
 
-    def test_chrony_override_text_transition_restores_vendor_inputs_after_approved_sources(self) -> None:
-        tasks = load_tasks("roles/security_baseline/tasks/pre-update.yml")
-        add_sources = next(task for task in tasks if task["name"] == "Add trusted chrony sources before disabling vendor sources")
-        disable_vendor = next(task for task in tasks if task["name"] == "Disable vendor chrony sources after adding trusted sources")
-        restore_vendor = next(task for task in tasks if task["name"] == "Restore exact vendor chrony source lines before removing trusted sources")
-        remove_sources = next(task for task in tasks if task["name"] == "Remove trusted chrony sources after restoring vendor sources")
-        marker = add_sources["ansible.builtin.blockinfile"]["marker"]
-        begin, end = marker.format(mark="BEGIN"), marker.format(mark="END")
-        for base in (
-            "pool 2.debian.pool.ntp.org iburst\nsourcedir /run/chrony-dhcp\nsourcedir /etc/chrony/sources.d\nconfdir /etc/chrony/conf.d\n",
-            "pool 2.rocky.pool.ntp.org iburst\nsourcedir /run/chrony-dhcp\n",
-            "POOL 2.debian.pool.ntp.org iburst\nSOURCEDIR /run/chrony-dhcp /etc/chrony/sources.d\nCONFDIR /etc/chrony/conf.d\n",
-        ):
-            with self.subTest(base=base):
-                approved = f"{begin}\nserver approved.example iburst\n{end}\n{base}"
-                before, after = approved.split(end + "\n", 1)
-                disabled = before + end + "\n" + re.sub(
-                    disable_vendor["ansible.builtin.replace"]["regexp"],
-                    disable_vendor["ansible.builtin.replace"]["replace"],
-                    after,
-                    flags=re.MULTILINE,
-                )
-                self.assertIn("server approved.example iburst", disabled)
-                self.assertNotIn("\n" + base.splitlines()[0], disabled)
-                restored = re.sub(
-                    restore_vendor["ansible.builtin.replace"]["regexp"],
-                    restore_vendor["ansible.builtin.replace"]["replace"],
-                    disabled,
-                    flags=re.MULTILINE,
-                )
-                self.assertLess(restored.index(end), restored.index(base.splitlines()[0]))
-                self.assertEqual("absent", remove_sources["ansible.builtin.blockinfile"]["state"])
-                self.assertEqual(base, re.sub(re.escape(begin) + r"\n.*?" + re.escape(end) + r"\n", "", restored, flags=re.DOTALL))
-
-    def test_verifier_platform_policy_evidence_is_unguarded_and_semantic(self) -> None:
+    def test_time_verifier_is_provider_native_and_observational(self) -> None:
         tasks = load_tasks("roles/os_baseline_verify/tasks/platform.yml")
-        configuration = next(task for task in tasks if task["name"] == "Read native MAC and chrony configuration")
-        chrony = next(task for task in tasks if task["name"] == "Read effective chrony source configuration")
-        evidence = next(task for task in tasks if task["name"] == "Verify native MAC and chrony policy evidence")
-        apparmor_read = next(task for task in tasks if task["name"] == "Read Debian AppArmor enforcing profile state")
-        apparmor = next(task for task in tasks if task["name"] == "Verify Debian AppArmor enforcing profiles")
+        tasks_by_name = {task["name"]: task for task in tasks}
+        self.assertIn("Verify native MAC and time package evidence", tasks_by_name)
+        package_evidence = tasks_by_name["Verify native MAC and time package evidence"]
+        expected_commands = {
+            "Read Debian time service enablement": ["/usr/bin/systemctl", "is-enabled", "systemd-timesyncd.service"],
+            "Read Debian time service activity": ["/usr/bin/systemctl", "is-active", "systemd-timesyncd.service"],
+            "Read Debian time synchronization state": ["/usr/bin/timedatectl", "show", "--property=NTPSynchronized", "--value"],
+            "Read Rocky time service enablement": ["/usr/bin/systemctl", "is-enabled", "chronyd.service"],
+            "Read Rocky time service activity": ["/usr/bin/systemctl", "is-active", "chronyd.service"],
+            "Read Rocky chrony tracking state": ["/usr/bin/chronyc", "tracking"],
+            "Read Rocky chrony source state": ["/usr/bin/chronyc", "sources"],
+        }
 
-        self.assertNotIn("when", configuration)
-        self.assertNotIn("when", chrony)
-        self.assertNotIn("when", evidence)
-        self.assertIn("os_baseline_verify_chrony_effective_policy", evidence["vars"]["os_baseline_verify_chrony_values"])
-        self.assertEqual(["/usr/sbin/aa-status", "--json"], apparmor_read["ansible.builtin.command"]["argv"])
-        self.assertIn("os_baseline_verify_apparmor_distribution_profiles", apparmor["vars"])
+        self.assertNotIn("when", package_evidence)
+        self.assertIn("systemd-timesyncd", str(package_evidence))
+        self.assertIn("chrony", str(package_evidence))
+        self.assertNotIn("discover_chrony_sources", str(tasks))
+        self.assertNotIn("os_baseline_verify_chrony_effective_policy", str(tasks))
+        for name, argv in expected_commands.items():
+            with self.subTest(name=name):
+                self.assertIn(name, tasks_by_name)
+                task = tasks_by_name[name]
+                self.assertEqual(argv, task["ansible.builtin.command"]["argv"])
+                self.assertIs(False, task["changed_when"])
+                self.assertEqual(
+                    ["os_baseline_verify_runtime_controls | bool", "ansible_os_family == 'Debian'" if "Debian" in name else "ansible_os_family == 'RedHat'"],
+                    task["when"],
+                )
 
     def test_verifier_debian_updater_asserts_the_effective_origin_list(self) -> None:
         tasks = load_tasks("roles/os_baseline_verify/tasks/updates.yml")

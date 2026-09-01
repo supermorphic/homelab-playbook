@@ -6,7 +6,6 @@ security_baseline_apply_firewall_runtime: true
 security_baseline_apply_kernel_controls: true
 security_baseline_apply_time_runtime: true
 security_baseline_apply_audit_runtime: true
-security_baseline_chrony_sources: []
 security_baseline_journal_system_max_use: 512M
 security_baseline_journal_system_keep_free: 1G
 security_baseline_reboot_required: false

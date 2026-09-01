@@ -5,95 +5,28 @@
     executable: /usr/bin/python3
   changed_when: false
 
-- name: Install repository trust and time packages
-  ansible.builtin.package:
+- name: Install Debian repository trust and time packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - systemd-timesyncd
+    state: present
+    fail_on_autoremove: true
+    lock_timeout: 300
+  when: ansible_os_family == 'Debian'
+
+- name: Install Rocky repository trust and time packages
+  ansible.builtin.dnf:
     name:
       - ca-certificates
       - chrony
     state: present
+    lock_timeout: 300
+  when: ansible_os_family == 'RedHat'
 
-- name: Select chrony platform paths
-  ansible.builtin.set_fact:
-    security_baseline_chrony_config_path: >-
-      {{ '/etc/chrony/chrony.conf'
-         if ansible_os_family == 'Debian'
-         else '/etc/chrony.conf' }}
-    security_baseline_chrony_service_name: >-
-      {{ 'chrony' if ansible_os_family == 'Debian' else 'chronyd' }}
-
-- name: Validate trusted chrony source formats
-  ansible.builtin.command:
-    argv:
-      - python3
-      - -c
-      - |
-        import ipaddress
-        import json
-        import re
-        import sys
-
-        sources = json.loads(sys.argv[1])
-        label = re.compile(r"^(?!-)[A-Za-z0-9-]{1,63}(?<!-)$")
-        for source in sources:
-            if not isinstance(source, str) or not source or len(source) > 253:
-                raise SystemExit(1)
-            try:
-                ipaddress.ip_address(source)
-                continue
-            except ValueError:
-                hostname = source[:-1] if source.endswith(".") else source
-                if not hostname or not all(label.fullmatch(part) for part in hostname.split(".")):
-                    raise SystemExit(1)
-      - "{{ security_baseline_chrony_sources | to_json }}"
-  changed_when: false
-  no_log: true
-  when: security_baseline_chrony_sources | length > 0
-
-- name: Add trusted chrony sources before disabling vendor sources
-  ansible.builtin.blockinfile:
-    path: "{{ security_baseline_chrony_config_path }}"
-    marker: "# {mark} ANSIBLE MANAGED TRUSTED CHRONY SOURCES"
-    insertbefore: BOF
-    block: |-
-      {% for source in security_baseline_chrony_sources %}
-      server {{ source }} iburst
-      {% endfor %}
-    validate: /usr/sbin/chronyd -p -f %s
-  notify: Restart chrony
-  no_log: true
-  when: security_baseline_chrony_sources | length > 0
-
-- name: Disable vendor chrony sources after adding trusted sources
-  ansible.builtin.replace:
-    path: "{{ security_baseline_chrony_config_path }}"
-    regexp: '(?i)^(?!# homelab-disabled: )([ \t]*(?:(?:pool|server|peer)[ \t]+[^\n]+|(?:include|confdir|sourcedir)[ \t]+[^\n]+))$'
-    replace: '# homelab-disabled: \g<1>'
-    after: '(?m)^# END ANSIBLE MANAGED TRUSTED CHRONY SOURCES$'
-    validate: /usr/sbin/chronyd -p -f %s
-  notify: Restart chrony
-  when: security_baseline_chrony_sources | length > 0
-
-- name: Restore exact vendor chrony source lines before removing trusted sources
-  ansible.builtin.replace:
-    path: "{{ security_baseline_chrony_config_path }}"
-    regexp: '^# homelab-disabled: ([^\n]+)$'
-    replace: '\g<1>'
-    validate: /usr/sbin/chronyd -p -f %s
-  notify: Restart chrony
-  when: security_baseline_chrony_sources | length == 0
-
-- name: Remove trusted chrony sources after restoring vendor sources
-  ansible.builtin.blockinfile:
-    path: "{{ security_baseline_chrony_config_path }}"
-    marker: "# {mark} ANSIBLE MANAGED TRUSTED CHRONY SOURCES"
-    state: absent
-    validate: /usr/sbin/chronyd -p -f %s
-  notify: Restart chrony
-  when: security_baseline_chrony_sources | length == 0
-
-- name: Enable and start chrony
+- name: Enable and start platform time synchronization
   ansible.builtin.systemd_service:
-    name: "{{ security_baseline_chrony_service_name }}"
+    name: "{{ 'systemd-timesyncd' if ansible_os_family == 'Debian' else 'chronyd' }}"
     enabled: true
     state: started
   when: security_baseline_apply_time_runtime | bool
