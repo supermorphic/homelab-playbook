@@ -1,137 +1,130 @@
 ---
-- name: Build expected firewall rich rules from policy inputs
-  ansible.builtin.set_fact:
-    os_baseline_verify_firewall_rules: []
-  no_log: true
-
-- name: Add expected SSH firewall rules
+- name: Independently validate firewall policy inputs
   ansible.builtin.set_fact:
     os_baseline_verify_firewall_rules: >-
-      {{ os_baseline_verify_firewall_rules
-         + ['rule family="' ~ ('ipv6' if ':' in item else 'ipv4')
-            ~ '" source address="' ~ item
-            ~ '" service name="ssh" accept'] }}
-  loop: "{{ security_baseline_management_sources }}"
+      {{ {'management_sources': security_baseline_management_sources, 'services': security_baseline_firewall_services} | os_baseline_verify_firewall_rules }}
   no_log: true
 
-- name: Add expected extension firewall rules
-  ansible.builtin.set_fact:
-    os_baseline_verify_firewall_rules: >-
-      {{ os_baseline_verify_firewall_rules
-         + ['rule family="' ~ ('ipv6' if ':' in item.1 else 'ipv4')
-            ~ '" source address="' ~ item.1
-            ~ '" service name="' ~ item.0.service ~ '" accept'] }}
-  loop: "{{ query('subelements', security_baseline_firewall_services, 'sources') }}"
-  no_log: true
-
-- name: Read permanent firewalld configuration
+- name: Read permanent firewalld default configuration
   ansible.builtin.slurp:
     src: /etc/firewalld/firewalld.conf
   register: os_baseline_verify_firewalld_configuration
+  no_log: true
 
 - name: Read permanent homelab firewall state
   ansible.builtin.command:
-    argv: [/usr/bin/firewall-offline-cmd, --zone=homelab, --list-all]
-  register: os_baseline_verify_firewall_permanent_list_all
+    argv: >-
+      {{ ['/usr/bin/firewall-offline-cmd', '--zone=homelab', item] }}
+  loop:
+    - --list-all
+    - --list-interfaces
+    - --list-sources
+    - --list-services
+    - --list-ports
+    - --list-protocols
+    - --list-source-ports
+    - --list-forward-ports
+    - --list-rich-rules
+    - --query-forward
+    - --query-masquerade
+  register: os_baseline_verify_permanent_firewall
   changed_when: false
-
-- name: Read permanent homelab firewall rich rules
-  ansible.builtin.command:
-    argv: [/usr/bin/firewall-offline-cmd, --zone=homelab, --list-rich-rules]
-  register: os_baseline_verify_firewall_permanent_rules
-  changed_when: false
+  failed_when: os_baseline_verify_permanent_firewall.rc not in [0, 1]
   no_log: true
 
-- name: Read permanent homelab firewall forwarding state
-  ansible.builtin.command:
-    argv: [/usr/bin/firewall-offline-cmd, --zone=homelab, --query-forward]
-  register: os_baseline_verify_firewall_permanent_forward
-  changed_when: false
-  failed_when: os_baseline_verify_firewall_permanent_forward.rc not in [0, 1]
-
-- name: Verify permanent repository-owned firewall policy
-  vars:
-    os_baseline_verify_permanent_targets: >-
-      {{ os_baseline_verify_firewall_permanent_list_all.stdout_lines
-         | select('match', '^\\s*target:\\s*')
-         | map('regex_replace', '^\\s*target:\\s*', '') | list }}
+- name: Verify permanent firewall default and zero direct openings
   ansible.builtin.assert:
     that:
-      - >-
-        os_baseline_verify_firewalld_configuration.content | b64decode
-        | regex_findall('(?m)^DefaultZone=([^\\s#]+)\\s*$') == ['homelab']
-      - os_baseline_verify_permanent_targets == ['DROP']
-      - os_baseline_verify_firewall_permanent_forward.rc == 1
-      - >-
-        os_baseline_verify_firewall_permanent_list_all.stdout
-        is not search('(?m)^\\s*(services|ports|protocols|source-ports|forward-ports):\\s*\\S+')
-      - >-
-        os_baseline_verify_firewall_permanent_rules.stdout_lines | sort
-        == os_baseline_verify_firewall_rules | sort
+      - os_baseline_verify_firewalld_configuration.content | b64decode | regex_findall('(?m)^DefaultZone=([^\\s#]+)\\s*$') == ['homelab']
+      - os_baseline_verify_permanent_firewall.results[0].stdout is search('(?m)^\\s*target:\\s*DROP\\s*$')
+      - os_baseline_verify_permanent_firewall.results[9].rc == 1
+      - os_baseline_verify_permanent_firewall.results[10].rc == 1
+      - os_baseline_verify_permanent_firewall.results[2].stdout | trim == ''
+      - os_baseline_verify_permanent_firewall.results[3].stdout | trim == ''
+      - os_baseline_verify_permanent_firewall.results[4].stdout | trim == ''
+      - os_baseline_verify_permanent_firewall.results[5].stdout | trim == ''
+      - os_baseline_verify_permanent_firewall.results[6].stdout | trim == ''
+      - os_baseline_verify_permanent_firewall.results[7].stdout | trim == ''
+      - os_baseline_verify_permanent_firewall.results[8].stdout_lines | sort == os_baseline_verify_firewall_rules | sort
     fail_msg: Permanent homelab firewall policy does not match repository policy
   no_log: true
 
-- name: Read runtime default firewall zone
-  ansible.builtin.command:
-    argv: [/usr/bin/systemctl, is-active, firewalld]
-  register: os_baseline_verify_firewalld_service
+- name: Discover management peer and interface
+  ansible.builtin.script:
+    cmd: discover_management_interface.py
+    executable: /usr/bin/python3
+  register: os_baseline_verify_management_connection
   changed_when: false
+  no_log: true
   when: os_baseline_verify_runtime_controls | bool
 
-- name: Verify firewalld service state
+- name: Record management peer and interface
+  ansible.builtin.set_fact:
+    os_baseline_verify_management: "{{ os_baseline_verify_management_connection.stdout | from_json }}"
+  no_log: true
+  when: os_baseline_verify_runtime_controls | bool
+
+- name: Verify permanent management interface binding
   ansible.builtin.assert:
     that:
-      - os_baseline_verify_firewalld_service.stdout | trim == 'active'
-    fail_msg: firewalld is not active
-  when: os_baseline_verify_runtime_controls | bool
-
-- name: Read runtime default firewall zone
-  ansible.builtin.command:
-    argv: [/usr/bin/firewall-cmd, --get-default-zone]
-  register: os_baseline_verify_firewall_runtime_default_zone
-  changed_when: false
+      - >-
+        os_baseline_verify_permanent_firewall.results[1].stdout.split()
+        == [os_baseline_verify_management.interface]
+    fail_msg: Permanent homelab firewall binding does not match management interface
+  no_log: true
   when: os_baseline_verify_runtime_controls | bool
 
 - name: Read runtime homelab firewall state
   ansible.builtin.command:
-    argv: [/usr/bin/firewall-cmd, --zone=homelab, --list-all]
-  register: os_baseline_verify_firewall_runtime_list_all
+    argv: >-
+      {{ ['/usr/bin/firewall-cmd', '--zone=homelab', item] }}
+  loop:
+    - --list-all
+    - --list-interfaces
+    - --list-sources
+    - --list-services
+    - --list-ports
+    - --list-protocols
+    - --list-source-ports
+    - --list-forward-ports
+    - --list-rich-rules
+    - --query-forward
+    - --query-masquerade
+  register: os_baseline_verify_runtime_firewall
   changed_when: false
+  failed_when: os_baseline_verify_runtime_firewall.rc not in [0, 1]
+  no_log: true
   when: os_baseline_verify_runtime_controls | bool
 
-- name: Read runtime homelab firewall rich rules
+- name: Read runtime firewall default interface and active zones
   ansible.builtin.command:
-    argv: [/usr/bin/firewall-cmd, --zone=homelab, --list-rich-rules]
-  register: os_baseline_verify_firewall_runtime_rules
+    argv: "{{ ['/usr/bin/firewall-cmd', item] }}"
+  loop: [--get-default-zone, "--get-zone-of-interface={{ os_baseline_verify_management.interface }}", --get-active-zones]
+  register: os_baseline_verify_runtime_firewall_globals
   changed_when: false
   no_log: true
   when: os_baseline_verify_runtime_controls | bool
 
-- name: Read runtime homelab firewall forwarding state
-  ansible.builtin.command:
-    argv: [/usr/bin/firewall-cmd, --zone=homelab, --query-forward]
-  register: os_baseline_verify_firewall_runtime_forward
-  changed_when: false
-  failed_when: os_baseline_verify_firewall_runtime_forward.rc not in [0, 1]
-  when: os_baseline_verify_runtime_controls | bool
-
-- name: Verify runtime repository-owned firewall policy
+- name: Verify exact runtime firewall policy
   vars:
-    os_baseline_verify_runtime_targets: >-
-      {{ os_baseline_verify_firewall_runtime_list_all.stdout_lines
-         | select('match', '^\\s*target:\\s*')
-         | map('regex_replace', '^\\s*target:\\s*', '') | list }}
+    os_baseline_verify_active_conflicts: >-
+      {{ os_baseline_verify_runtime_firewall_globals.results[2].stdout | os_baseline_verify_conflicting_sources(os_baseline_verify_management.peer) }}
   ansible.builtin.assert:
     that:
-      - os_baseline_verify_firewall_runtime_default_zone.stdout | trim == 'homelab'
-      - os_baseline_verify_runtime_targets == ['DROP']
-      - os_baseline_verify_firewall_runtime_forward.rc == 1
-      - >-
-        os_baseline_verify_firewall_runtime_list_all.stdout
-        is not search('(?m)^\\s*(services|ports|protocols|source-ports|forward-ports):\\s*\\S+')
-      - >-
-        os_baseline_verify_firewall_runtime_rules.stdout_lines | sort
-        == os_baseline_verify_firewall_rules | sort
+      - os_baseline_verify_runtime_firewall_globals.results[0].stdout | trim == 'homelab'
+      - os_baseline_verify_runtime_firewall.results[0].stdout is search('(?m)^\\s*target:\\s*DROP\\s*$')
+      - os_baseline_verify_runtime_firewall.results[9].rc == 1
+      - os_baseline_verify_runtime_firewall.results[10].rc == 1
+      - os_baseline_verify_runtime_firewall_globals.results[1].stdout | trim == 'homelab'
+      - os_baseline_verify_runtime_firewall.results[1].stdout.split() == [os_baseline_verify_management.interface]
+      - os_baseline_verify_runtime_firewall.results[2].stdout | trim == ''
+      - os_baseline_verify_runtime_firewall.results[3].stdout | trim == ''
+      - os_baseline_verify_runtime_firewall.results[4].stdout | trim == ''
+      - os_baseline_verify_runtime_firewall.results[5].stdout | trim == ''
+      - os_baseline_verify_runtime_firewall.results[6].stdout | trim == ''
+      - os_baseline_verify_runtime_firewall.results[7].stdout | trim == ''
+      - os_baseline_verify_runtime_firewall.results[8].stdout_lines | sort == os_baseline_verify_firewall_rules | sort
+      - os_baseline_verify_active_conflicts | length == 0
     fail_msg: Runtime homelab firewall policy does not match repository policy
   no_log: true
   when: os_baseline_verify_runtime_controls | bool

@@ -1,4 +1,27 @@
 ---
+- name: Gather native MAC and chrony package facts
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Read native MAC and chrony configuration
+  ansible.builtin.slurp:
+    src: "{{ item }}"
+  loop: >-
+    {{ ['/etc/selinux/config', '/etc/chrony.conf'] if ansible_os_family == 'RedHat'
+       else ['/etc/apparmor/parser.conf', '/etc/chrony/chrony.conf'] }}
+  register: os_baseline_verify_platform_configuration
+
+- name: Verify native MAC and chrony policy evidence
+  ansible.builtin.assert:
+    that:
+      - "'chrony' in ansible_facts.packages"
+      - >-
+        ('selinux-policy-targeted' in ansible_facts.packages and
+         'SELINUX=enforcing' in (os_baseline_verify_platform_configuration.results[0].content | b64decode))
+        if ansible_os_family == 'RedHat'
+        else ('apparmor' in ansible_facts.packages and 'apparmor-utils' in ansible_facts.packages)
+    fail_msg: Native MAC or chrony package/configuration policy is absent
+
 - name: Read Rocky SELinux state
   ansible.builtin.command:
     argv: [/usr/sbin/getenforce]
@@ -39,16 +62,16 @@
     - os_baseline_verify_runtime_controls | bool
     - ansible_os_family == 'Debian'
 
-- name: Read Debian AppArmor loaded profile count
+- name: Read Debian AppArmor enforcing profile count
   ansible.builtin.command:
-    argv: [/usr/sbin/aa-status, --profiled]
+    argv: [/usr/sbin/aa-status, --enforced]
   register: os_baseline_verify_apparmor_profiles
   changed_when: false
   when:
     - os_baseline_verify_runtime_controls | bool
     - ansible_os_family == 'Debian'
 
-- name: Verify Debian AppArmor loaded profiles
+- name: Verify Debian AppArmor enforcing profiles
   ansible.builtin.assert:
     that:
       - os_baseline_verify_apparmor_enabled.rc == 0

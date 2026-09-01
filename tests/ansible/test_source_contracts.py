@@ -23,24 +23,46 @@ def load_tasks(relative_path: str) -> list[dict[str, object]]:
     return [task for document in load_yaml_documents(relative_path) for task in document]
 
 
+OBSERVATIONAL_VERIFIER_MODULES = {
+    "ansible.builtin.assert", "ansible.builtin.command", "ansible.builtin.debug",
+    "ansible.builtin.getent", "ansible.builtin.import_tasks",
+    "ansible.builtin.package_facts", "ansible.builtin.script", "ansible.builtin.set_fact",
+    "ansible.builtin.slurp", "ansible.builtin.stat",
+}
+
+
+def assert_observational_verifier_task(task: dict[str, object]) -> None:
+    actions = set(task) & OBSERVATIONAL_VERIFIER_MODULES
+    module_keys = {key for key in task if key.startswith(("ansible.", "community."))}
+    if module_keys - OBSERVATIONAL_VERIFIER_MODULES or len(actions) > 1:
+        raise AssertionError(f"non-observational verifier task: {task.get('name')}")
+    command = task.get("ansible.builtin.command")
+    if isinstance(command, dict):
+        argv = command.get("argv", [])
+        rendered = " ".join(str(value) for value in argv)
+        if any(word in rendered for word in ("--add", "--remove", "--set", "--reload", "--change", " start", " stop", " restart", " enable", " disable")):
+            raise AssertionError(f"mutating verifier command: {rendered}")
+    script = task.get("ansible.builtin.script")
+    if isinstance(script, dict) and script.get("cmd") != "discover_management_interface.py":
+        raise AssertionError("verifier script is not allowlisted")
+
+
 class SourceContractTests(unittest.TestCase):
     def test_os_baseline_verifier_is_observational(self) -> None:
         task_paths = sorted(
             (REPOSITORY_ROOT / "roles/os_baseline_verify/tasks").glob("*.yml")
         )
         self.assertTrue(task_paths)
-        source = "\n".join(
-            path.read_text(encoding="utf-8") for path in task_paths
-        )
-        for forbidden in (
-            "ansible.builtin.apt:", "ansible.builtin.dnf:",
-            "ansible.builtin.package:", "ansible.builtin.service:",
-            "ansible.builtin.systemd_service:", "ansible.builtin.copy:",
-            "ansible.builtin.template:", "ansible.builtin.reboot:",
-            "ansible.posix.firewalld:", "ansible.posix.selinux:",
-        ):
-            self.assertNotIn(forbidden, source)
-        self.assertNotIn("status.json", source)
+        for path in task_paths:
+            for task in load_tasks(str(path.relative_to(REPOSITORY_ROOT))):
+                assert_observational_verifier_task(task)
+
+        with self.assertRaises(AssertionError):
+            assert_observational_verifier_task({"ansible.builtin.file": {}})
+        with self.assertRaises(AssertionError):
+            assert_observational_verifier_task(
+                {"ansible.builtin.command": {"argv": ["firewall-cmd", "--reload"]}}
+            )
 
     def test_os_bootstrap_uses_only_raw_until_python_is_available(self) -> None:
         tasks = load_tasks("roles/os_bootstrap/tasks/main.yml")

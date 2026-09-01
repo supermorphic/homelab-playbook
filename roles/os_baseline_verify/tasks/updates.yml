@@ -1,22 +1,25 @@
 ---
-- name: Read Debian unattended-upgrades configuration
+- name: Read Debian automatic-update configuration
   ansible.builtin.slurp:
-    src: /etc/apt/apt.conf.d/50unattended-upgrades
+    src: "{{ item }}"
+  loop: [/etc/apt/apt.conf.d/20auto-upgrades, /etc/apt/apt.conf.d/50unattended-upgrades]
   register: os_baseline_verify_debian_updater_configuration
   when: ansible_os_family == 'Debian'
 
 - name: Verify Debian security-only updater configuration
   vars:
-    os_baseline_verify_debian_updater_text: >-
-      {{ os_baseline_verify_debian_updater_configuration.content | b64decode }}
+    os_baseline_verify_debian_periodic: >-
+      {{ os_baseline_verify_debian_updater_configuration.results[0].content | b64decode | os_baseline_verify_apt_policy }}
+    os_baseline_verify_debian_policy: >-
+      {{ os_baseline_verify_debian_updater_configuration.results[1].content | b64decode | os_baseline_verify_apt_policy }}
   ansible.builtin.assert:
     that:
-      - >-
-        'origin=Debian,codename=${distro_codename}-security,label=Debian-Security'
-        in os_baseline_verify_debian_updater_text
-      - >-
-        'Unattended-Upgrade::Remove-Unused-Dependencies "false";'
-        in os_baseline_verify_debian_updater_text
+      - os_baseline_verify_debian_periodic.scalar['APT::Periodic::Update-Package-Lists'] == '1'
+      - os_baseline_verify_debian_periodic.scalar['APT::Periodic::Unattended-Upgrade'] == '1'
+      - os_baseline_verify_debian_policy.scalar['Unattended-Upgrade::Automatic-Reboot'] == (system_maintenance_native_reboot_enabled | bool | lower)
+      - os_baseline_verify_debian_policy.scalar['Unattended-Upgrade::Automatic-Reboot-WithUsers'] == 'true'
+      - os_baseline_verify_debian_policy.scalar['Unattended-Upgrade::Automatic-Reboot-Time'] == system_maintenance_security_reboot_time
+      - os_baseline_verify_debian_policy.scalar['Unattended-Upgrade::Remove-Unused-Dependencies'] == 'false'
     fail_msg: Debian automatic updates are not restricted to the configured security policy
   when: ansible_os_family == 'Debian'
 
@@ -28,14 +31,15 @@
 
 - name: Verify Rocky security-only updater configuration
   vars:
-    os_baseline_verify_rocky_updater_text: >-
-      {{ os_baseline_verify_rocky_updater_configuration.content | b64decode }}
+    os_baseline_verify_rocky_updater: >-
+      {{ os_baseline_verify_rocky_updater_configuration.content | b64decode | os_baseline_verify_ini_values }}
   ansible.builtin.assert:
     that:
-      - "'upgrade_type = security' in os_baseline_verify_rocky_updater_text"
-      - >-
-        ('reboot = when-needed' if system_maintenance_native_reboot_enabled | bool
-         else 'reboot = never') in os_baseline_verify_rocky_updater_text
+      - os_baseline_verify_rocky_updater.commands.upgrade_type == 'security'
+      - os_baseline_verify_rocky_updater.commands.download_updates == 'yes'
+      - os_baseline_verify_rocky_updater.commands.apply_updates == 'yes'
+      - os_baseline_verify_rocky_updater.commands.reboot == ('when-needed' if system_maintenance_native_reboot_enabled | bool else 'never')
+      - os_baseline_verify_rocky_updater.emitters.emit_via == 'stdio'
     fail_msg: Rocky automatic updates are not restricted to the configured security policy
   when: ansible_os_family == 'RedHat'
 
@@ -51,23 +55,27 @@
   changed_when: false
   when: os_baseline_verify_runtime_controls | bool
 
-- name: Read native security update timer configuration
-  ansible.builtin.slurp:
-    src: >-
-      {{ '/etc/systemd/system/apt-daily-upgrade.timer.d/override.conf'
-         if ansible_os_family == 'Debian'
-         else '/etc/systemd/system/dnf-automatic.timer.d/override.conf' }}
+- name: Read effective native security update timer configuration
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemd-analyze
+      - cat-config
+      - >-
+        {{ 'systemd/system/apt-daily-upgrade.timer'
+           if ansible_os_family == 'Debian'
+           else 'systemd/system/dnf-automatic.timer' }}
   register: os_baseline_verify_updater_timer_configuration
+  changed_when: false
 
 - name: Verify native security update timer configuration
   vars:
     os_baseline_verify_updater_timer_text: >-
-      {{ os_baseline_verify_updater_timer_configuration.content | b64decode }}
+      {{ os_baseline_verify_updater_timer_configuration.stdout | os_baseline_verify_timer_values }}
   ansible.builtin.assert:
     that:
-      - >-
-        'OnCalendar=' ~ system_maintenance_security_update_calendar
-        in os_baseline_verify_updater_timer_text
+      - os_baseline_verify_updater_timer_text.OnCalendar == [system_maintenance_security_update_calendar]
+      - os_baseline_verify_updater_timer_text.RandomizedDelaySec == '0'
+      - os_baseline_verify_updater_timer_text.Persistent | lower == 'true'
     fail_msg: Native security update timer does not match the configured maintenance window
 
 - name: Verify native security update timer enablement

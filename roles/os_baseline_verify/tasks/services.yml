@@ -4,6 +4,22 @@
     path: /var/log/journal
   register: os_baseline_verify_journal_directory
 
+- name: Gather auditd package facts
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Read auditd configuration
+  ansible.builtin.slurp:
+    src: /etc/audit/auditd.conf
+  register: os_baseline_verify_auditd_configuration
+
+- name: Verify auditd package and configuration evidence
+  ansible.builtin.assert:
+    that:
+      - "'audit' in ansible_facts.packages or 'auditd' in ansible_facts.packages"
+      - os_baseline_verify_auditd_configuration.content | b64decode | length > 0
+    fail_msg: auditd package or configuration is absent
+
 - name: Read effective journald configuration
   ansible.builtin.command:
     argv: [/usr/bin/systemd-analyze, cat-config, systemd/journald.conf]
@@ -13,11 +29,10 @@
 - name: Verify persistent bounded journald configuration
   vars:
     os_baseline_verify_journald_values: >-
-      {{ dict(os_baseline_verify_journald_configuration.stdout
-         | regex_findall('(?m)^\\s*(Storage|SystemMaxUse|SystemKeepFree)\\s*=\\s*([^\\s#]+)\\s*$')) }}
+      {{ os_baseline_verify_journald_configuration.stdout | os_baseline_verify_journald_values }}
   ansible.builtin.assert:
     that:
-      - os_baseline_verify_journal_directory.stat.isdir
+      - os_baseline_verify_journal_directory.stat.isdir | default(false)
       - os_baseline_verify_journald_values.Storage | default('') == 'persistent'
       - >-
         os_baseline_verify_journald_values.SystemMaxUse | default('')
