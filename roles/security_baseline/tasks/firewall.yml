@@ -1,83 +1,11 @@
 ---
-- name: Validate private firewall source scopes
-  ansible.builtin.command:
-    argv:
-      - python3
-      - -c
-      - |
-        import ipaddress
-        import json
-        import re
-        import sys
-
-        payload = json.loads(sys.argv[1])
-        allowed = tuple(
-            ipaddress.ip_network(value)
-            for value in (
-                "10.0.0.0/8",
-                "172.16.0.0/12",
-                "192.168.0.0/16",
-                "fc00::/7",
-            )
-        )
-        service_name = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-
-        def validate_sources(values):
-            if not isinstance(values, list) or not values:
-                raise SystemExit(1)
-            for value in values:
-                if not isinstance(value, str) or "/" not in value:
-                    raise SystemExit(1)
-                try:
-                    network = ipaddress.ip_network(value, strict=True)
-                except ValueError:
-                    raise SystemExit(1)
-                if network.network_address.is_unspecified or network.is_multicast:
-                    raise SystemExit(1)
-                if not any(
-                    network.version == parent.version and network.subnet_of(parent)
-                    for parent in allowed
-                ):
-                    raise SystemExit(1)
-
-        validate_sources(payload.get("management_sources"))
-        extensions = payload.get("services")
-        if not isinstance(extensions, list):
-            raise SystemExit(1)
-        for extension in extensions:
-            if not isinstance(extension, dict) or set(extension) != {"service", "sources"}:
-                raise SystemExit(1)
-            if not isinstance(extension["service"], str) or not service_name.fullmatch(extension["service"]):
-                raise SystemExit(1)
-            validate_sources(extension["sources"])
-      - >-
-        {{ {
-             'management_sources': security_baseline_management_sources,
-             'services': security_baseline_firewall_services
-           } | to_json }}
-  changed_when: false
-  no_log: true
-
-- name: Build desired SSH firewall rules
+- name: Validate firewall inputs and build desired rules
   ansible.builtin.set_fact:
     security_baseline_firewall_desired_rules: >-
-      {{ (security_baseline_firewall_desired_rules | default([]))
-         + ['rule family="'
-            ~ ('ipv6' if ':' in item else 'ipv4')
-            ~ '" source address="' ~ item
-            ~ '" service name="ssh" accept'] }}
-  loop: "{{ security_baseline_management_sources }}"
-  no_log: true
-
-- name: Build desired extension firewall rules
-  ansible.builtin.set_fact:
-    security_baseline_firewall_desired_rules: >-
-      {{ security_baseline_firewall_desired_rules
-         + ['rule family="'
-            ~ ('ipv6' if ':' in item.1 else 'ipv4')
-            ~ '" source address="' ~ item.1
-            ~ '" service name="' ~ item.0.service ~ '" accept'] }}
-  loop: "{{ query('subelements', security_baseline_firewall_services, 'sources') }}"
+      {{ {
+           'management_sources': security_baseline_management_sources,
+           'services': security_baseline_firewall_services
+         } | security_baseline_firewall_rules }}
   no_log: true
 
 - name: Install firewalld
@@ -111,6 +39,15 @@
     offline: true
   register: security_baseline_firewall_forward
 
+- name: Disable permanent homelab masquerading
+  ansible.posix.firewalld:
+    zone: homelab
+    masquerade: false
+    state: enabled
+    permanent: true
+    offline: true
+  register: security_baseline_firewall_masquerade
+
 - name: Add desired permanent homelab firewall rules
   ansible.posix.firewalld:
     zone: homelab
@@ -129,22 +66,89 @@
     state: started
   when: security_baseline_apply_firewall_runtime | bool
 
+- name: Read available runtime firewall zones
+  ansible.builtin.command:
+    argv: [/usr/bin/firewall-cmd, --get-zones]
+  register: security_baseline_firewall_runtime_zones
+  changed_when: false
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Read initial runtime homelab target
+  ansible.builtin.command:
+    argv: [/usr/bin/firewall-cmd, --zone=homelab, --get-target]
+  register: security_baseline_firewall_initial_target
+  changed_when: false
+  when:
+    - security_baseline_apply_firewall_runtime | bool
+    - "'homelab' in security_baseline_firewall_runtime_zones.stdout.split()"
+
+- name: Read initial runtime homelab forwarding
+  ansible.builtin.command:
+    argv: [/usr/bin/firewall-cmd, --zone=homelab, --query-forward]
+  register: security_baseline_firewall_initial_forward
+  changed_when: false
+  failed_when: security_baseline_firewall_initial_forward.rc not in [0, 1]
+  when:
+    - security_baseline_apply_firewall_runtime | bool
+    - "'homelab' in security_baseline_firewall_runtime_zones.stdout.split()"
+
+- name: Read initial runtime homelab rich rules
+  ansible.builtin.command:
+    argv: [/usr/bin/firewall-cmd, --zone=homelab, --list-rich-rules]
+  register: security_baseline_firewall_initial_rules
+  changed_when: false
+  no_log: true
+  when:
+    - security_baseline_apply_firewall_runtime | bool
+    - "'homelab' in security_baseline_firewall_runtime_zones.stdout.split()"
+
+- name: Assemble initial runtime firewall baseline
+  ansible.builtin.set_fact:
+    security_baseline_firewall_initial_runtime:
+      zones: "{{ security_baseline_firewall_runtime_zones.stdout.split() }}"
+      target: >-
+        {{ security_baseline_firewall_initial_target.stdout
+           | default('') | trim }}
+      forward: >-
+        {{ (security_baseline_firewall_initial_forward.rc | default(0)) == 0 }}
+      rich_rules: >-
+        {{ security_baseline_firewall_initial_rules.stdout_lines | default([]) }}
+  no_log: true
+  when: security_baseline_apply_firewall_runtime | bool
+
 - name: Load staged permanent firewall policy into runtime
+  vars:
+    security_baseline_firewall_permanent_changed: >-
+      {{ security_baseline_firewall_zone.changed
+         or security_baseline_firewall_target.changed
+         or security_baseline_firewall_forward.changed
+         or security_baseline_firewall_masquerade.changed
+         or security_baseline_firewall_permanent_rules.changed }}
   ansible.builtin.command:
     argv: [/usr/bin/firewall-cmd, --reload]
   changed_when: true
   when:
     - security_baseline_apply_firewall_runtime | bool
     - >-
-      security_baseline_firewall_zone.changed or
-      security_baseline_firewall_target.changed or
-      security_baseline_firewall_forward.changed or
-      security_baseline_firewall_permanent_rules.changed
+      security_baseline_firewall_initial_runtime
+      | security_baseline_firewall_reload_required(
+          security_baseline_firewall_desired_rules,
+          security_baseline_firewall_permanent_changed
+        )
 
 - name: Deny runtime homelab zone forwarding
   ansible.posix.firewalld:
     zone: homelab
     forward: false
+    state: enabled
+    permanent: false
+    immediate: true
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Disable runtime homelab masquerading
+  ansible.posix.firewalld:
+    zone: homelab
+    masquerade: false
     state: enabled
     permanent: false
     immediate: true
@@ -176,6 +180,112 @@
     - security_baseline_apply_firewall_runtime | bool
     - security_baseline_firewall_runtime_target.stdout | trim != 'DROP'
 
+- name: Discover target-side management interface
+  ansible.builtin.script:
+    cmd: discover_management_interface.py
+    executable: /usr/bin/python3
+  register: security_baseline_firewall_management_raw
+  changed_when: false
+  no_log: true
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Record target-side management interface
+  ansible.builtin.set_fact:
+    security_baseline_firewall_management: >-
+      {{ security_baseline_firewall_management_raw.stdout | from_json }}
+  no_log: true
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Read runtime management interface zone
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/firewall-cmd
+      - "--get-zone-of-interface={{ security_baseline_firewall_management.interface }}"
+  register: security_baseline_firewall_management_runtime_zone
+  changed_when: false
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Bind runtime management interface to homelab
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/firewall-cmd
+      - --zone=homelab
+      - "--change-interface={{ security_baseline_firewall_management.interface }}"
+  changed_when: true
+  when:
+    - security_baseline_apply_firewall_runtime | bool
+    - security_baseline_firewall_management_runtime_zone.stdout | trim != 'homelab'
+
+- name: Read permanent management interface zone
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/firewall-cmd
+      - --permanent
+      - "--get-zone-of-interface={{ security_baseline_firewall_management.interface }}"
+  register: security_baseline_firewall_management_permanent_zone
+  changed_when: false
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Persist management interface binding to homelab
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/firewall-cmd
+      - --permanent
+      - --zone=homelab
+      - "--change-interface={{ security_baseline_firewall_management.interface }}"
+  changed_when: true
+  when:
+    - security_baseline_apply_firewall_runtime | bool
+    - security_baseline_firewall_management_permanent_zone.stdout | trim != 'homelab'
+
+- name: Read back runtime management interface binding
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/firewall-cmd
+      - "--get-zone-of-interface={{ security_baseline_firewall_management.interface }}"
+  register: security_baseline_firewall_management_runtime_after
+  changed_when: false
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Read back permanent management interface binding
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/firewall-cmd
+      - --permanent
+      - "--get-zone-of-interface={{ security_baseline_firewall_management.interface }}"
+  register: security_baseline_firewall_management_permanent_after
+  changed_when: false
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Verify management interface binding before connection proof
+  ansible.builtin.assert:
+    that:
+      - security_baseline_firewall_management_runtime_after.stdout | trim == 'homelab'
+      - security_baseline_firewall_management_permanent_after.stdout | trim == 'homelab'
+    fail_msg: Management interface is not bound to homelab in both firewall states
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Read active firewall bindings before management proof
+  ansible.builtin.command:
+    argv: [/usr/bin/firewall-cmd, --get-active-zones]
+  register: security_baseline_firewall_active_bindings_before
+  changed_when: false
+  no_log: true
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Reject source bindings that override the management interface zone
+  ansible.builtin.assert:
+    that:
+      - >-
+        security_baseline_firewall_active_bindings_before.stdout
+        | security_baseline_firewall_conflicting_sources(
+            security_baseline_firewall_management.peer
+          )
+        | length == 0
+    fail_msg: A source binding outside homelab can override management policy
+  no_log: true
+  when: security_baseline_apply_firewall_runtime | bool
+
 - name: Configure homelab as the permanent default firewall zone
   ansible.builtin.lineinfile:
     path: /etc/firewalld/firewalld.conf
@@ -206,99 +316,303 @@
     - security_baseline_apply_firewall_runtime | bool
     - security_baseline_firewall_runtime_default.stdout | trim != 'homelab'
 
-- name: Reset connection after default firewall activation
+- name: Reset connection after management interface binding
   ansible.builtin.meta: reset_connection
   when: security_baseline_apply_firewall_runtime | bool
 
-- name: Prove a new connection through desired firewall rules
+- name: Prove desired management path before removing stale firewall rules
   ansible.builtin.wait_for_connection:
   when: security_baseline_apply_firewall_runtime | bool
 
-- name: Read runtime homelab rich rules before stale removal
-  ansible.builtin.command:
-    argv: [/usr/bin/firewall-cmd, --zone=homelab, --list-rich-rules]
-  register: security_baseline_firewall_runtime_before
-  changed_when: false
-  no_log: true
+- name: Read runtime homelab policy before exact reconciliation
+  ansible.builtin.include_tasks: firewall-read-state.yml
+  vars:
+    security_baseline_firewall_state_scope: []
   when: security_baseline_apply_firewall_runtime | bool
 
-- name: Read permanent homelab rich rules before stale removal
-  ansible.builtin.command:
-    argv:
-      - /usr/bin/firewall-cmd
-      - --permanent
-      - --zone=homelab
-      - --list-rich-rules
-  register: security_baseline_firewall_permanent_before
-  changed_when: false
-  no_log: true
-  when: security_baseline_apply_firewall_runtime | bool
-
-- name: Identify stale managed SSH firewall rules
+- name: Record runtime homelab policy before exact reconciliation
   ansible.builtin.set_fact:
-    security_baseline_firewall_stale_runtime_rules: >-
-      {{ security_baseline_firewall_runtime_before.stdout_lines
-         | select('search', 'service name="ssh"')
-         | difference(security_baseline_firewall_desired_rules) }}
-    security_baseline_firewall_stale_permanent_rules: >-
-      {{ security_baseline_firewall_permanent_before.stdout_lines
-         | select('search', 'service name="ssh"')
-         | difference(security_baseline_firewall_desired_rules) }}
+    security_baseline_firewall_runtime_before: >-
+      {{ security_baseline_firewall_snapshot }}
   no_log: true
   when: security_baseline_apply_firewall_runtime | bool
 
-- name: Remove stale managed runtime SSH firewall rules
-  ansible.posix.firewalld:
-    zone: homelab
-    rich_rule: "{{ item }}"
-    state: disabled
-    permanent: false
-    immediate: true
-  loop: "{{ security_baseline_firewall_stale_runtime_rules }}"
+- name: Read permanent homelab policy before exact reconciliation
+  ansible.builtin.include_tasks: firewall-read-state.yml
+  vars:
+    security_baseline_firewall_state_scope: [--permanent]
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Record permanent homelab policy before exact reconciliation
+  ansible.builtin.set_fact:
+    security_baseline_firewall_permanent_before: >-
+      {{ security_baseline_firewall_snapshot }}
   no_log: true
   when: security_baseline_apply_firewall_runtime | bool
 
-- name: Remove stale managed permanent SSH firewall rules
-  ansible.posix.firewalld:
-    zone: homelab
-    rich_rule: "{{ item }}"
-    state: disabled
-    permanent: true
-    offline: true
-  loop: "{{ security_baseline_firewall_stale_permanent_rules }}"
-  no_log: true
-  when: security_baseline_apply_firewall_runtime | bool
-
-- name: Read reconciled runtime homelab rich rules
+- name: Remove extra runtime homelab firewall services
   ansible.builtin.command:
-    argv: [/usr/bin/firewall-cmd, --zone=homelab, --list-rich-rules]
-  register: security_baseline_firewall_runtime_after
-  changed_when: false
-  no_log: true
+    argv:
+      - /usr/bin/firewall-cmd
+      - --zone=homelab
+      - "--remove-service={{ item }}"
+  loop: "{{ security_baseline_firewall_runtime_before.services }}"
+  changed_when: true
   when: security_baseline_apply_firewall_runtime | bool
 
-- name: Read reconciled permanent homelab rich rules
+- name: Remove extra permanent homelab firewall services
   ansible.builtin.command:
     argv:
       - /usr/bin/firewall-cmd
       - --permanent
       - --zone=homelab
-      - --list-rich-rules
-  register: security_baseline_firewall_permanent_after
+      - "--remove-service={{ item }}"
+  loop: "{{ security_baseline_firewall_permanent_before.services }}"
+  changed_when: true
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Remove extra runtime homelab direct openings
+  vars:
+    security_baseline_firewall_runtime_direct_openings:
+      - option: --remove-port=
+        values: "{{ security_baseline_firewall_runtime_before.ports }}"
+      - option: --remove-protocol=
+        values: "{{ security_baseline_firewall_runtime_before.protocols }}"
+      - option: --remove-source-port=
+        values: "{{ security_baseline_firewall_runtime_before.source_ports }}"
+      - option: --remove-forward-port=
+        values: "{{ security_baseline_firewall_runtime_before.forward_ports }}"
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/firewall-cmd
+      - --zone=homelab
+      - "{{ item.0.option }}{{ item.1 }}"
+  loop: >-
+    {{ query(
+         'subelements',
+         security_baseline_firewall_runtime_direct_openings,
+         'values'
+       ) }}
+  changed_when: true
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Remove extra permanent homelab direct openings
+  vars:
+    security_baseline_firewall_permanent_direct_openings:
+      - option: --remove-port=
+        values: "{{ security_baseline_firewall_permanent_before.ports }}"
+      - option: --remove-protocol=
+        values: "{{ security_baseline_firewall_permanent_before.protocols }}"
+      - option: --remove-source-port=
+        values: "{{ security_baseline_firewall_permanent_before.source_ports }}"
+      - option: --remove-forward-port=
+        values: "{{ security_baseline_firewall_permanent_before.forward_ports }}"
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/firewall-cmd
+      - --permanent
+      - --zone=homelab
+      - "{{ item.0.option }}{{ item.1 }}"
+  loop: >-
+    {{ query(
+         'subelements',
+         security_baseline_firewall_permanent_direct_openings,
+         'values'
+       ) }}
+  changed_when: true
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Remove extra runtime homelab bindings
+  vars:
+    security_baseline_firewall_runtime_extra_bindings:
+      - option: --remove-source=
+        values: "{{ security_baseline_firewall_runtime_before.sources }}"
+      - option: --remove-interface=
+        values: >-
+          {{ security_baseline_firewall_runtime_before.interfaces
+             | difference([security_baseline_firewall_management.interface]) }}
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/firewall-cmd
+      - --zone=homelab
+      - "{{ item.0.option }}{{ item.1 }}"
+  loop: >-
+    {{ query(
+         'subelements',
+         security_baseline_firewall_runtime_extra_bindings,
+         'values'
+       ) }}
+  changed_when: true
+  no_log: true
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Remove extra permanent homelab bindings
+  vars:
+    security_baseline_firewall_permanent_extra_bindings:
+      - option: --remove-source=
+        values: "{{ security_baseline_firewall_permanent_before.sources }}"
+      - option: --remove-interface=
+        values: >-
+          {{ security_baseline_firewall_permanent_before.interfaces
+             | difference([security_baseline_firewall_management.interface]) }}
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/firewall-cmd
+      - --permanent
+      - --zone=homelab
+      - "{{ item.0.option }}{{ item.1 }}"
+  loop: >-
+    {{ query(
+         'subelements',
+         security_baseline_firewall_permanent_extra_bindings,
+         'values'
+       ) }}
+  changed_when: true
+  no_log: true
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Remove extra runtime homelab rich rules
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/firewall-cmd
+      - --zone=homelab
+      - "--remove-rich-rule={{ item }}"
+  loop: >-
+    {{ security_baseline_firewall_runtime_before.rich_rules
+       | difference(security_baseline_firewall_desired_rules) }}
+  changed_when: true
+  no_log: true
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Remove extra permanent homelab rich rules
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/firewall-cmd
+      - --permanent
+      - --zone=homelab
+      - "--remove-rich-rule={{ item }}"
+  loop: >-
+    {{ security_baseline_firewall_permanent_before.rich_rules
+       | difference(security_baseline_firewall_desired_rules) }}
+  changed_when: true
+  no_log: true
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Remove runtime homelab masquerading if present
+  ansible.builtin.command:
+    argv: [/usr/bin/firewall-cmd, --zone=homelab, --remove-masquerade]
+  changed_when: true
+  when:
+    - security_baseline_apply_firewall_runtime | bool
+    - security_baseline_firewall_runtime_before.masquerade
+
+- name: Remove permanent homelab masquerading if present
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/firewall-cmd
+      - --permanent
+      - --zone=homelab
+      - --remove-masquerade
+  changed_when: true
+  when:
+    - security_baseline_apply_firewall_runtime | bool
+    - security_baseline_firewall_permanent_before.masquerade
+
+- name: Read reconciled runtime homelab policy
+  ansible.builtin.include_tasks: firewall-read-state.yml
+  vars:
+    security_baseline_firewall_state_scope: []
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Record reconciled runtime homelab policy
+  ansible.builtin.set_fact:
+    security_baseline_firewall_runtime_after: >-
+      {{ security_baseline_firewall_snapshot }}
+  no_log: true
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Read reconciled permanent homelab policy
+  ansible.builtin.include_tasks: firewall-read-state.yml
+  vars:
+    security_baseline_firewall_state_scope: [--permanent]
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Record reconciled permanent homelab policy
+  ansible.builtin.set_fact:
+    security_baseline_firewall_permanent_after: >-
+      {{ security_baseline_firewall_snapshot }}
+  no_log: true
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Verify exact runtime and permanent homelab policy
+  vars:
+    security_baseline_firewall_policy_states:
+      runtime: "{{ security_baseline_firewall_runtime_after }}"
+      permanent: "{{ security_baseline_firewall_permanent_after }}"
+    security_baseline_firewall_policy_problems: >-
+      {{ security_baseline_firewall_policy_states
+         | security_baseline_firewall_policy_errors(
+             security_baseline_firewall_desired_rules,
+             security_baseline_firewall_management.interface
+           ) }}
+  ansible.builtin.assert:
+    that:
+      - security_baseline_firewall_policy_problems | length == 0
+    fail_msg: Runtime or permanent homelab firewall state is not exact
+  no_log: true
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Read active firewall bindings after exact reconciliation
+  ansible.builtin.command:
+    argv: [/usr/bin/firewall-cmd, --get-active-zones]
+  register: security_baseline_firewall_active_bindings_after
   changed_when: false
   no_log: true
   when: security_baseline_apply_firewall_runtime | bool
 
-- name: Verify matching runtime and permanent homelab rich rules
+- name: Verify management path has no higher-priority source binding
   ansible.builtin.assert:
     that:
       - >-
-        security_baseline_firewall_runtime_after.stdout_lines | sort ==
-        security_baseline_firewall_permanent_after.stdout_lines | sort
-      - >-
-        security_baseline_firewall_desired_rules
-        | difference(security_baseline_firewall_runtime_after.stdout_lines)
+        security_baseline_firewall_active_bindings_after.stdout
+        | security_baseline_firewall_conflicting_sources(
+            security_baseline_firewall_management.peer
+          )
         | length == 0
-    fail_msg: Runtime and permanent homelab firewall rules do not match
+    fail_msg: A source binding outside homelab can override management policy
   no_log: true
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Read final runtime default firewall zone
+  ansible.builtin.command:
+    argv: [/usr/bin/firewall-cmd, --get-default-zone]
+  register: security_baseline_firewall_runtime_default_after
+  changed_when: false
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Read permanent default firewall configuration
+  ansible.builtin.slurp:
+    path: /etc/firewalld/firewalld.conf
+  register: security_baseline_firewall_permanent_default_after
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Verify runtime and permanent default firewall zones
+  vars:
+    security_baseline_firewall_permanent_default_values: >-
+      {{ security_baseline_firewall_permanent_default_after.content
+         | b64decode
+         | regex_findall('(?m)^DefaultZone=(.+)$') }}
+  ansible.builtin.assert:
+    that:
+      - security_baseline_firewall_runtime_default_after.stdout | trim == 'homelab'
+      - security_baseline_firewall_permanent_default_values == ['homelab']
+    fail_msg: Runtime or permanent default firewall zone is not homelab
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Reset connection after exact firewall reconciliation
+  ansible.builtin.meta: reset_connection
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Prove a new connection through exact firewall policy
+  ansible.builtin.wait_for_connection:
   when: security_baseline_apply_firewall_runtime | bool

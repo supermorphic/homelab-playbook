@@ -27,6 +27,7 @@ bash tests/ansible/vault-test.sh
 uv run --frozen --no-sync python -m unittest -v \
   tests/ansible/test_ansible_sources.py \
   tests/ansible/test_molecule_contract.py \
+  tests/ansible/test_platform_control_contracts.py \
   tests/ansible/test_source_contracts.py
 
 ansible_source_manifest="$ansible_validation_root/ansible-sources.bin"

@@ -266,11 +266,15 @@ class SourceContractTests(unittest.TestCase):
         source = (
             REPOSITORY_ROOT / "roles/security_baseline/tasks/firewall.yml"
         ).read_text(encoding="utf-8")
+        rule_source = (
+            REPOSITORY_ROOT
+            / "roles/security_baseline/filter_plugins/platform_controls.py"
+        ).read_text(encoding="utf-8")
         self.assertIn("security_baseline_management_sources", source)
-        self.assertIn('service name="ssh"', source)
+        self.assertIn('service name=\"ssh\"', rule_source)
         self.assertIn("security_baseline_apply_firewall_runtime", source)
         for forbidden in ("tailscale0", "http", "https", "dns", "public"):
-            self.assertNotIn(forbidden, source.lower())
+            self.assertNotIn(forbidden, (source + rule_source).lower())
 
     def test_platform_mac_policy_does_not_mix_frameworks(self) -> None:
         tasks = load_tasks("roles/security_baseline/tasks/mac.yml")

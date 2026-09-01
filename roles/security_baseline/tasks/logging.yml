@@ -1,4 +1,15 @@
 ---
+- name: Validate bounded journal size inputs
+  ansible.builtin.assert:
+    that:
+      - >-
+        security_baseline_journal_system_max_use
+        | security_baseline_journal_size_is_valid
+      - >-
+        security_baseline_journal_system_keep_free
+        | security_baseline_journal_size_is_valid
+    fail_msg: Journal size limits must be non-zero systemd IEC sizes
+
 - name: Create persistent journal storage
   ansible.builtin.file:
     path: /var/log/journal
@@ -34,15 +45,19 @@
   changed_when: false
 
 - name: Validate bounded persistent journald configuration
+  vars:
+    security_baseline_journald_values: >-
+      {{ security_baseline_journald_effective.stdout
+         | security_baseline_journald_effective_values }}
   ansible.builtin.assert:
     that:
-      - "'Storage=persistent' in security_baseline_journald_effective.stdout_lines"
+      - security_baseline_journald_values.Storage == 'persistent'
       - >-
-        'SystemMaxUse=' ~ security_baseline_journal_system_max_use
-        in security_baseline_journald_effective.stdout_lines
+        security_baseline_journald_values.SystemMaxUse ==
+        security_baseline_journal_system_max_use
       - >-
-        'SystemKeepFree=' ~ security_baseline_journal_system_keep_free
-        in security_baseline_journald_effective.stdout_lines
+        security_baseline_journald_values.SystemKeepFree ==
+        security_baseline_journal_system_keep_free
     fail_msg: Effective journald configuration does not match the baseline
 
 - name: Queue journald restart after validated configuration change
