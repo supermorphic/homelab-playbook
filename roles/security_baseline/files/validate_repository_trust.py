@@ -49,16 +49,28 @@ def _parse_apt_config(text: str) -> dict[str, str]:
         except ValueError as error:
             raise ValueError("APT configuration dump is malformed") from error
         if len(fields) >= 2:
-            values[fields[0]] = fields[1]
+            values[fields[0].casefold()] = fields[1]
     return values
 
 
+def _effective_apt_get_config(config: Mapping[str, str]) -> dict[str, str]:
+    """Move apt-get's binary-specific subtree into the effective root."""
+    effective = dict(config)
+    prefix = "binary::apt-get::"
+    for key, value in config.items():
+        if key.startswith(prefix):
+            effective[key.removeprefix(prefix)] = value
+    return effective
+
+
 def _apt_path(config: Mapping[str, str], leaf: str) -> str:
-    root = pathlib.PurePosixPath(config.get("Dir", "/"))
-    etc = pathlib.PurePosixPath(config.get("Dir::Etc", "etc/apt"))
+    root = pathlib.PurePosixPath(config.get("dir", "/"))
+    etc = pathlib.PurePosixPath(config.get("dir::etc", "etc/apt"))
     if not etc.is_absolute():
         etc = root / etc
-    value = pathlib.PurePosixPath(config.get(leaf, leaf.rsplit("::", 1)[-1]))
+    value = pathlib.PurePosixPath(
+        config.get(leaf.casefold(), leaf.rsplit("::", 1)[-1])
+    )
     if not value.is_absolute():
         value = etc / value
     return str(value)
@@ -164,9 +176,9 @@ def _validate_deb822_source(text: str, root: pathlib.Path) -> int:
 
 def validate_debian_configuration(apt_config_text: str, root: pathlib.Path = pathlib.Path("/")) -> None:
     """Validate effective APT settings and only its authoritative source paths."""
-    config = _parse_apt_config(apt_config_text)
+    config = _effective_apt_get_config(_parse_apt_config(apt_config_text))
     for option in DEBIAN_GLOBAL_BYPASSES:
-        if config.get(option, "").lower() in TRUE_VALUES:
+        if config.get(option.casefold(), "").lower() in TRUE_VALUES:
             raise ValueError("effective APT configuration enables an authentication bypass")
 
     source_files: list[pathlib.Path] = []
@@ -202,6 +214,10 @@ def validate_rocky_configuration(
     root: pathlib.Path = pathlib.Path("/"),
 ) -> None:
     """Validate DNF's inherited repository objects and authoritative locations."""
+    if effective.get("gpgcheck") is not True:
+        raise ValueError("effective DNF package signature checking is disabled")
+    if effective.get("localpkg_gpgcheck") is not True:
+        raise ValueError("effective DNF local package signature checking is disabled")
     reposdirs = [str(value) for value in effective.get("reposdir", [])]
     if not reposdirs:
         raise ValueError("DNF has no effective repository directory")
@@ -241,7 +257,25 @@ def _collect_rocky_configuration() -> dict[str, object]:
 
     with dnf.Base() as base:
         base.conf.read()
+        base.conf.debuglevel = 0
+        base.conf.gpgcheck = True
+        base.conf.localpkg_gpgcheck = True
+        base.conf.assumeyes = True
+        base.conf.sslverify = True
+        base.conf.installroot = "/"
+        base.conf.substitutions.update_from_etc("/")
+        if base.conf.substitutions.get("releasever") is None:
+            base.conf.substitutions["releasever"] = ""
+        for option in ("cachedir", "logdir", "persistdir"):
+            base.conf.prepend_installroot(option)
+        base.conf.clean_requirements_on_remove = False
+        base.conf.install_weak_deps = True
+
+        base.setup_loggers()
+        base.init_plugins(set(), set())
+        base.pre_configure_plugins()
         base.read_all_repos()
+        base.configure_plugins()
         repositories = []
         for repository in base.repos.all():
             repositories.append(
@@ -254,6 +288,8 @@ def _collect_rocky_configuration() -> dict[str, object]:
                 }
             )
         return {
+            "gpgcheck": bool(base.conf.gpgcheck),
+            "localpkg_gpgcheck": bool(base.conf.localpkg_gpgcheck),
             "reposdir": [str(value) for value in base.conf.reposdir],
             "tsflags": [str(value) for value in base.conf.tsflags],
             "repos": repositories,

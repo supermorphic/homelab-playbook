@@ -18,6 +18,16 @@
   changed_when: false
   no_log: true
 
+- name: Read homelab firewall complete zone state
+  ansible.builtin.command:
+    argv: >-
+      {{ ['/usr/bin/firewall-cmd']
+         + security_baseline_firewall_state_scope
+         + ['--zone=homelab', '--list-all'] }}
+  register: security_baseline_firewall_complete_state
+  changed_when: false
+  no_log: true
+
 - name: Read homelab firewall scalar state
   ansible.builtin.command:
     argv: >-
@@ -25,7 +35,6 @@
          + security_baseline_firewall_state_scope
          + ['--zone=homelab', item] }}
   loop:
-    - --get-target
     - --query-forward
     - --query-masquerade
   register: security_baseline_firewall_scalar_state
@@ -45,9 +54,11 @@
 - name: Assemble homelab firewall state
   ansible.builtin.set_fact:
     security_baseline_firewall_snapshot:
-      target: "{{ security_baseline_firewall_scalar_state.results[0].stdout | trim }}"
-      forward: "{{ security_baseline_firewall_scalar_state.results[1].rc == 0 }}"
-      masquerade: "{{ security_baseline_firewall_scalar_state.results[2].rc == 0 }}"
+      target: >-
+        {{ security_baseline_firewall_complete_state.stdout
+           | security_baseline_firewall_target_from_list_all }}
+      forward: "{{ security_baseline_firewall_scalar_state.results[0].rc == 0 }}"
+      masquerade: "{{ security_baseline_firewall_scalar_state.results[1].rc == 0 }}"
       interface_zone: "{{ security_baseline_firewall_interface_zone.stdout | trim }}"
       interfaces: "{{ security_baseline_firewall_list_state.results[0].stdout.split() }}"
       sources: "{{ security_baseline_firewall_list_state.results[1].stdout.split() }}"

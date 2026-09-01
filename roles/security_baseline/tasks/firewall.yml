@@ -75,7 +75,7 @@
 
 - name: Read initial runtime homelab target
   ansible.builtin.command:
-    argv: [/usr/bin/firewall-cmd, --zone=homelab, --get-target]
+    argv: [/usr/bin/firewall-cmd, --zone=homelab, --list-all]
   register: security_baseline_firewall_initial_target
   changed_when: false
   when:
@@ -108,7 +108,8 @@
       zones: "{{ security_baseline_firewall_runtime_zones.stdout.split() }}"
       target: >-
         {{ security_baseline_firewall_initial_target.stdout
-           | default('') | trim }}
+           | default('target: default')
+           | security_baseline_firewall_target_from_list_all }}
       forward: >-
         {{ (security_baseline_firewall_initial_forward.rc | default(0)) == 0 }}
       rich_rules: >-
@@ -164,21 +165,6 @@
   loop: "{{ security_baseline_firewall_desired_rules }}"
   no_log: true
   when: security_baseline_apply_firewall_runtime | bool
-
-- name: Read runtime homelab firewall target
-  ansible.builtin.command:
-    argv: [/usr/bin/firewall-cmd, --zone=homelab, --get-target]
-  register: security_baseline_firewall_runtime_target
-  changed_when: false
-  when: security_baseline_apply_firewall_runtime | bool
-
-- name: Set runtime homelab firewall target
-  ansible.builtin.command:
-    argv: [/usr/bin/firewall-cmd, --zone=homelab, --set-target=DROP]
-  changed_when: true
-  when:
-    - security_baseline_apply_firewall_runtime | bool
-    - security_baseline_firewall_runtime_target.stdout | trim != 'DROP'
 
 - name: Discover target-side management interface
   ansible.builtin.script:

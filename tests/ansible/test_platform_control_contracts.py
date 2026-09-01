@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import sys
 import tempfile
+import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import yaml
@@ -128,6 +131,56 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
                         root,
                     )
 
+    def test_debian_config_names_are_case_insensitive(self) -> None:
+        options = (
+            "Acquire::AllowInsecureRepositories",
+            "Acquire::AllowWeakRepositories",
+            "Acquire::AllowDowngradeToInsecureRepositories",
+            "APT::Get::AllowUnauthenticated",
+        )
+        stanza = """\
+Types: deb
+URIs: https://deb.debian.org/debian
+Suites: trixie
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+"""
+        for option in options:
+            with self.subTest(option=option), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                apt_config = self.write_debian_fixture(root, stanza)
+                apt_config += f'\n{option.lower()} "true";'
+                with self.assertRaises(ValueError):
+                    self.repository_trust.validate_debian_configuration(
+                        apt_config,
+                        root,
+                    )
+
+    def test_debian_applies_each_apt_get_authentication_bypass(self) -> None:
+        options = (
+            "Acquire::AllowInsecureRepositories",
+            "Acquire::AllowWeakRepositories",
+            "Acquire::AllowDowngradeToInsecureRepositories",
+            "APT::Get::AllowUnauthenticated",
+        )
+        stanza = """\
+Types: deb
+URIs: https://deb.debian.org/debian
+Suites: trixie
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+"""
+        for option in options:
+            with self.subTest(option=option), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                apt_config = self.write_debian_fixture(root, stanza)
+                apt_config += f'\nbinary::APT-GET::{option} "true";'
+                with self.assertRaises(ValueError):
+                    self.repository_trust.validate_debian_configuration(
+                        apt_config,
+                        root,
+                    )
+
     def test_debian_uses_effective_source_locations_and_archive_keyring(
         self,
     ) -> None:
@@ -166,6 +219,38 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
                     root,
                 )
 
+    def test_debian_applies_case_insensitive_and_apt_get_source_paths(
+        self,
+    ) -> None:
+        secure_stanza = """\
+Types: deb
+URIs: https://deb.debian.org/debian
+Suites: trixie
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+"""
+        insecure_stanza = secure_stanza.replace(
+            "Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg",
+            "Trusted: yes",
+        )
+        overrides = (
+            'dir::etc::sourceparts "authoritative";',
+            'Binary::apt-get::Dir::Etc::sourceparts "authoritative";',
+        )
+        for override in overrides:
+            with self.subTest(override=override), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                apt_config = self.write_debian_fixture(root, secure_stanza)
+                authoritative = root / "etc/apt/authoritative/debian.sources"
+                authoritative.parent.mkdir(parents=True)
+                authoritative.write_text(insecure_stanza, encoding="utf-8")
+                apt_config += f"\n{override}"
+                with self.assertRaises(ValueError):
+                    self.repository_trust.validate_debian_configuration(
+                        apt_config,
+                        root,
+                    )
+
     def rocky_fixture(self, root: Path) -> dict[str, object]:
         repo_dir = root / "etc/dnf/authoritative.repos.d"
         repo_dir.mkdir(parents=True)
@@ -175,6 +260,8 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
         key.parent.mkdir(parents=True)
         key.touch()
         return {
+            "gpgcheck": True,
+            "localpkg_gpgcheck": True,
             "reposdir": ["/etc/dnf/authoritative.repos.d"],
             "tsflags": ["nodocs"],
             "repos": [
@@ -200,6 +287,10 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
         self,
     ) -> None:
         mutations = {
+            "global gpgcheck off": lambda value: value.update(gpgcheck=False),
+            "local package gpgcheck off": lambda value: value.update(
+                localpkg_gpgcheck=False
+            ),
             "inherited gpgcheck off": lambda value: value["repos"][0].update(
                 gpgcheck=False
             ),
@@ -224,6 +315,103 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
                         effective,
                         root,
                     )
+
+    def test_rocky_collects_plugin_mutation_after_repository_loading(self) -> None:
+        events: list[str] = []
+
+        class FakeSubstitutions(dict[str, str]):
+            def update_from_etc(self, _installroot: str) -> None:
+                self["releasever"] = "9"
+
+        class FakeConfiguration:
+            def __init__(self) -> None:
+                self.reposdir = ["/etc/dnf/authoritative.repos.d"]
+                self.tsflags = ["nodocs"]
+                self.gpgcheck = True
+                self.localpkg_gpgcheck = True
+                self.substitutions = FakeSubstitutions()
+
+            def read(self) -> None:
+                events.append("read-config")
+
+            def prepend_installroot(self, _option: str) -> None:
+                return None
+
+        class FakeRepository:
+            id = "baseos"
+            enabled = True
+            gpgcheck = True
+            gpgkey = ["file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Rocky-9"]
+            repofile = "/etc/dnf/authoritative.repos.d/rocky.repo"
+
+        class FakeRepositories:
+            def __init__(self) -> None:
+                self.repository = FakeRepository()
+
+            def all(self) -> list[FakeRepository]:
+                return [self.repository]
+
+        class FakeBase:
+            def __init__(self) -> None:
+                self.conf = FakeConfiguration()
+                self.repos = FakeRepositories()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def setup_loggers(self) -> None:
+                events.append("setup-loggers")
+
+            def init_plugins(
+                self,
+                disabled: set[str],
+                enabled: set[str],
+            ) -> None:
+                self.assert_empty_plugin_overrides(disabled, enabled)
+                events.append("init-plugins")
+
+            @staticmethod
+            def assert_empty_plugin_overrides(
+                disabled: set[str],
+                enabled: set[str],
+            ) -> None:
+                if disabled or enabled:
+                    raise AssertionError("unexpected plugin override")
+
+            def pre_configure_plugins(self) -> None:
+                events.append("pre-configure-plugins")
+
+            def read_all_repos(self) -> None:
+                events.append("read-repositories")
+
+            def configure_plugins(self) -> None:
+                events.append("configure-plugins")
+                self.repos.repository.gpgcheck = False
+
+        fake_dnf = types.SimpleNamespace(Base=FakeBase)
+        with mock.patch.dict(sys.modules, {"dnf": fake_dnf}):
+            effective = self.repository_trust._collect_rocky_configuration()
+
+        self.assertEqual(
+            [
+                "read-config",
+                "setup-loggers",
+                "init-plugins",
+                "pre-configure-plugins",
+                "read-repositories",
+                "configure-plugins",
+            ],
+            events,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixture = self.rocky_fixture(root)
+            effective["reposdir"] = fixture["reposdir"]
+            with self.assertRaises(ValueError):
+                self.repository_trust.validate_rocky_configuration(effective, root)
 
 
 class FirewallPolicyTests(unittest.TestCase):
@@ -344,6 +532,101 @@ class FirewallPolicyTests(unittest.TestCase):
                 False,
             )
         )
+
+    def test_runtime_target_is_read_from_supported_list_all_output(self) -> None:
+        output = """\
+homelab (active)
+  target: DROP
+  interfaces: eth0
+  services:
+  ports:
+  rich rules:
+"""
+        self.assertEqual(
+            "DROP",
+            self.controls.security_baseline_firewall_target_from_list_all(output),
+        )
+        for invalid in ("", "target: INVALID", "target: DROP\ntarget: ACCEPT"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.controls.security_baseline_firewall_target_from_list_all(
+                    invalid
+                )
+
+    def test_false_to_true_guard_transition_emits_supported_reload_path(self) -> None:
+        tasks = load_tasks("roles/security_baseline/tasks/firewall.yml")
+        read_state_tasks = load_tasks(
+            "roles/security_baseline/tasks/firewall-read-state.yml"
+        )
+        reload_task = next(
+            task
+            for task in tasks
+            if task["name"] == "Load staged permanent firewall policy into runtime"
+        )
+        reload_argv = reload_task["ansible.builtin.command"]["argv"]
+        self.assertEqual(
+            ["/usr/bin/firewall-cmd", "--reload"],
+            reload_argv,
+        )
+        self.assertIn(
+            "security_baseline_apply_firewall_runtime | bool",
+            reload_task["when"],
+        )
+
+        second_pass_runtime = {
+            "zones": ["homelab"],
+            "target": "default",
+            "forward": False,
+            "rich_rules": [],
+        }
+        reload_required = self.controls.security_baseline_firewall_reload_required(
+            second_pass_runtime,
+            [],
+            False,
+        )
+        self.assertEqual([], [reload_argv] if False and reload_required else [])
+        self.assertEqual(
+            [reload_argv],
+            [reload_argv] if True and reload_required else [],
+        )
+
+        initial_target_task = next(
+            task
+            for task in tasks
+            if task["name"] == "Read initial runtime homelab target"
+        )
+        self.assertEqual(
+            ["/usr/bin/firewall-cmd", "--zone=homelab", "--list-all"],
+            initial_target_task["ansible.builtin.command"]["argv"],
+        )
+        complete_state_task = next(
+            task
+            for task in read_state_tasks
+            if task["name"] == "Read homelab firewall complete zone state"
+        )
+        self.assertIn(
+            "--list-all",
+            complete_state_task["ansible.builtin.command"]["argv"],
+        )
+        scalar_state_task = next(
+            task
+            for task in read_state_tasks
+            if task["name"] == "Read homelab firewall scalar state"
+        )
+        self.assertEqual(
+            ["--query-forward", "--query-masquerade"],
+            scalar_state_task["loop"],
+        )
+        for task in [*tasks, *read_state_tasks]:
+            command = task.get("ansible.builtin.command")
+            if not isinstance(command, dict):
+                continue
+            argv = command.get("argv", [])
+            runtime_only_target = any(
+                token == "--get-target" or str(token).startswith("--set-target")
+                for token in argv
+            )
+            if runtime_only_target:
+                self.assertIn("--permanent", argv)
 
     def test_exact_policy_comparison_ignores_firewalld_output_order(self) -> None:
         rules = [

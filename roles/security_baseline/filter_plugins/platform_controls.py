@@ -86,6 +86,18 @@ def security_baseline_firewall_reload_required(
     return bool(set(desired_rules) - set(runtime.get("rich_rules", [])))
 
 
+def security_baseline_firewall_target_from_list_all(text: str) -> str:
+    """Read one zone target from supported firewall-cmd list-all output."""
+    targets = [
+        line.partition(":")[2].strip()
+        for raw_line in text.splitlines()
+        if (line := raw_line.strip()).partition(":")[0] == "target"
+    ]
+    if len(targets) != 1 or targets[0] not in {"default", "ACCEPT", "DROP", "REJECT"}:
+        raise ValueError("firewall zone list output has no valid unique target")
+    return targets[0]
+
+
 def security_baseline_firewall_policy_errors(
     states: Mapping[str, object],
     desired_rules: list[str],
@@ -194,6 +206,7 @@ class FilterModule:
         return {
             "security_baseline_firewall_rules": security_baseline_firewall_rules,
             "security_baseline_firewall_reload_required": security_baseline_firewall_reload_required,
+            "security_baseline_firewall_target_from_list_all": security_baseline_firewall_target_from_list_all,
             "security_baseline_firewall_policy_errors": security_baseline_firewall_policy_errors,
             "security_baseline_firewall_conflicting_sources": security_baseline_firewall_conflicting_sources,
             "security_baseline_journal_size_is_valid": security_baseline_journal_size_is_valid,
