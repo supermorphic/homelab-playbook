@@ -29,8 +29,9 @@ and focused maintained mechanisms.
 5. `willshersystems.sshd` implements OpenSSH configuration. Repository roles
    own accounts, sudo, firewall, mandatory access control, time, logging, and
    package-maintenance policy.
-6. firewalld and chrony provide one firewall and time-synchronization mechanism
-   across Debian and Rocky.
+6. firewalld provides one firewall mechanism across Debian and Rocky. Time
+   synchronization uses each platform's default client: `systemd-timesyncd` on
+   Debian and chrony on Rocky.
 7. SELinux remains enforcing on Rocky. AppArmor remains enforcing on Debian.
 8. Native operating-system tools install security updates and perform required
    security-update reboots. The repository does not add a reboot coordinator.
@@ -61,7 +62,8 @@ and focused maintained mechanisms.
 - native automatic-update schedules and required security-update reboots;
 - a scheduler-neutral full-maintenance playbook;
 - repository-owned SSH policy implemented through `willshersystems.sshd`;
-- firewalld, SELinux or AppArmor, chrony, persistent journald, and auditd;
+- firewalld, SELinux or AppArmor, platform-native time synchronization,
+  persistent journald, and auditd;
 - read-only effective-state verification reusable after provisioning, after an
   Ansible-controlled reboot, and from a future Semaphore schedule;
 - complete-composition Molecule coverage for Debian 13 and Rocky Linux 9; and
@@ -118,7 +120,8 @@ Complete provisioning uses one host-sized batch and the following order:
    command when Python is absent.
 5. Reset the Ansible connection, gather facts, and repeat the platform and
    privilege assertions with normal modules.
-6. Verify official repository trust and configure chrony.
+6. Verify official repository trust and configure the platform-native time
+   synchronization client.
 7. Perform the explicitly authorized full operating-system update and install
    only packages required by this baseline.
 8. Reconcile the administrative account, sudo, SSH, firewall, mandatory access
@@ -208,7 +211,7 @@ The baseline package set contains only packages required for:
 - the Python and sudo management path;
 - OpenSSH;
 - firewalld;
-- chrony;
+- the platform-native time synchronization client;
 - SELinux or AppArmor;
 - auditd and persistent system logging;
 - native automatic security updates; and
@@ -317,10 +320,20 @@ claim that an unprivileged container proves host-kernel enforcement.
 
 ## Time synchronization and local logging
 
-Chrony is installed and enabled on both platforms. Distribution-provided NTP
-pools remain the default; inventory may explicitly replace them with trusted
-servers. No internal time service becomes a bootstrap dependency. Verification
-uses chrony's tracking and source state rather than service status alone.
+Time synchronization uses the operating system's default client:
+`systemd-timesyncd` on Debian and chrony on Rocky. The baseline ensures that
+the selected package and service are present and enabled, but it does not
+replace distribution or DHCP-provided time sources. Arch remains outside
+complete provisioning; a later Arch security baseline should retain
+`systemd-timesyncd` unless it establishes a concrete need for another client.
+
+The repository does not expose a time-source override in this initiative and
+does not make an internal time service a bootstrap dependency. A later design
+may add provider-neutral explicit sources when the environment has an internal
+NTP requirement. Verification checks the selected provider, service health,
+and effective clock synchronization. It does not reimplement either provider's
+configuration parser or attempt to prove the provenance of every dynamic time
+source.
 
 Journald uses persistent storage and its bounded rotation behavior so updater,
 service, boot, and verification records survive a reboot without unbounded disk
@@ -347,7 +360,7 @@ Verification checks:
 - firewalld service, default policy, private SSH allowance, and matching runtime
   and permanent state;
 - SELinux or AppArmor effective enforcement;
-- chrony synchronization and source health;
+- platform-native time-client health and effective clock synchronization;
 - persistent journal availability and auditd service health;
 - native security-update configuration and enabled timer;
 - package-manager consistency;
@@ -392,8 +405,8 @@ The implementation keeps four clear responsibilities:
    maintenance packages, native security-update configuration, and reboot-state
    detection. It no longer owns unrelated convenience or application packages.
 3. A repository security-baseline role owns the administrative account, sudo,
-   SSH policy input, firewalld, mandatory access control, chrony, journald, and
-   auditd.
+   SSH policy input, firewalld, mandatory access control, platform-native time
+   synchronization, journald, and auditd.
 4. A reusable verification task set observes effective state without mutation.
 
 `playbooks/os/provision.yml` composes these responsibilities in the lifecycle
@@ -419,8 +432,8 @@ Executable evidence includes:
   private-source SSH only;
 - native updater configuration, timer enablement, and reboot suppression inside
   containers;
-- chrony, journald, auditd, and platform MAC packages, configuration, and
-  guarded service decisions;
+- platform-native time synchronization, journald, auditd, and platform MAC
+  packages, configuration, and guarded service decisions;
 - minimum package presence and absence from the managed package set;
 - dependency pins and removal of replaced roles; and
 - scheduler-neutral full-maintenance playbook structure and sequential batch
@@ -489,8 +502,8 @@ Issue #13 is complete when:
    permanent state;
 6. SELinux is configured enforcing on Rocky and AppArmor enforcing on Debian,
    with container evidence limited to what the container can prove;
-7. chrony is enabled and effective synchronization is verifiable on both
-   platforms;
+7. `systemd-timesyncd` is enabled on Debian, chrony is enabled on Rocky, and
+   effective clock synchronization is verifiable on both platforms;
 8. persistent journald and vendor-default auditd retain local update, boot,
    service, and security failure evidence;
 9. Debian and Rocky install security updates daily through native tools and
