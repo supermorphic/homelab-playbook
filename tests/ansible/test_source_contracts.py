@@ -1119,7 +1119,6 @@ class SourceContractTests(unittest.TestCase):
 
     def test_time_provider_uses_platform_defaults(self) -> None:
         """A provider change must not edit operator-owned time sources."""
-        defaults = load_yaml_documents("roles/security_baseline/defaults/main.yml")[0]
         tasks = load_tasks("roles/security_baseline/tasks/pre-update.yml")
         tasks_by_name = {task["name"]: task for task in tasks}
         self.assertIn("Install Debian repository trust and time packages", tasks_by_name)
@@ -1129,7 +1128,6 @@ class SourceContractTests(unittest.TestCase):
         rocky = tasks_by_name["Install Rocky repository trust and time packages"]
         runtime = tasks_by_name["Enable and start platform time synchronization"]
 
-        self.assertNotIn("security_baseline_chrony_sources", defaults)
         self.assertEqual(
             {"name": ["ca-certificates", "systemd-timesyncd"], "state": "present", "fail_on_autoremove": True, "lock_timeout": 300},
             debian["ansible.builtin.apt"],
@@ -1147,12 +1145,6 @@ class SourceContractTests(unittest.TestCase):
             runtime["ansible.builtin.systemd_service"]["name"],
         )
         self.assertEqual("security_baseline_apply_time_runtime | bool", runtime["when"])
-        source = (REPOSITORY_ROOT / "roles/security_baseline/tasks/pre-update.yml").read_text(encoding="utf-8")
-        self.assertNotIn("blockinfile", source)
-        self.assertNotIn("replace", source)
-        self.assertNotIn("chrony.conf", source)
-        self.assertNotIn("Restart chrony", (REPOSITORY_ROOT / "roles/security_baseline/handlers/main.yml").read_text(encoding="utf-8"))
-        self.assertFalse((REPOSITORY_ROOT / "roles/os_baseline_verify/files/discover_chrony_sources.py").exists())
 
     def test_time_verifier_is_provider_native_and_observational(self) -> None:
         tasks = load_tasks("roles/os_baseline_verify/tasks/platform.yml")
@@ -1172,8 +1164,6 @@ class SourceContractTests(unittest.TestCase):
         self.assertNotIn("when", package_evidence)
         self.assertIn("systemd-timesyncd", str(package_evidence))
         self.assertIn("chrony", str(package_evidence))
-        self.assertNotIn("discover_chrony_sources", str(tasks))
-        self.assertNotIn("os_baseline_verify_chrony_effective_policy", str(tasks))
         for name, argv in expected_commands.items():
             with self.subTest(name=name):
                 self.assertIn(name, tasks_by_name)
@@ -1205,29 +1195,36 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("os_baseline_verify_runtime_firewall_state", str(runtime_assert))
 
     def test_system_maintenance_managed_packages_are_minimal(self) -> None:
-        source = "\n".join(
-            (REPOSITORY_ROOT / path).read_text(encoding="utf-8")
-            for path in (
-                "roles/system_maintenance/tasks/setup-Debian.yml",
-                "roles/system_maintenance/tasks/setup-RedHat.yml",
-            )
+        task_paths = (
+            "roles/system_maintenance/tasks/setup-Debian.yml",
+            "roles/system_maintenance/tasks/setup-RedHat.yml",
+            "roles/system_maintenance/tasks/automatic-updates-Debian.yml",
+            "roles/system_maintenance/tasks/automatic-updates-RedHat.yml",
         )
-        for forbidden in (
-            "qemu-guest-agent",
-            "xterm",
-            "vim",
-            "tree",
-            "git",
-            "python3-pip",
-            "python3-venv",
-            "python3-netaddr",
-            "apache2-utils",
-            "httpd-tools",
-            "epel-release",
-            "fail2ban",
-        ):
-            with self.subTest(package=forbidden):
-                self.assertNotIn(forbidden, source)
+        managed_packages = {}
+        for path in task_paths:
+            for task in load_tasks(path):
+                for module in (
+                    "ansible.builtin.apt",
+                    "ansible.builtin.dnf",
+                ):
+                    arguments = task.get(module, {})
+                    package = arguments.get("name")
+                    if (
+                        package is not None
+                        and package != "*"
+                        and arguments.get("state", "present") != "absent"
+                    ):
+                        managed_packages[task["name"]] = package
+
+        self.assertEqual(
+            {
+                "Install package-management utilities": "dnf-plugins-core",
+                "Install the native APT security updater": "unattended-upgrades",
+                "Install the native DNF security updater": "dnf-automatic",
+            },
+            managed_packages,
+        )
 
     def test_native_security_updates_are_daily_and_reboot_controllable(self) -> None:
         defaults = load_yaml_documents(

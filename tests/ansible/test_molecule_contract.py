@@ -199,12 +199,17 @@ class MoleculeScenarioContractTests(unittest.TestCase):
         )[0][0]
         role = converge["roles"][0]
         self.assertIs(role["system_maintenance_native_reboot_enabled"], False)
-        verify = (
-            REPOSITORY_ROOT
-            / "roles/system_maintenance/molecule/default/verify.yml"
-        ).read_text(encoding="utf-8").lower()
-        for retired in ("tree", "vim", "git", "xterm", "epel", "qemu-guest-agent"):
-            self.assertNotIn(retired, verify)
+        verify = load_yaml("verify.yml")[0]
+        tasks = {task["name"]: task for task in verify["tasks"]}
+        debian_policy = tasks["Assert Debian native security maintenance"][
+            "ansible.builtin.assert"
+        ]["that"]
+        rocky_policy = tasks["Assert Rocky native security maintenance"][
+            "ansible.builtin.assert"
+        ]["that"]
+        self.assertIn("'unattended-upgrades' in ansible_facts.packages", debian_policy)
+        self.assertIn("'dnf-automatic' in ansible_facts.packages", rocky_policy)
+        self.assertIn("'epel-release' not in ansible_facts.packages", rocky_policy)
 
     def test_containerfiles_use_maintained_bases_without_role_evidence_package(
         self,

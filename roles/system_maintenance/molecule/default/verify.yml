@@ -96,5 +96,5 @@
             system_maintenance_molecule_rocky_configuration.content |
             b64decode is regex('(?m)^reboot = never$')
           - >-
-            ('e' ~ 'pel-release') not in ansible_facts.packages
+            'epel-release' not in ansible_facts.packages
       when: inventory_hostname == 'rockylinux9'
