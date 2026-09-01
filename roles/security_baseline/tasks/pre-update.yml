@@ -1,4 +1,17 @@
 ---
+- name: Configure Rocky global DNF signature verification
+  community.general.ini_file:
+    path: /etc/dnf/dnf.conf
+    section: main
+    option: "{{ item }}"
+    value: "True"
+    mode: "0644"
+    no_extra_spaces: true
+  loop:
+    - gpgcheck
+    - localpkg_gpgcheck
+  when: ansible_os_family == 'RedHat'
+
 - name: Validate effective distribution repository trust
   ansible.builtin.script:
     cmd: validate_repository_trust.py "{{ ansible_os_family }}"
