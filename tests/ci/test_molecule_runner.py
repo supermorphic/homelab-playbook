@@ -5,6 +5,7 @@ import hashlib
 import gc
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -12,8 +13,10 @@ import threading
 import unittest
 import warnings
 
+import yaml
+
 from contextlib import redirect_stderr, redirect_stdout
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from types import ModuleType
 from unittest import mock
@@ -116,6 +119,182 @@ class RunnerCliTests(unittest.TestCase):
                 self.assertIn("usage:", result.stderr.lower())
                 self.assertIn("system_maintenance/default", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
+
+    def test_runner_registers_exact_scenarios_and_platforms(self) -> None:
+        scenario_type = getattr(runner_module, "Scenario", None)
+        scenarios = getattr(runner_module, "SCENARIOS", None)
+        if scenario_type is None or scenarios is None:
+            self.fail("runner must provide the immutable Scenario registry")
+
+        self.assertEqual(
+            ["selector", "role_name", "scenario_name", "platforms"],
+            [field.name for field in fields(scenario_type)],
+        )
+        self.assertTrue(scenario_type.__dataclass_params__.frozen)
+        self.assertEqual(
+            {
+                "system_maintenance/default",
+                "system_maintenance/baseline",
+            },
+            set(scenarios),
+        )
+        expected = {
+            "system_maintenance/default": {
+                "role_name": "system_maintenance",
+                "scenario_name": "default",
+                "groups": ["molecule"],
+                "platforms": [
+                    (
+                        "debian13",
+                        "docker.io/library/debian:13",
+                        "localhost/homelab-playbook-system-maintenance-debian13:local",
+                        "homelab-playbook-system-maintenance-debian13",
+                        "/usr/lib/systemd/systemd",
+                        "Containerfile.debian13",
+                    ),
+                    (
+                        "rockylinux9",
+                        "docker.io/rockylinux/rockylinux:9",
+                        "localhost/homelab-playbook-system-maintenance-rockylinux9:local",
+                        "homelab-playbook-system-maintenance-rockylinux9",
+                        "/usr/lib/systemd/systemd",
+                        "Containerfile.rockylinux9",
+                    ),
+                    (
+                        "archlinux",
+                        "docker.io/archlinux/archlinux:base",
+                        "localhost/homelab-playbook-system-maintenance-archlinux:local",
+                        "homelab-playbook-system-maintenance-archlinux",
+                        "/usr/lib/systemd/systemd",
+                        "Containerfile.archlinux",
+                    ),
+                ],
+            },
+            "system_maintenance/baseline": {
+                "role_name": "system_maintenance",
+                "scenario_name": "baseline",
+                "groups": ["servers"],
+                "platforms": [
+                    (
+                        "debian13",
+                        "docker.io/library/debian:13",
+                        "localhost/homelab-playbook-system-maintenance-baseline-debian13:local",
+                        "homelab-playbook-system-maintenance-baseline-debian13",
+                        "/usr/lib/systemd/systemd",
+                        "Containerfile.debian13",
+                    ),
+                    (
+                        "rockylinux9",
+                        "docker.io/rockylinux/rockylinux:9",
+                        "localhost/homelab-playbook-system-maintenance-baseline-rockylinux9:local",
+                        "homelab-playbook-system-maintenance-baseline-rockylinux9",
+                        "/usr/lib/systemd/systemd",
+                        "Containerfile.rockylinux9",
+                    ),
+                ],
+            },
+        }
+        for selector, contract in expected.items():
+            with self.subTest(selector=selector):
+                scenario = scenarios[selector]
+                self.assertEqual(selector, scenario.selector)
+                self.assertEqual(contract["role_name"], scenario.role_name)
+                self.assertEqual(contract["scenario_name"], scenario.scenario_name)
+                actual_platforms = [
+                    (
+                        platform.name,
+                        platform.base_image,
+                        platform.image,
+                        platform.container,
+                        platform.container_command,
+                        str(platform.containerfile),
+                    )
+                    for platform in scenario.platforms
+                ]
+                self.assertEqual(contract["platforms"], actual_platforms)
+
+                molecule_path = (
+                    REPOSITORY_ROOT
+                    / "roles"
+                    / contract["role_name"]
+                    / "molecule"
+                    / contract["scenario_name"]
+                    / "molecule.yml"
+                )
+                configuration = yaml.safe_load(
+                    molecule_path.read_text(encoding="utf-8")
+                )
+                source_platforms = configuration["platforms"]
+                expected_by_name = {
+                    platform[0]: platform for platform in contract["platforms"]
+                }
+                self.assertEqual(
+                    contract["platforms"],
+                    [
+                        (
+                            platform["name"],
+                            (
+                                molecule_path.parent
+                                / expected_by_name[platform["name"]][5]
+                            )
+                            .read_text(encoding="utf-8")
+                            .splitlines()[0]
+                            .removeprefix("FROM "),
+                            platform["image"],
+                            platform["container_name"],
+                            platform["container_command"],
+                            expected_by_name[platform["name"]][5],
+                        )
+                        for platform in source_platforms
+                    ],
+                )
+                for platform in source_platforms:
+                    self.assertEqual(contract["groups"], platform["groups"])
+                    self.assertEqual(
+                        {
+                            "io.supermorphic.homelab-playbook.repository": "homelab-playbook",
+                            "io.supermorphic.homelab-playbook.scenario": selector,
+                            "io.supermorphic.homelab-playbook.platform": platform["name"],
+                        },
+                        platform["labels"],
+                    )
+
+    def test_scenario_registry_rejects_mapping_mutation(self) -> None:
+        scenarios = runner_module.SCENARIOS
+        with self.assertRaises(TypeError):
+            scenarios["system_maintenance/redirected"] = scenarios[
+                "system_maintenance/default"
+            ]
+
+    def test_cli_accepts_each_registered_selector(self) -> None:
+        parse_selector = getattr(runner_module, "parse_selector", None)
+        if parse_selector is None:
+            self.fail("runner must provide parse_selector")
+
+        for selector in (
+            "system_maintenance/default",
+            "system_maintenance/baseline",
+        ):
+            with self.subTest(selector=selector):
+                self.assertEqual(selector, parse_selector([selector]))
+
+    def test_baseline_registry_drives_selection_and_ownership(self) -> None:
+        scenarios = getattr(runner_module, "SCENARIOS", None)
+        if scenarios is None:
+            self.fail("runner must provide the Scenario registry")
+        scenario = scenarios["system_maintenance/baseline"]
+
+        selected = runner_module.select_platforms({}, "amd64", scenario)
+        labels = runner_module.ownership_labels(selected[0], scenario)
+
+        self.assertEqual(
+            ["debian13", "rockylinux9"],
+            [platform.name for platform in selected],
+        )
+        self.assertEqual(
+            "system_maintenance/baseline",
+            labels["io.supermorphic.homelab-playbook.scenario"],
+        )
 
     def test_expected_preflight_failure_exits_one_without_traceback(self) -> None:
         function = getattr(runner_module, "run", None)
@@ -393,6 +572,7 @@ class ContainerOwnershipTests(unittest.TestCase):
             base_image="docker.io/library/debian:13",
             image="localhost/homelab-playbook-system-maintenance-debian13:local",
             container="homelab-playbook-system-maintenance-debian13",
+            container_command="/usr/lib/systemd/systemd",
             containerfile=Path("Containerfile.debian13"),
         )
 
@@ -516,6 +696,7 @@ class PlatformWorkerTests(unittest.TestCase):
             base_image="docker.io/library/debian:13",
             image="localhost/homelab-playbook-system-maintenance-debian13:local",
             container="homelab-playbook-system-maintenance-debian13",
+            container_command="/usr/lib/systemd/systemd",
             containerfile=Path("Containerfile.debian13"),
         )
         self.host_plan = runner_module.HostPlan(
@@ -670,7 +851,12 @@ class PlatformWorkerTests(unittest.TestCase):
             molecule_call[2]["MOLECULE_EPHEMERAL_DIRECTORY"],
         )
         self.assertEqual(
-            str(REPOSITORY_ROOT / "roles"),
+            os.pathsep.join(
+                (
+                    str(REPOSITORY_ROOT / ".ansible/roles"),
+                    str(REPOSITORY_ROOT / "roles"),
+                )
+            ),
             molecule_call[2].get("ANSIBLE_ROLES_PATH"),
         )
         self.assertEqual(
@@ -680,6 +866,10 @@ class PlatformWorkerTests(unittest.TestCase):
         self.assertEqual(
             "debian13",
             molecule_call[2].get("HOMELAB_MOLECULE_PLATFORM"),
+        )
+        self.assertEqual(
+            "system_maintenance/default",
+            molecule_call[2].get("HOMELAB_MOLECULE_SCENARIO_SELECTOR"),
         )
 
     def test_worker_cleans_up_after_each_primary_stage_failure(self) -> None:

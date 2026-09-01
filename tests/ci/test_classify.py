@@ -158,8 +158,14 @@ class PathClassificationTests(unittest.TestCase):
             "roles/enable_cgroup/tasks/main.yml": "ansible",
             "roles/kube_vip/tasks/main.yml": "ansible",
             "roles/prepare_cifs_storage/tasks/main.yml": "ansible",
+            "roles/os_bootstrap/tasks/main.yml": "molecule",
+            "roles/os_baseline_verify/tasks/main.yml": "molecule",
+            "roles/security_baseline/tasks/main.yml": "molecule",
             "roles/system_maintenance/tasks/main.yml": "molecule",
             "roles/system_maintenance/molecule/default/molecule.yml": "molecule",
+            "roles/system_maintenance/molecule/baseline/molecule.yml": "molecule",
+            "playbooks/os/provision.yml": "molecule",
+            "playbooks/os/maintain.yml": "molecule",
             "roles/update_pihole/tasks/main.yml": "ansible",
         }
 
@@ -734,9 +740,13 @@ class ChangedRunnerTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("Selected validation depth: full", result.stdout)
         self.assertIn("Escalated validation depth: fast -> full", result.stdout)
-        self.assertEqual(3, result.stdout.count("Would run:"))
+        self.assertEqual(4, result.stdout.count("Would run:"))
         self.assertIn(
             "Would run: mise run test:molecule -- system_maintenance/default",
+            result.stdout,
+        )
+        self.assertIn(
+            "Would run: mise run test:molecule -- system_maintenance/baseline",
             result.stdout,
         )
 
@@ -762,11 +772,15 @@ class ChangedRunnerTests(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("Selected validation depth: molecule", result.stdout)
-        self.assertEqual(3, result.stdout.count("Would run:"))
+        self.assertEqual(4, result.stdout.count("Would run:"))
         self.assertIn("Would run: mise run validate:fast", result.stdout)
         self.assertIn("Would run: mise run validate:ansible", result.stdout)
         self.assertIn(
             "Would run: mise run test:molecule -- system_maintenance/default",
+            result.stdout,
+        )
+        self.assertIn(
+            "Would run: mise run test:molecule -- system_maintenance/baseline",
             result.stdout,
         )
 

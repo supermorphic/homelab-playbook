@@ -63,7 +63,8 @@ def os_baseline_verify_firewall_state_errors(state: Mapping[str, object], desire
     if state.get("forward") is not False: errors.append("forward")
     if state.get("masquerade") is not False: errors.append("masquerade")
     if state.get("interface_zone") != "homelab": errors.append("interface-zone")
-    if sorted(state.get("interfaces", [])) != [interface]: errors.append("interfaces")
+    expected_interfaces = [interface] if interface else []
+    if sorted(state.get("interfaces", [])) != expected_interfaces: errors.append("interfaces")
     for field in EMPTY_FIREWALL_FIELDS:
         if state.get(field, []): errors.append(field)
     if sorted(state.get("rich_rules", [])) != sorted(desired): errors.append("rich-rules")

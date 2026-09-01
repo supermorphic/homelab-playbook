@@ -12,6 +12,11 @@
          | list }}
     system_maintenance_molecule_platform: >-
       {{ system_maintenance_molecule_platforms | first }}
+    system_maintenance_molecule_scenario_selector: >-
+      {{ lookup(
+           'ansible.builtin.env',
+           'HOMELAB_MOLECULE_SCENARIO_SELECTOR'
+         ) }}
   tasks:
     - name: Assert Molecule selected exactly one platform
       ansible.builtin.assert:
@@ -37,7 +42,7 @@
             system_maintenance_molecule_cleanup_container.containers | length == 0 or
             system_maintenance_molecule_cleanup_container.containers[0].Config.Labels[
               'io.supermorphic.homelab-playbook.scenario'
-            ] | default('') == 'system_maintenance/default'
+            ] | default('') == system_maintenance_molecule_scenario_selector
           - >-
             system_maintenance_molecule_cleanup_container.containers | length == 0 or
             system_maintenance_molecule_cleanup_container.containers[0].Config.Labels[

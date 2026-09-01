@@ -491,7 +491,7 @@ class WorkflowContractTests(unittest.TestCase):
 
         self.assertTrue(workflow_observability_errors(mutated_workflow))
 
-    def test_molecule_runs_an_exact_bounded_two_platform_matrix(self) -> None:
+    def test_molecule_runs_an_exact_bounded_four_job_matrix(self) -> None:
         self.assertIn("needs: classify", self.molecule)
         self.assertEqual(
             ["needs.classify.outputs.run_molecule == 'true'"],
@@ -503,11 +503,17 @@ class WorkflowContractTests(unittest.TestCase):
             [
                 "    strategy:",
                 "      fail-fast: false",
-                "      max-parallel: 2",
+                "      max-parallel: 4",
                 "      matrix:",
-                "        platform:",
-                "          - debian13",
-                "          - rockylinux9",
+                "        include:",
+                "          - selector: system_maintenance/default",
+                "            platform: debian13",
+                "          - selector: system_maintenance/default",
+                "            platform: rockylinux9",
+                "          - selector: system_maintenance/baseline",
+                "            platform: debian13",
+                "          - selector: system_maintenance/baseline",
+                "            platform: rockylinux9",
             ]
         )
         self.assertIn(expected_strategy, self.molecule)
@@ -518,7 +524,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(
             1,
             self.molecule.count(
-                "run: mise run test:molecule -- system_maintenance/default"
+                "run: mise run test:molecule -- ${{ matrix.selector }}"
             ),
         )
         lowered = self.molecule.lower()

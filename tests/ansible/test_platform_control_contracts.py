@@ -761,6 +761,52 @@ SystemMaxUse=128M
             names.index("Queue journald restart after validated configuration change"),
         )
 
+    def test_persistent_journal_directory_matches_vendor_tmpfiles_policy(self) -> None:
+        tasks = load_tasks("roles/security_baseline/tasks/logging.yml")
+        directory = next(
+            task["ansible.builtin.file"]
+            for task in tasks
+            if task.get("ansible.builtin.file", {}).get("path") == "/var/log/journal"
+        )
+        self.assertEqual("directory", directory["state"])
+        self.assertEqual("root", directory["owner"])
+        self.assertEqual("systemd-journal", directory["group"])
+        self.assertEqual("2755", directory["mode"])
+
+    def test_audit_package_uses_exact_supported_platform_mapping(self) -> None:
+        tasks = load_tasks("roles/security_baseline/tasks/logging.yml")
+        audit = next(
+            task
+            for task in tasks
+            if task["name"] == "Install audit service with vendor rules"
+        )
+        self.assertEqual(
+            {"Debian": "auditd", "RedHat": "audit"},
+            audit["vars"]["security_baseline_audit_packages"],
+        )
+        validate, install = audit["block"]
+        self.assertIn(
+            "ansible_os_family in security_baseline_audit_packages",
+            validate["ansible.builtin.assert"]["that"],
+        )
+        self.assertEqual(
+            "{{ security_baseline_audit_packages[ansible_os_family] }}",
+            install["ansible.builtin.package"]["name"],
+        )
+
+    def test_rocky_selinux_install_owns_targeted_policy_configuration(self) -> None:
+        tasks = load_tasks("roles/security_baseline/tasks/mac.yml")
+        install = next(
+            task
+            for task in tasks
+            if task["name"] == "Install Rocky SELinux packages"
+        )
+        self.assertEqual(
+            ["policycoreutils", "selinux-policy-targeted"],
+            install["ansible.builtin.package"]["name"],
+        )
+        self.assertEqual("ansible_os_family == 'RedHat'", install["when"])
+
 
 if __name__ == "__main__":
     unittest.main()

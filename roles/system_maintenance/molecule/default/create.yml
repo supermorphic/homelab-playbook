@@ -12,11 +12,28 @@
          | list }}
     system_maintenance_molecule_platform: >-
       {{ system_maintenance_molecule_platforms | first }}
+    system_maintenance_molecule_scenario_selector: >-
+      {{ lookup(
+           'ansible.builtin.env',
+           'HOMELAB_MOLECULE_SCENARIO_SELECTOR'
+         ) }}
   tasks:
     - name: Assert Molecule selected exactly one platform
       ansible.builtin.assert:
         that:
           - system_maintenance_molecule_platforms | length == 1
+          - >-
+            system_maintenance_molecule_platform.labels[
+              'io.supermorphic.homelab-playbook.repository'
+            ] == 'homelab-playbook'
+          - >-
+            system_maintenance_molecule_platform.labels[
+              'io.supermorphic.homelab-playbook.scenario'
+            ] == system_maintenance_molecule_scenario_selector
+          - >-
+            system_maintenance_molecule_platform.labels[
+              'io.supermorphic.homelab-playbook.platform'
+            ] == system_maintenance_molecule_platform.name
         fail_msg: Molecule must select exactly one platform per worker
 
     - name: Inspect the exact test container name before creation
@@ -37,7 +54,7 @@
             system_maintenance_existing_container.containers | length == 0 or
             system_maintenance_existing_container.containers[0].Config.Labels[
               'io.supermorphic.homelab-playbook.scenario'
-            ] | default('') == 'system_maintenance/default'
+            ] | default('') == system_maintenance_molecule_scenario_selector
           - >-
             system_maintenance_existing_container.containers | length == 0 or
             system_maintenance_existing_container.containers[0].Config.Labels[
@@ -108,6 +125,7 @@
           - instance: "{{ system_maintenance_molecule_platform.name }}"
             address: "{{ system_maintenance_molecule_platform.container_name }}"
             connection: containers.podman.podman
+            user: "{{ system_maintenance_molecule_platform.user | default('root') }}"
 
     - name: Write Molecule instance configuration
       ansible.builtin.copy:

@@ -1,0 +1,3 @@
+---
+- name: Reuse the registered Podman cleanup lifecycle
+  ansible.builtin.import_playbook: ../default/cleanup.yml

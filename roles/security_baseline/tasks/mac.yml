@@ -1,7 +1,9 @@
 ---
 - name: Install Rocky SELinux packages
   ansible.builtin.package:
-    name: policycoreutils
+    name:
+      - policycoreutils
+      - selinux-policy-targeted
     state: present
   when: ansible_os_family == 'RedHat'
 

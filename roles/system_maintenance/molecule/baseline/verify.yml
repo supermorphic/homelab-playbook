@@ -1,0 +1,310 @@
+---
+- name: Independently verify the complete OS baseline
+  hosts: servers
+  gather_facts: true
+  become: true
+  vars:
+    system_maintenance_molecule_baseline_expected_authorized_key: >-
+      {{ lookup(
+           'ansible.builtin.file',
+           molecule_ephemeral_directory ~ '/controller-key/id_ed25519.pub'
+         ) | trim }}
+    system_maintenance_molecule_baseline_minimum_packages:
+      Debian:
+        - apparmor
+        - apparmor-profiles
+        - apparmor-utils
+        - auditd
+        - ca-certificates
+        - firewalld
+        - openssh-server
+        - python3
+        - sudo
+        - systemd-timesyncd
+        - unattended-upgrades
+      RedHat:
+        - audit
+        - ca-certificates
+        - chrony
+        - dnf-automatic
+        - firewalld
+        - openssh-server
+        - policycoreutils
+        - python3
+        - selinux-policy-targeted
+        - sudo
+    system_maintenance_molecule_baseline_recurring_full_update_artifacts:
+      - /etc/cron.d/homelab-full-update
+      - /etc/systemd/system/homelab-full-update.service
+      - /etc/systemd/system/homelab-full-update.timer
+  tasks:
+    - name: Gather independently observable package state
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Read the ansible account
+      ansible.builtin.command:
+        argv: [getent, passwd, ansible]
+      register: system_maintenance_molecule_baseline_ansible_passwd
+      changed_when: false
+
+    - name: Read the locked ansible password record
+      ansible.builtin.command:
+        argv: [getent, shadow, ansible]
+      register: system_maintenance_molecule_baseline_ansible_shadow
+      changed_when: false
+      no_log: true
+
+    - name: Read authoritative authorized_keys
+      ansible.builtin.slurp:
+        src: /home/ansible/.ssh/authorized_keys
+      register: system_maintenance_molecule_baseline_authorized_keys
+      no_log: true
+
+    - name: Read the repository-owned sudo policy
+      ansible.builtin.stat:
+        path: /etc/sudoers.d/90-ansible
+      register: system_maintenance_molecule_baseline_sudo_policy
+
+    - name: Read the repository-owned sudo policy content
+      ansible.builtin.slurp:
+        src: /etc/sudoers.d/90-ansible
+      register: system_maintenance_molecule_baseline_sudo_policy_content
+      no_log: true
+
+    - name: Validate the repository-owned sudo policy syntax
+      ansible.builtin.command:
+        argv: [/usr/sbin/visudo, -cf, /etc/sudoers.d/90-ansible]
+      changed_when: false
+
+    - name: Prove installer-independent passwordless sudo
+      become: true
+      become_user: ansible
+      ansible.builtin.command:
+        argv: [sudo, -n, "true"]
+      changed_when: false
+
+    - name: Verify account, key, and sudo file state
+      ansible.builtin.assert:
+        that:
+          - system_maintenance_molecule_baseline_ansible_passwd.stdout.split(':')[6] == '/bin/bash'
+          - system_maintenance_molecule_baseline_ansible_shadow.stdout.split(':')[1] is match('^[!*]')
+          - system_maintenance_molecule_baseline_authorized_keys.content | b64decode | trim == system_maintenance_molecule_baseline_expected_authorized_key
+          - system_maintenance_molecule_baseline_sudo_policy.stat.pw_name == 'root'
+          - system_maintenance_molecule_baseline_sudo_policy.stat.gr_name == 'root'
+          - system_maintenance_molecule_baseline_sudo_policy.stat.mode == '0440'
+          - >-
+            system_maintenance_molecule_baseline_sudo_policy_content.content
+            | b64decode | trim | split('\n') ==
+            ['# Ansible managed', 'ansible ALL=(ALL:ALL) NOPASSWD: ALL']
+        fail_msg: The administrative account, key, or sudo policy is incorrect
+      no_log: true
+
+    - name: Check OpenSSH syntax with sshd -t
+      ansible.builtin.command:
+        cmd: /usr/sbin/sshd -t
+      changed_when: false
+
+    - name: Read effective OpenSSH policy
+      ansible.builtin.command:
+        argv: [/usr/sbin/sshd, -T]
+      register: system_maintenance_molecule_baseline_sshd_effective
+      changed_when: false
+
+    - name: Verify effective OpenSSH policy
+      ansible.builtin.assert:
+        that:
+          - "'allowusers ansible' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
+          - "'pubkeyauthentication yes' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
+          - "'passwordauthentication no' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
+          - "'kbdinteractiveauthentication no' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
+          - "'permitrootlogin no' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
+          - "'allowagentforwarding no' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
+          - "'allowtcpforwarding no' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
+          - "'x11forwarding no' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
+          - "'permittunnel no' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
+
+    - name: Read permanent firewalld default configuration
+      ansible.builtin.slurp:
+        src: /etc/firewalld/firewalld.conf
+      register: system_maintenance_molecule_baseline_firewalld_configuration
+      no_log: true
+
+    - name: Read exact permanent homelab firewall state
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/firewall-offline-cmd
+          - --zone=homelab
+          - "{{ item }}"
+      loop:
+        - --list-all
+        - --list-interfaces
+        - --list-sources
+        - --list-services
+        - --list-ports
+        - --list-protocols
+        - --list-source-ports
+        - --list-forward-ports
+        - --list-icmp-blocks
+        - --list-rich-rules
+        - --query-forward
+        - --query-masquerade
+      register: system_maintenance_molecule_baseline_permanent_firewall
+      changed_when: false
+      failed_when: system_maintenance_molecule_baseline_permanent_firewall.rc not in [0, 1]
+      no_log: true
+
+    - name: Read permanent direct firewall openings
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/firewall-offline-cmd
+          - --direct
+          - "{{ item }}"
+      loop:
+        - --get-all-chains
+        - --get-all-rules
+        - --get-all-passthroughs
+      register: system_maintenance_molecule_baseline_direct_firewall
+      changed_when: false
+      no_log: true
+
+    - name: Verify permanent private-management firewall policy
+      vars:
+        system_maintenance_molecule_baseline_firewall_problems: >-
+          {{ system_maintenance_molecule_baseline_firewalld_configuration.content
+             | b64decode
+             | system_maintenance_molecule_baseline_firewall_errors(
+                 system_maintenance_molecule_baseline_permanent_firewall.results,
+                 system_maintenance_molecule_baseline_direct_firewall.results) }}
+      ansible.builtin.assert:
+        that:
+          - system_maintenance_molecule_baseline_firewall_problems | length == 0
+        fail_msg: Permanent homelab firewall policy is not exact
+      no_log: true
+
+    - name: Read Debian AppArmor configuration evidence
+      ansible.builtin.slurp:
+        src: /etc/apparmor/parser.conf
+      register: system_maintenance_molecule_baseline_apparmor_configuration
+      when: ansible_os_family == 'Debian'
+
+    - name: Read Rocky SELinux configuration evidence
+      ansible.builtin.slurp:
+        src: /etc/selinux/config
+      register: system_maintenance_molecule_baseline_selinux_configuration
+      when: ansible_os_family == 'RedHat'
+
+    - name: Verify platform-native MAC and time provider packages
+      ansible.builtin.assert:
+        that:
+          - >-
+            ('apparmor' in ansible_facts.packages and
+             'systemd-timesyncd' in ansible_facts.packages and
+             system_maintenance_molecule_baseline_apparmor_configuration.content | b64decode | length > 0)
+            if ansible_os_family == 'Debian'
+            else
+            ('selinux-policy-targeted' in ansible_facts.packages and
+             'chrony' in ansible_facts.packages and
+             system_maintenance_molecule_baseline_selinux_configuration.content | b64decode is search('SELINUX=enforcing'))
+
+    - name: Read effective journald configuration
+      ansible.builtin.command:
+        argv: [/usr/bin/systemd-analyze, cat-config, systemd/journald.conf]
+      register: system_maintenance_molecule_baseline_journald_configuration
+      changed_when: false
+
+    - name: Read auditd configuration
+      ansible.builtin.slurp:
+        src: /etc/audit/auditd.conf
+      register: system_maintenance_molecule_baseline_auditd_configuration
+
+    - name: Verify persistent bounded journald and auditd evidence
+      ansible.builtin.assert:
+        that:
+          - "'Storage=persistent' in system_maintenance_molecule_baseline_journald_configuration.stdout"
+          - "'SystemMaxUse=512M' in system_maintenance_molecule_baseline_journald_configuration.stdout"
+          - "'SystemKeepFree=1G' in system_maintenance_molecule_baseline_journald_configuration.stdout"
+          - system_maintenance_molecule_baseline_auditd_configuration.content | b64decode | length > 0
+          - "'auditd' in ansible_facts.packages or 'audit' in ansible_facts.packages"
+
+    - name: Read Debian unattended-upgrades policy
+      ansible.builtin.command:
+        argv: [/usr/bin/apt-config, dump]
+      register: system_maintenance_molecule_baseline_debian_updater
+      changed_when: false
+      when: ansible_os_family == 'Debian'
+
+    - name: Read Rocky dnf-automatic policy
+      ansible.builtin.slurp:
+        src: /etc/dnf/automatic.conf
+      register: system_maintenance_molecule_baseline_rocky_updater
+      when: ansible_os_family == 'RedHat'
+
+    - name: Read native security updater timer configuration
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/systemd-analyze
+          - cat-config
+          - >-
+            {{ 'systemd/system/apt-daily-upgrade.timer'
+               if ansible_os_family == 'Debian'
+               else 'systemd/system/dnf-automatic.timer' }}
+      register: system_maintenance_molecule_baseline_updater_timer
+      changed_when: false
+
+    - name: Read native security updater timer enablement
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/systemctl
+          - is-enabled
+          - >-
+            {{ 'apt-daily-upgrade.timer'
+               if ansible_os_family == 'Debian'
+               else 'dnf-automatic.timer' }}
+      register: system_maintenance_molecule_baseline_updater_timer_enabled
+      changed_when: false
+
+    - name: Verify native security updater policy and timer
+      vars:
+        system_maintenance_molecule_baseline_updater_problems: >-
+          {{ (system_maintenance_molecule_baseline_debian_updater.stdout
+              | system_maintenance_molecule_baseline_debian_updater_errors(
+                  system_maintenance_molecule_baseline_updater_timer.stdout,
+                  system_maintenance_molecule_baseline_updater_timer_enabled.stdout))
+             if ansible_os_family == 'Debian'
+             else
+             (system_maintenance_molecule_baseline_rocky_updater.content
+              | b64decode
+              | system_maintenance_molecule_baseline_rocky_updater_errors(
+                  system_maintenance_molecule_baseline_updater_timer.stdout,
+                  system_maintenance_molecule_baseline_updater_timer_enabled.stdout)) }}
+      ansible.builtin.assert:
+        that:
+          - system_maintenance_molecule_baseline_updater_problems | length == 0
+
+    - name: Verify the minimum package set and excluded ownership
+      ansible.builtin.assert:
+        that:
+          - system_maintenance_molecule_baseline_minimum_packages[ansible_os_family] | difference(ansible_facts.packages.keys()) | length == 0
+          - "'epel-release' not in ansible_facts.packages"
+          - "'fail2ban' not in ansible_facts.packages"
+
+    - name: Inspect recurring full update timer and cron artifacts
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ system_maintenance_molecule_baseline_recurring_full_update_artifacts }}"
+      register: system_maintenance_molecule_baseline_full_update_artifacts
+
+    - name: Verify no recurring full update artifacts exist
+      ansible.builtin.assert:
+        that:
+          - system_maintenance_molecule_baseline_full_update_artifacts.results | selectattr('stat.exists') | list | length == 0
+        fail_msg: A recurring host-local full update artifact exists
+
+    - name: State the container evidence boundary
+      ansible.builtin.debug:
+        msg: >-
+          Container evidence does not prove runtime clock synchronization,
+          firewall reachability, kernel enforcement, audit-kernel attachment,
+          or physical reboot behavior.
+      changed_when: false

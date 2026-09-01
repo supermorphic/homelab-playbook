@@ -15,7 +15,7 @@
     path: /var/log/journal
     state: directory
     owner: root
-    group: root
+    group: systemd-journal
     mode: "2755"
 
 - name: Create journald drop-in directory
@@ -66,10 +66,23 @@
   changed_when: security_baseline_journald_config.changed
   notify: Restart journald
 
-- name: Install auditd with vendor rules
-  ansible.builtin.package:
-    name: auditd
-    state: present
+- name: Install audit service with vendor rules
+  vars:
+    security_baseline_audit_packages:
+      Debian: auditd
+      RedHat: audit
+  block:
+    - name: Validate audit package platform support
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family in security_baseline_audit_packages
+        fail_msg: >-
+          Unsupported audit package platform: {{ ansible_os_family }}
+
+    - name: Install platform audit package
+      ansible.builtin.package:
+        name: "{{ security_baseline_audit_packages[ansible_os_family] }}"
+        state: present
 
 - name: Enable and start auditd with vendor rules
   ansible.builtin.systemd_service:

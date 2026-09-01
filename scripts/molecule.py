@@ -20,10 +20,8 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Callable, Iterator, Protocol
-
-
-SELECTOR = "system_maintenance/default"
 
 
 @dataclass(frozen=True)
@@ -32,15 +30,17 @@ class Platform:
     base_image: str
     image: str
     container: str
+    container_command: str
     containerfile: Path
 
 
-PLATFORMS = (
+DEFAULT_PLATFORMS = (
     Platform(
         name="debian13",
         base_image="docker.io/library/debian:13",
         image="localhost/homelab-playbook-system-maintenance-debian13:local",
         container="homelab-playbook-system-maintenance-debian13",
+        container_command="/usr/lib/systemd/systemd",
         containerfile=Path("Containerfile.debian13"),
     ),
     Platform(
@@ -48,9 +48,57 @@ PLATFORMS = (
         base_image="docker.io/rockylinux/rockylinux:9",
         image="localhost/homelab-playbook-system-maintenance-rockylinux9:local",
         container="homelab-playbook-system-maintenance-rockylinux9",
+        container_command="/usr/lib/systemd/systemd",
         containerfile=Path("Containerfile.rockylinux9"),
     ),
 )
+
+BASELINE_PLATFORMS = (
+    Platform(
+        name="debian13",
+        base_image="docker.io/library/debian:13",
+        image="localhost/homelab-playbook-system-maintenance-baseline-debian13:local",
+        container="homelab-playbook-system-maintenance-baseline-debian13",
+        container_command="/usr/lib/systemd/systemd",
+        containerfile=Path("Containerfile.debian13"),
+    ),
+    Platform(
+        name="rockylinux9",
+        base_image="docker.io/rockylinux/rockylinux:9",
+        image="localhost/homelab-playbook-system-maintenance-baseline-rockylinux9:local",
+        container="homelab-playbook-system-maintenance-baseline-rockylinux9",
+        container_command="/usr/lib/systemd/systemd",
+        containerfile=Path("Containerfile.rockylinux9"),
+    ),
+)
+
+
+@dataclass(frozen=True)
+class Scenario:
+    selector: str
+    role_name: str
+    scenario_name: str
+    platforms: tuple[Platform, ...]
+
+
+SCENARIOS: Mapping[str, Scenario] = MappingProxyType({
+    "system_maintenance/default": Scenario(
+        selector="system_maintenance/default",
+        role_name="system_maintenance",
+        scenario_name="default",
+        platforms=DEFAULT_PLATFORMS,
+    ),
+    "system_maintenance/baseline": Scenario(
+        selector="system_maintenance/baseline",
+        role_name="system_maintenance",
+        scenario_name="baseline",
+        platforms=BASELINE_PLATFORMS,
+    ),
+})
+
+SELECTOR = "system_maintenance/default"
+PLATFORMS = DEFAULT_PLATFORMS
+DEFAULT_SCENARIO = SCENARIOS[SELECTOR]
 
 
 @dataclass(frozen=True)
@@ -189,13 +237,14 @@ class PlatformResult:
 
 
 def _parser() -> argparse.ArgumentParser:
+    selectors = ", ".join(SCENARIOS)
     parser = argparse.ArgumentParser(
         description="Test system_maintenance in rootless Podman containers",
     )
     parser.add_argument(
         "selector",
         metavar=SELECTOR,
-        help=f"exact role/scenario selector; supported value: {SELECTOR}",
+        help=f"exact role/scenario selector; supported values: {selectors}",
     )
     return parser
 
@@ -203,8 +252,11 @@ def _parser() -> argparse.ArgumentParser:
 def parse_selector(arguments: Sequence[str]) -> str:
     parser = _parser()
     parsed = parser.parse_args(arguments)
-    if parsed.selector != SELECTOR:
-        parser.error(f"unsupported selector {parsed.selector!r}; expected {SELECTOR}")
+    if parsed.selector not in SCENARIOS:
+        parser.error(
+            f"unsupported selector {parsed.selector!r}; expected one of: "
+            f"{', '.join(SCENARIOS)}"
+        )
     return parsed.selector
 
 
@@ -338,10 +390,13 @@ def invocation_lock(repo_root: Path, runner: CommandRunner) -> Iterator[None]:
         lock_file.close()
 
 
-def ownership_labels(platform_definition: Platform) -> dict[str, str]:
+def ownership_labels(
+    platform_definition: Platform,
+    scenario: Scenario = DEFAULT_SCENARIO,
+) -> dict[str, str]:
     return {
         "io.supermorphic.homelab-playbook.repository": "homelab-playbook",
-        "io.supermorphic.homelab-playbook.scenario": SELECTOR,
+        "io.supermorphic.homelab-playbook.scenario": scenario.selector,
         "io.supermorphic.homelab-playbook.platform": platform_definition.name,
     }
 
@@ -350,6 +405,7 @@ def remove_owned_container(
     repo_root: Path,
     runner: CommandRunner,
     platform_definition: Platform,
+    scenario: Scenario = DEFAULT_SCENARIO,
 ) -> bool:
     exists_result = runner.capture(
         ["podman", "container", "exists", platform_definition.container],
@@ -385,13 +441,13 @@ def remove_owned_container(
             f"could not inspect container labels for {platform_definition.container}"
         ) from error
 
-    expected_labels = ownership_labels(platform_definition)
+    expected_labels = ownership_labels(platform_definition, scenario)
     if not isinstance(labels, dict) or any(
         labels.get(key) != value for key, value in expected_labels.items()
     ):
         raise WorkerError(
             f"container name collision: {platform_definition.container} is not "
-            f"owned by {SELECTOR}/{platform_definition.name}"
+            f"owned by {scenario.selector}/{platform_definition.name}"
         )
 
     remove_result = runner.capture(
@@ -441,6 +497,7 @@ def run_platform(
     runner: CommandRunner,
     invocation_id: str,
     clock=time.monotonic,
+    scenario: Scenario = DEFAULT_SCENARIO,
 ) -> PlatformResult:
     platform_started = clock()
     pull_seconds = 0.0
@@ -455,13 +512,13 @@ def run_platform(
         platform_definition.name
     ]
     scenario_directory = (
-        repo_root / "roles" / "system_maintenance" / "molecule" / "default"
+        repo_root / "roles" / scenario.role_name / "molecule" / scenario.scenario_name
     )
-    role_directory = repo_root / "roles" / "system_maintenance"
+    role_directory = repo_root / "roles" / scenario.role_name
     line_prefix = f"[{platform_definition.name}]"
 
     try:
-        remove_owned_container(repo_root, runner, platform_definition)
+        remove_owned_container(repo_root, runner, platform_definition, scenario)
 
         pull_started = clock()
         pull_result = runner.stream(
@@ -537,19 +594,27 @@ def run_platform(
             / invocation_id
             / platform_definition.name
         )
-        molecule_environment["ANSIBLE_ROLES_PATH"] = str(repo_root / "roles")
+        molecule_environment["ANSIBLE_ROLES_PATH"] = os.pathsep.join(
+            (
+                str(repo_root / ".ansible" / "roles"),
+                str(repo_root / "roles"),
+            )
+        )
         molecule_environment["ANSIBLE_COLLECTIONS_PATH"] = str(
             repo_root / ".ansible" / "collections"
         )
         molecule_environment["HOMELAB_MOLECULE_PLATFORM"] = (
             platform_definition.name
         )
+        molecule_environment["HOMELAB_MOLECULE_SCENARIO_SELECTOR"] = (
+            scenario.selector
+        )
         molecule_result = runner.stream(
             [
                 "molecule",
                 "test",
                 "--scenario-name",
-                "default",
+                scenario.scenario_name,
                 "--platform-name",
                 platform_definition.name,
                 "--no-report",
@@ -574,7 +639,7 @@ def run_platform(
     finally:
         cleanup_started = clock()
         try:
-            remove_owned_container(repo_root, runner, platform_definition)
+            remove_owned_container(repo_root, runner, platform_definition, scenario)
         except WorkerError as cleanup_error:
             primary = f"{status}: {message}"
             status = "cleanup failure"
@@ -598,13 +663,14 @@ def run_platform(
 def select_platforms(
     environment: Mapping[str, str],
     host_architecture: str,
+    scenario: Scenario = DEFAULT_SCENARIO,
 ) -> tuple[Platform, ...]:
     selected_name = environment.get("HOMELAB_MOLECULE_PLATFORM")
     if not selected_name:
-        return PLATFORMS
+        return scenario.platforms
     selected = tuple(
         platform_definition
-        for platform_definition in PLATFORMS
+        for platform_definition in scenario.platforms
         if platform_definition.name == selected_name
     )
     if not selected:
@@ -624,10 +690,13 @@ def run_platforms(
         return [future.result() for future in futures]
 
 
-def _platform_by_name(name: str) -> Platform:
+def _platform_by_name(
+    name: str,
+    scenario: Scenario = DEFAULT_SCENARIO,
+) -> Platform:
     return next(
         platform_definition
-        for platform_definition in PLATFORMS
+        for platform_definition in scenario.platforms
         if platform_definition.name == name
     )
 
@@ -636,10 +705,11 @@ def _terminal_summary(
     host_plan: HostPlan,
     results: Sequence[PlatformResult],
     invocation_seconds: float,
+    scenario: Scenario = DEFAULT_SCENARIO,
 ) -> str:
     lines = [f"Podman: {host_plan.podman_version}"]
     for result in results:
-        platform_definition = _platform_by_name(result.platform)
+        platform_definition = _platform_by_name(result.platform, scenario)
         requested = host_plan.requested_architectures[result.platform]
         execution_mode = (
             "native" if requested == host_plan.host_architecture else "emulated"
@@ -665,6 +735,7 @@ def _github_summary(
     host_plan: HostPlan,
     results: Sequence[PlatformResult],
     invocation_seconds: float,
+    scenario: Scenario = DEFAULT_SCENARIO,
 ) -> str:
     lines = [
         "### Molecule platform summary",
@@ -688,7 +759,7 @@ def _github_summary(
             f"{result.cleanup_seconds:.2f}s | {result.platform_seconds:.2f}s | "
             f"{result.status} |"
         )
-        platform_definition = _platform_by_name(result.platform)
+        platform_definition = _platform_by_name(result.platform, scenario)
         lines.extend(
             [
                 "",
@@ -710,8 +781,16 @@ def emit_summary(
     results: Sequence[PlatformResult],
     invocation_seconds: float,
     environment: Mapping[str, str],
+    scenario: Scenario = DEFAULT_SCENARIO,
 ) -> None:
-    print(_terminal_summary(host_plan, results, invocation_seconds))
+    print(
+        _terminal_summary(
+            host_plan,
+            results,
+            invocation_seconds,
+            scenario,
+        )
+    )
 
     summary_value = environment.get("GITHUB_STEP_SUMMARY")
     if not summary_value:
@@ -732,25 +811,28 @@ def emit_summary(
     except OSError:
         return
     with os.fdopen(descriptor, "a", encoding="utf-8") as summary_file:
-        summary_file.write(_github_summary(host_plan, results, invocation_seconds))
+        summary_file.write(
+            _github_summary(host_plan, results, invocation_seconds, scenario)
+        )
 
 
 def run(arguments: Sequence[str] | None, runner: CommandRunner) -> int:
-    parse_selector(arguments)
+    selector = parse_selector(arguments)
+    scenario = SCENARIOS[selector]
     repo_root = Path(__file__).resolve().parents[1]
     invocation_started = time.monotonic()
-    selected_name = os.environ.get("HOMELAB_MOLECULE_PLATFORM")
-    if selected_name and not any(
-        platform_definition.name == selected_name
-        for platform_definition in PLATFORMS
-    ):
-        print(f"error: unknown Molecule platform: {selected_name}", file=sys.stderr)
-        return 2
     try:
+        selected_name = os.environ.get("HOMELAB_MOLECULE_PLATFORM")
+        if selected_name and not any(
+            platform_definition.name == selected_name
+            for platform_definition in scenario.platforms
+        ):
+            raise PreflightError(f"unknown Molecule platform: {selected_name}")
         host_plan = preflight(repo_root, runner)
         platform_definitions = select_platforms(
             os.environ,
             host_plan.host_architecture,
+            scenario,
         )
         with invocation_lock(repo_root, runner):
             invocation_id = uuid.uuid4().hex
@@ -762,6 +844,7 @@ def run(arguments: Sequence[str] | None, runner: CommandRunner) -> int:
                     repo_root,
                     runner,
                     invocation_id,
+                    scenario=scenario,
                 ),
             )
     except PreflightError as error:
@@ -772,6 +855,7 @@ def run(arguments: Sequence[str] | None, runner: CommandRunner) -> int:
         results,
         time.monotonic() - invocation_started,
         os.environ,
+        scenario,
     )
     return 0 if all(result.success for result in results) else 1
 

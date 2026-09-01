@@ -9,6 +9,8 @@
       debian:13|rocky:9*) exit 0 ;;
       *) printf 'unsupported platform: %s %s\n' "${ID}" "${VERSION_ID}" >&2; exit 64 ;;
     esac
+  args:
+    executable: /bin/sh
   register: os_bootstrap_platform
   changed_when: false
 
@@ -23,6 +25,8 @@
       rocky) test -d /etc/yum.repos.d ;;
       *) exit 64 ;;
     esac
+  args:
+    executable: /bin/sh
   register: os_bootstrap_privilege
   changed_when: false
 
@@ -48,6 +52,8 @@
       *) exit 64 ;;
     esac
     printf 'HOMELAB_PYTHON_INSTALLED\n'
+  args:
+    executable: /bin/sh
   register: os_bootstrap_python
   changed_when: "'HOMELAB_PYTHON_INSTALLED' in os_bootstrap_python.stdout"
 

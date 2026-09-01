@@ -1,0 +1,23 @@
+---
+- name: Confirm installer-provided access before Python bootstrap
+  hosts: servers
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Verify the Python-less installer boundary
+      ansible.builtin.raw: |
+        set -eu
+        test "$(id -un)" = ansible
+        sudo -n true
+        . /etc/os-release
+        case "${ID}" in
+          debian) ! command -v python3 >/dev/null 2>&1 ;;
+          rocky)
+            test ! -x /usr/bin/python3
+            test -x /usr/libexec/platform-python
+            ;;
+          *) exit 64 ;;
+        esac
+      args:
+        executable: /bin/sh
+      changed_when: false

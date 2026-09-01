@@ -53,6 +53,44 @@ class VerifierControlTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertTrue(self.controls.os_baseline_verify_firewall_state_errors(mutated, desired, "eth0"))
 
+    def test_firewall_state_accepts_only_an_unbound_staged_policy_without_interface(
+        self,
+    ) -> None:
+        desired = [
+            'rule family="ipv4" source address="10.0.0.0/8" '
+            'service name="ssh" accept'
+        ]
+        state = {
+            "target": "DROP",
+            "forward": False,
+            "masquerade": False,
+            "interface_zone": "homelab",
+            "interfaces": [],
+            "sources": [],
+            "services": [],
+            "ports": [],
+            "protocols": [],
+            "source_ports": [],
+            "forward_ports": [],
+            "rich_rules": desired,
+        }
+        self.assertEqual(
+            [],
+            self.controls.os_baseline_verify_firewall_state_errors(
+                state,
+                desired,
+                "",
+            ),
+        )
+        self.assertEqual(
+            ["interfaces"],
+            self.controls.os_baseline_verify_firewall_state_errors(
+                state,
+                desired,
+                "eth0",
+            ),
+        )
+
     def test_firewall_result_layout_reduces_clean_and_mutated_state(self) -> None:
         desired = ['rule family="ipv4" source address="192.168.1.0/24" service name="ssh" accept']
         results = [

@@ -147,18 +147,24 @@ jobs:
           exit "$validation_status"
 
   molecule:
-    name: molecule (${{ matrix.platform }})
+    name: molecule (${{ matrix.selector }}, ${{ matrix.platform }})
     needs: classify
     if: needs.classify.outputs.run_molecule == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 4
       matrix:
-        platform:
-          - debian13
-          - rockylinux9
+        include:
+          - selector: system_maintenance/default
+            platform: debian13
+          - selector: system_maintenance/default
+            platform: rockylinux9
+          - selector: system_maintenance/baseline
+            platform: debian13
+          - selector: system_maintenance/baseline
+            platform: rockylinux9
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -175,7 +181,7 @@ jobs:
       - name: Run Molecule platform validation
         env:
           HOMELAB_MOLECULE_PLATFORM: ${{ matrix.platform }}
-        run: mise run test:molecule -- system_maintenance/default
+        run: mise run test:molecule -- ${{ matrix.selector }}
 
   merge-gate:
     name: merge-gate
