@@ -19,6 +19,13 @@ def load_yaml(name: str):
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
+def load_yaml_documents(relative_path: str) -> list[object]:
+    path = REPOSITORY_ROOT / relative_path
+    if not path.is_file():
+        raise AssertionError(f"required YAML file is missing: {path}")
+    return list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+
+
 class MoleculeScenarioContractTests(unittest.TestCase):
     def test_scenario_uses_the_ansible_native_lifecycle_and_least_privilege(
         self,
@@ -162,7 +169,7 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             [
                 {
                     "role": "system_maintenance",
-                    "system_maintenance_reboot_enabled": False,
+                    "system_maintenance_native_reboot_enabled": False,
                 }
             ],
             converge["roles"],
@@ -175,6 +182,19 @@ class MoleculeScenarioContractTests(unittest.TestCase):
                 for task in verify["tasks"]
             )
         )
+
+    def test_default_scenario_matches_minimal_maintenance_contract(self) -> None:
+        converge = load_yaml_documents(
+            "roles/system_maintenance/molecule/default/converge.yml"
+        )[0][0]
+        role = converge["roles"][0]
+        self.assertIs(role["system_maintenance_native_reboot_enabled"], False)
+        verify = (
+            REPOSITORY_ROOT
+            / "roles/system_maintenance/molecule/default/verify.yml"
+        ).read_text(encoding="utf-8").lower()
+        for retired in ("tree", "vim", "git", "xterm", "epel", "qemu-guest-agent"):
+            self.assertNotIn(retired, verify)
 
     def test_containerfiles_use_maintained_bases_without_role_evidence_package(
         self,

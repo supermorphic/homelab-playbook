@@ -4,4 +4,4 @@
   gather_facts: true
   roles:
     - role: system_maintenance
-      system_maintenance_reboot_enabled: false
+      system_maintenance_native_reboot_enabled: false
