@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -65,6 +68,11 @@ class VerifierControlTests(unittest.TestCase):
         ]
         state = self.controls.os_baseline_verify_firewall_state_from_results(results, "homelab")
         self.assertEqual([], self.controls.os_baseline_verify_firewall_state_errors(state, desired, "eth0"))
+        wrong_zone = self.controls.os_baseline_verify_firewall_state_from_results(results, "public")
+        self.assertEqual(
+            ["interface-zone"],
+            self.controls.os_baseline_verify_firewall_state_errors(wrong_zone, desired, "eth0"),
+        )
 
         mutations = {
             0: {"stdout": "  target: ACCEPT", "stdout_lines": []},
@@ -190,6 +198,100 @@ server approved.example iburst
             with self.subTest(text=text):
                 with self.assertRaises(ValueError):
                     self.controls.os_baseline_verify_chrony_policy(text, requested)
+
+    def test_chrony_effective_policy_accepts_packaged_vendor_and_override_transitions(self) -> None:
+        script = REPOSITORY_ROOT / "roles/os_baseline_verify/files/discover_chrony_sources.py"
+        self.assertTrue(script.is_file())
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            for platform, source_inputs in (
+                ("debian", ["confdir", "sourcedir"]),
+                ("rocky", ["sourcedir"]),
+            ):
+                with self.subTest(platform=platform):
+                    config = root / platform / "chrony.conf"
+                    config.parent.mkdir(parents=True)
+                    input_directories = {}
+                    for source_input in source_inputs:
+                        input_directory = config.parent / source_input
+                        input_directory.mkdir()
+                        suffix = ".conf" if source_input == "confdir" else ".sources"
+                        (input_directory / f"vendor{suffix}").write_text(
+                            "server dhcp.vendor.example iburst\n", encoding="utf-8",
+                        )
+                        input_directories[source_input] = input_directory
+                    vendor_pool = f"2.{platform}.pool.ntp.org"
+                    config.write_text(
+                        "\n".join(
+                            [
+                                *(f"{source_input} {input_directories[source_input]}" for source_input in source_inputs if source_input == "confdir"),
+                                f"pool {vendor_pool} iburst",
+                                *(f"{source_input} {input_directories[source_input]}" for source_input in source_inputs if source_input != "confdir"),
+                            ]
+                        ) + "\n",
+                        encoding="utf-8",
+                    )
+                    result = subprocess.run(
+                        [str(script), str(config)], check=True, capture_output=True, text=True,
+                    )
+                    vendor_state = json.loads(result.stdout)
+                    vendor_sources = (
+                        (["dhcp.vendor.example"] if "confdir" in source_inputs else [])
+                        + [vendor_pool]
+                        + (["dhcp.vendor.example"] if "sourcedir" in source_inputs else [])
+                    )
+                    self.assertEqual(vendor_sources, self.controls.os_baseline_verify_chrony_effective_policy(vendor_state, []))
+
+                    config.write_text(
+                        "# BEGIN ANSIBLE MANAGED TRUSTED CHRONY SOURCES\n"
+                        "server approved.example iburst\n"
+                        "# END ANSIBLE MANAGED TRUSTED CHRONY SOURCES\n"
+                        f"# homelab-disabled: pool {vendor_pool} iburst\n"
+                        + "".join(f"# homelab-disabled: {source_input} {input_directories[source_input]}\n" for source_input in source_inputs),
+                        encoding="utf-8",
+                    )
+                    result = subprocess.run(
+                        [str(script), str(config)], check=True, capture_output=True, text=True,
+                    )
+                    approved_state = json.loads(result.stdout)
+                    self.assertEqual(
+                        ["approved.example"],
+                        self.controls.os_baseline_verify_chrony_effective_policy(
+                            approved_state, ["approved.example"],
+                        ),
+                    )
+                    config.write_text(
+                        "\n".join(
+                            [
+                                *(f"{source_input} {input_directories[source_input]}" for source_input in source_inputs if source_input == "confdir"),
+                                f"pool {vendor_pool} iburst",
+                                *(f"{source_input} {input_directories[source_input]}" for source_input in source_inputs if source_input != "confdir"),
+                            ]
+                        ) + "\n",
+                        encoding="utf-8",
+                    )
+                    result = subprocess.run(
+                        [str(script), str(config)], check=True, capture_output=True, text=True,
+                    )
+                    self.assertEqual(vendor_sources, self.controls.os_baseline_verify_chrony_effective_policy(json.loads(result.stdout), []))
+
+    def test_chrony_effective_policy_resolves_active_include_inputs(self) -> None:
+        script = REPOSITORY_ROOT / "roles/os_baseline_verify/files/discover_chrony_sources.py"
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            included = root / "chrony.d"
+            included.mkdir()
+            (included / "vendor.conf").write_text("server dhcp.vendor.example iburst\n", encoding="utf-8")
+            config = root / "chrony.conf"
+            config.write_text(
+                f"pool 2.debian.pool.ntp.org iburst\ninclude {included}/*.conf\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run([str(script), str(config)], check=True, capture_output=True, text=True)
+            self.assertEqual(
+                ["2.debian.pool.ntp.org", "dhcp.vendor.example"],
+                self.controls.os_baseline_verify_chrony_effective_policy(json.loads(result.stdout), []),
+            )
 
     def test_verifier_owns_management_interface_discovery_script(self) -> None:
         script = REPOSITORY_ROOT / "roles/os_baseline_verify/files/discover_management_interface.py"

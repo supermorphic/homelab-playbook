@@ -272,6 +272,51 @@ def os_baseline_verify_chrony_policy(text: str, requested: object) -> list[str]:
     return active_sources
 
 
+def os_baseline_verify_chrony_effective_policy(state: object, requested: object) -> list[str]:
+    """Validate a complete source view read from active chrony inputs."""
+    if not isinstance(state, Mapping) or not isinstance(requested, list):
+        raise ValueError("chrony effective state is invalid")
+    expected_keys = {"sources", "disabled_sources", "active_inputs", "disabled_inputs", "markers"}
+    if set(state) != expected_keys or not all(isinstance(source, str) and source for source in requested):
+        raise ValueError("chrony effective state is invalid")
+    allowed_origins = {"primary", "include", "confdir", "sourcedir"}
+
+    def entries(name: str) -> list[Mapping[str, str]]:
+        value = state[name]
+        if not isinstance(value, list):
+            raise ValueError("chrony source entries are invalid")
+        result: list[Mapping[str, str]] = []
+        for entry in value:
+            if not isinstance(entry, Mapping) or set(entry) != {"source", "origin"}:
+                raise ValueError("chrony source entry is invalid")
+            source, origin = entry["source"], entry["origin"]
+            if not isinstance(source, str) or not isinstance(origin, str) or origin not in allowed_origins:
+                raise ValueError("chrony source entry is invalid")
+            result.append(entry)
+        return result
+
+    sources = entries("sources")
+    disabled_sources = entries("disabled_sources")
+    for name in ("active_inputs", "disabled_inputs"):
+        if not isinstance(state[name], list) or not all(value in {"include", "confdir", "sourcedir"} for value in state[name]):
+            raise ValueError("chrony source input is invalid")
+    markers = state["markers"]
+    if not isinstance(markers, Mapping) or set(markers) != {"begin", "end"} or not all(isinstance(markers[key], int) for key in markers):
+        raise ValueError("chrony markers are invalid")
+    active = [entry["source"] for entry in sources]
+    if requested:
+        if (markers != {"begin": 1, "end": 1} or active != requested
+                or state["active_inputs"] or not disabled_sources):
+            raise ValueError("chrony approved-source policy is not exact")
+    else:
+        vendor = re.compile(r"^(?:[0-9]+\.)?(?:debian|rocky)\.pool\.ntp\.org$")
+        primary = [entry["source"] for entry in sources if entry["origin"] == "primary"]
+        if (markers != {"begin": 0, "end": 0} or disabled_sources or state["disabled_inputs"]
+                or not primary or not all(vendor.fullmatch(source) for source in primary)):
+            raise ValueError("chrony vendor-source policy is not exact")
+    return active
+
+
 def os_baseline_verify_apparmor_profile_names(paths: object) -> list[str]:
     """Map package-owned AppArmor profile filenames to status name forms."""
     if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
@@ -302,5 +347,6 @@ class FilterModule:
             "os_baseline_verify_assignments": os_baseline_verify_assignments,
             "os_baseline_verify_chrony_sources": os_baseline_verify_chrony_sources,
             "os_baseline_verify_chrony_policy": os_baseline_verify_chrony_policy,
+            "os_baseline_verify_chrony_effective_policy": os_baseline_verify_chrony_effective_policy,
             "os_baseline_verify_apparmor_profile_names": os_baseline_verify_apparmor_profile_names,
         }

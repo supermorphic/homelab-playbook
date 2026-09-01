@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import configparser
 import ast
+from collections import Counter
+import re
 import subprocess
 import tempfile
 import unittest
@@ -76,34 +78,79 @@ READ_ONLY_ARGV_DYNAMIC_LISTS = {
     ),
 }
 
+FIREWALL_ZONE_READS = [
+    "--list-all", "--list-interfaces", "--list-sources", "--list-services",
+    "--list-ports", "--list-protocols", "--list-source-ports",
+    "--list-forward-ports", "--list-rich-rules", "--query-forward",
+    "--query-masquerade",
+]
+FIREWALL_TEMPLATE_LOOPS = {
+    "{{ ['/usr/bin/firewall-offline-cmd', '--zone=homelab', item] }}": FIREWALL_ZONE_READS,
+    "{{ ['/usr/bin/firewall-cmd', '--zone=homelab', item] }}": FIREWALL_ZONE_READS,
+    "{{ ['/usr/bin/firewall-cmd', item] }}": [
+        "--get-default-zone",
+        "--get-zone-of-interface={{ os_baseline_verify_management.interface }}",
+        "--get-active-zones",
+    ],
+}
+
 
 def assert_observational_script(path: Path) -> None:
     if not path.is_file():
         raise AssertionError(f"verifier script is missing: {path}")
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    allowed_imports = {"__future__", "ipaddress", "json", "os", "pathlib", "subprocess"}
-    imported = {
-        alias.name.split(".", 1)[0]
-        for node in ast.walk(tree) if isinstance(node, ast.Import)
-        for alias in node.names
-    } | {
-        (node.module or "").split(".", 1)[0]
-        for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+    contracts = {
+        "discover_management_interface.py": {"ipaddress", "json", "os", "pathlib", "subprocess"},
+        "discover_chrony_sources.py": {"glob", "json", "pathlib", "sys"},
     }
-    if not imported <= allowed_imports:
-        raise AssertionError(f"verifier script has an unapproved import: {imported - allowed_imports}")
+    if path.name not in contracts:
+        raise AssertionError(f"verifier script is not allowlisted: {path.name}")
+    imports = [node for node in ast.walk(tree) if isinstance(node, ast.Import)]
+    if any(alias.asname for node in imports for alias in node.names):
+        raise AssertionError("verifier script import aliases are not allowed")
+    imported = {alias.name for node in imports for alias in node.names}
+    if imported != contracts[path.name]:
+        raise AssertionError(f"verifier script imports are not exact: {imported}")
+    from_imports = [node for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
+    if len(from_imports) != 1 or from_imports[0].module != "__future__" or [alias.name for alias in from_imports[0].names] != ["annotations"]:
+        raise AssertionError("verifier script direct callable imports are not allowed")
+    if path.name == "discover_chrony_sources.py":
+        allowed_calls = {"Path", "SystemExit", "ValueError", "add", "add_input", "add_source", "append", "discover", "expand", "glob", "is_absolute", "is_dir", "json.dumps", "len", "print", "read", "read_text", "removeprefix", "resolve", "set", "sorted", "split", "splitlines", "startswith", "str", "strip"}
+        for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+            name = ast.unparse(call.func)
+            leaf = call.func.id if isinstance(call.func, ast.Name) else call.func.attr if isinstance(call.func, ast.Attribute) else ""
+            if name not in allowed_calls and leaf not in allowed_calls:
+                raise AssertionError(f"chrony script call is not a permitted read operation: {name}")
+        return
     allowed_calls = {
-        "Path", "ValueError", "decode", "discover", "dumps", "get", "getpid",
-        "int", "ip_address", "isinstance", "len", "loads", "print", "read_bytes",
-        "read_text", "rsplit", "run", "split", "startswith", "str",
+        "os.getpid", "connection.split", "str", "subprocess.run", "json.loads", "print",
+        "len", "ValueError", "ipaddress.ip_address", "json.dumps",
+        "pathlib.Path(f'/proc/{process}/environ').read_bytes().split", "int", "isinstance",
+        "discover", "entry.startswith", "routes[0].get",
+        "pathlib.Path(f'/proc/{process}/environ').read_bytes", "entry.split(b'=', 1)[1].decode",
+        "pathlib.Path(f'/proc/{process}/stat').read_text().rsplit(') ', 1)[1].split",
+        "pathlib.Path", "entry.split", "pathlib.Path(f'/proc/{process}/stat').read_text().rsplit",
+        "pathlib.Path(f'/proc/{process}/stat').read_text",
     }
-    for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
-        function = call.func
-        name = function.id if isinstance(function, ast.Name) else function.attr if isinstance(function, ast.Attribute) else ""
-        if name not in allowed_calls:
-            raise AssertionError(f"verifier script call is not a permitted read operation: {name}")
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    call_counts = Counter(ast.unparse(call.func) for call in calls)
+    expected_call_counts = Counter({
+        "os.getpid": 1, "connection.split": 1, "str": 1, "subprocess.run": 1,
+        "json.loads": 1, "print": 1, "len": 2, "ValueError": 2,
+        "ipaddress.ip_address": 1, "json.dumps": 1,
+        "pathlib.Path(f'/proc/{process}/environ').read_bytes().split": 1,
+        "int": 1, "isinstance": 2, "discover": 1, "entry.startswith": 1,
+        "routes[0].get": 1, "pathlib.Path(f'/proc/{process}/environ').read_bytes": 1,
+        "entry.split(b'=', 1)[1].decode": 1,
+        "pathlib.Path(f'/proc/{process}/stat').read_text().rsplit(') ', 1)[1].split": 1,
+        "pathlib.Path": 2, "entry.split": 1,
+        "pathlib.Path(f'/proc/{process}/stat').read_text().rsplit": 1,
+        "pathlib.Path(f'/proc/{process}/stat').read_text": 1,
+    })
+    if set(call_counts) - allowed_calls or call_counts != expected_call_counts:
+        raise AssertionError("management script call receiver is not exact")
     subprocess_calls = [
-        call for call in ast.walk(tree)
+        call for call in calls
         if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
         and isinstance(call.func.value, ast.Name) and call.func.value.id == "subprocess"
         and call.func.attr == "run"
@@ -111,7 +158,9 @@ def assert_observational_script(path: Path) -> None:
     if len(subprocess_calls) != 1:
         raise AssertionError("verifier script must make exactly one state-read command")
     command = subprocess_calls[0].args[0] if subprocess_calls[0].args else None
-    if not isinstance(command, ast.List) or [item.value for item in command.elts[:-1] if isinstance(item, ast.Constant)] != ["/usr/sbin/ip", "-json", "route", "get"]:
+    if (not isinstance(command, ast.List) or len(command.elts) != 5
+            or [item.value for item in command.elts[:4] if isinstance(item, ast.Constant)] != ["/usr/sbin/ip", "-json", "route", "get"]
+            or not isinstance(command.elts[4], ast.Name) or command.elts[4].id != "peer"):
         raise AssertionError("verifier script command is not the exact route-state read")
 
 
@@ -124,6 +173,9 @@ def assert_read_only_command(task: dict[str, object], command: object) -> None:
         allowed_templates = {"\n".join(line.strip() for line in value.splitlines()) for value in READ_ONLY_ARGV_TEMPLATES}
         if normalized not in allowed_templates:
             raise AssertionError(f"command argv template is not allowlisted: {argv}")
+        expected_loop = FIREWALL_TEMPLATE_LOOPS.get(normalized)
+        if expected_loop is not None and task.get("loop") != expected_loop:
+            raise AssertionError("templated verifier command loop is not exact")
     elif not isinstance(argv, list) or tuple(argv) not in READ_ONLY_ARGV | READ_ONLY_ARGV_DYNAMIC_LISTS:
         raise AssertionError(f"command argv is not allowlisted: {argv}")
     if task.get("changed_when") is not False:
@@ -156,11 +208,15 @@ def assert_observational_verifier_task(task: dict[str, object]) -> None:
         assert_read_only_command(task, command)
     script = task.get("ansible.builtin.script", task.get("script"))
     if script is not None:
-        if not isinstance(script, dict) or script != {"cmd": "discover_management_interface.py", "executable": "/usr/bin/python3"}:
+        scripts = {
+            ("discover_management_interface.py", "/usr/bin/python3"),
+            ("discover_chrony_sources.py {{ '/etc/chrony.conf' if ansible_os_family == 'RedHat'\n   else '/etc/chrony/chrony.conf' }}", "/usr/bin/python3"),
+        }
+        if not isinstance(script, dict) or set(script) != {"cmd", "executable"} or (script["cmd"], script["executable"]) not in scripts:
             raise AssertionError("verifier script invocation is not allowlisted")
         if task.get("changed_when") is not False:
             raise AssertionError("verifier script must declare changed_when: false")
-        assert_observational_script(REPOSITORY_ROOT / "roles/os_baseline_verify/files/discover_management_interface.py")
+        assert_observational_script(REPOSITORY_ROOT / "roles/os_baseline_verify/files" / str(script["cmd"]).split()[0])
 
 
 class SourceContractTests(unittest.TestCase):
@@ -183,6 +239,14 @@ class SourceContractTests(unittest.TestCase):
             assert_observational_verifier_task({"command": "/usr/bin/rm -f /tmp/x", "changed_when": False})
         with self.assertRaises(AssertionError):
             assert_observational_verifier_task({"command": {"argv": "prefix /usr/bin/dpkg --audit"}, "changed_when": False})
+        with self.assertRaises(AssertionError):
+            assert_observational_verifier_task(
+                {
+                    "command": {"argv": "{{ ['/usr/bin/firewall-cmd', item] }}"},
+                    "loop": ["--reload"],
+                    "changed_when": False,
+                }
+            )
         for wrapper in ("block", "rescue", "always"):
             with self.subTest(wrapper=wrapper):
                 assert_observational_verifier_task({wrapper: [{"assert": {"that": ["true"]}}]})
@@ -193,15 +257,17 @@ class SourceContractTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             assert_observational_script(REPOSITORY_ROOT / "roles/os_baseline_verify/files/missing.py")
         with tempfile.TemporaryDirectory() as temporary_directory:
-            source = Path(temporary_directory) / "mutating.py"
-            source.write_text(
-                "import subprocess\nfrom pathlib import Path\n"
+            source = Path(temporary_directory) / "discover_management_interface.py"
+            for contents in (
+                "import subprocess\nfrom subprocess import run\n"
                 "subprocess.run(['/usr/sbin/ip', '-json', 'route', 'get', 'peer'])\n"
-                "Path('/tmp/x').touch()\n",
-                encoding="utf-8",
-            )
-            with self.assertRaises(AssertionError):
-                assert_observational_script(source)
+                "run(['/usr/bin/touch', '/tmp/x'])\n",
+                "import subprocess as process\n"
+                "process.run(['/usr/sbin/ip', '-json', 'route', 'get', 'peer'])\n",
+            ):
+                source.write_text(contents, encoding="utf-8")
+                with self.assertRaises(AssertionError):
+                    assert_observational_script(source)
 
     def test_os_bootstrap_uses_only_raw_until_python_is_available(self) -> None:
         tasks = load_tasks("roles/os_bootstrap/tasks/main.yml")
@@ -522,16 +588,33 @@ class SourceContractTests(unittest.TestCase):
             disable_vendor["ansible.builtin.replace"]["regexp"],
         )
 
+    def test_chrony_override_text_transition_restores_vendor_inputs_after_approved_sources(self) -> None:
+        tasks = load_tasks("roles/security_baseline/tasks/pre-update.yml")
+        disable_vendor = next(task for task in tasks if task["name"] == "Disable vendor chrony sources after adding trusted sources")
+        base = "confdir /etc/chrony/conf.d\npool 2.debian.pool.ntp.org iburst\nsourcedir /run/chrony-dhcp\n"
+        approved = "# BEGIN ANSIBLE MANAGED TRUSTED CHRONY SOURCES\nserver approved.example iburst\n# END ANSIBLE MANAGED TRUSTED CHRONY SOURCES\n" + base
+        disabled = re.sub(
+            disable_vendor["ansible.builtin.replace"]["regexp"],
+            "# homelab-disabled: \\g<1>", approved, flags=re.MULTILINE,
+        )
+        self.assertIn("server approved.example iburst", disabled)
+        self.assertNotIn("\npool 2.debian.pool.ntp.org iburst\n", disabled)
+        restored = re.sub(r"^# homelab-disabled: ", "", disabled, flags=re.MULTILINE)
+        self.assertLess(restored.index("# END ANSIBLE MANAGED TRUSTED CHRONY SOURCES"), restored.index("pool 2.debian.pool.ntp.org iburst"))
+        self.assertEqual(base, re.sub(r"# BEGIN ANSIBLE MANAGED TRUSTED CHRONY SOURCES\n.*?# END ANSIBLE MANAGED TRUSTED CHRONY SOURCES\n", "", restored, flags=re.DOTALL))
+
     def test_verifier_platform_policy_evidence_is_unguarded_and_semantic(self) -> None:
         tasks = load_tasks("roles/os_baseline_verify/tasks/platform.yml")
         configuration = next(task for task in tasks if task["name"] == "Read native MAC and chrony configuration")
+        chrony = next(task for task in tasks if task["name"] == "Read effective chrony source configuration")
         evidence = next(task for task in tasks if task["name"] == "Verify native MAC and chrony policy evidence")
         apparmor_read = next(task for task in tasks if task["name"] == "Read Debian AppArmor enforcing profile state")
         apparmor = next(task for task in tasks if task["name"] == "Verify Debian AppArmor enforcing profiles")
 
         self.assertNotIn("when", configuration)
+        self.assertNotIn("when", chrony)
         self.assertNotIn("when", evidence)
-        self.assertIn("os_baseline_verify_chrony_policy", evidence["vars"]["os_baseline_verify_chrony_values"])
+        self.assertIn("os_baseline_verify_chrony_effective_policy", evidence["vars"]["os_baseline_verify_chrony_values"])
         self.assertEqual(["/usr/sbin/aa-status", "--json"], apparmor_read["ansible.builtin.command"]["argv"])
         self.assertIn("os_baseline_verify_apparmor_distribution_profiles", apparmor["vars"])
 
@@ -541,6 +624,18 @@ class SourceContractTests(unittest.TestCase):
         self.assertTrue(
             any("os_baseline_verify_debian_policy.origins" in assertion for assertion in verify["ansible.builtin.assert"]["that"])
         )
+
+    def test_verifier_firewall_reducers_remain_bound_to_policy_assertions(self) -> None:
+        tasks = load_tasks("roles/os_baseline_verify/tasks/firewall.yml")
+        permanent_reducer = next(task for task in tasks if task["name"] == "Reduce permanent firewall state from ordered reads")
+        runtime_reducer = next(task for task in tasks if task["name"] == "Reduce runtime firewall state from ordered reads")
+        permanent_assert = next(task for task in tasks if task["name"] == "Verify permanent firewall default and exact policy")
+        runtime_assert = next(task for task in tasks if task["name"] == "Verify exact runtime firewall policy")
+
+        self.assertIn("os_baseline_verify_firewall_state_from_results", str(permanent_reducer))
+        self.assertIn("os_baseline_verify_permanent_firewall_state", str(permanent_assert))
+        self.assertIn("os_baseline_verify_firewall_state_from_results", str(runtime_reducer))
+        self.assertIn("os_baseline_verify_runtime_firewall_state", str(runtime_assert))
 
     def test_system_maintenance_managed_packages_are_minimal(self) -> None:
         source = "\n".join(
