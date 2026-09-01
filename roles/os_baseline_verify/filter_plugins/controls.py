@@ -131,7 +131,7 @@ def os_baseline_verify_apt_policy(text: str) -> dict[str, object]:
     scalar = dict(re.findall(r'(?m)^\s*([^\s{]+)\s+"([^"]*)"\s*;', stripped))
     origin = re.search(r"Unattended-Upgrade::Origins-Pattern\s*\{(.*?)\};", stripped, re.S)
     if origin is None:
-        return {"scalar": scalar, "origins": []}
+        raise ValueError("APT security origins are absent")
     origins = re.findall(r'"([^"]*)"\s*;', origin.group(1))
     expected_origin = "origin=Debian,codename=${distro_codename}-security,label=Debian-Security"
     if origins != [expected_origin]:
@@ -158,6 +158,30 @@ def os_baseline_verify_timer_values(text: str) -> dict[str, object]:
     return values
 
 
+def os_baseline_verify_assignments(text: str) -> dict[str, str]:
+    """Return uncommented key/value assignments with last-value precedence."""
+    values: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line and not line.startswith(("#", ";")) and "=" in line:
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip()
+    return values
+
+
+def os_baseline_verify_chrony_sources(text: str) -> list[str]:
+    """Return active server/pool sources, excluding commented vendor lines."""
+    sources: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if len(fields) >= 2 and fields[0] in {"server", "pool"}:
+            sources.append(fields[1])
+    return sources
+
+
 class FilterModule:
     def filters(self) -> dict[str, object]:
         return {
@@ -168,4 +192,6 @@ class FilterModule:
             "os_baseline_verify_ini_values": os_baseline_verify_ini_values,
             "os_baseline_verify_apt_policy": os_baseline_verify_apt_policy,
             "os_baseline_verify_timer_values": os_baseline_verify_timer_values,
+            "os_baseline_verify_assignments": os_baseline_verify_assignments,
+            "os_baseline_verify_chrony_sources": os_baseline_verify_chrony_sources,
         }

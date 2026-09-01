@@ -32,17 +32,24 @@ OBSERVATIONAL_VERIFIER_MODULES = {
 
 
 def assert_observational_verifier_task(task: dict[str, object]) -> None:
-    actions = set(task) & OBSERVATIONAL_VERIFIER_MODULES
-    module_keys = {key for key in task if key.startswith(("ansible.", "community."))}
-    if module_keys - OBSERVATIONAL_VERIFIER_MODULES or len(actions) > 1:
+    aliases = {key.removeprefix("ansible.builtin."): key for key in OBSERVATIONAL_VERIFIER_MODULES}
+    action_keys = [key for key in task if key not in {"name", "when", "register", "changed_when", "failed_when", "no_log", "become", "become_user", "loop", "vars", "tags"} and key not in {"block", "rescue", "always"}]
+    normalized = [aliases.get(key, key) for key in action_keys]
+    if len(normalized) != 1 or normalized[0] not in OBSERVATIONAL_VERIFIER_MODULES:
         raise AssertionError(f"non-observational verifier task: {task.get('name')}")
-    command = task.get("ansible.builtin.command")
+    for nested in ("block", "rescue", "always"):
+        for child in task.get(nested, []) or []:
+            assert_observational_verifier_task(child)
+    command = task.get("ansible.builtin.command", task.get("command"))
     if isinstance(command, dict):
         argv = command.get("argv", [])
-        rendered = " ".join(str(value) for value in argv)
-        if any(word in rendered for word in ("--add", "--remove", "--set", "--reload", "--change", " start", " stop", " restart", " enable", " disable")):
-            raise AssertionError(f"mutating verifier command: {rendered}")
-    script = task.get("ansible.builtin.script")
+        allowed = {"sudo", "/usr/sbin/sshd", "/usr/bin/firewall-cmd", "/usr/bin/firewall-offline-cmd", "/usr/bin/systemctl", "/usr/bin/chronyc", "/usr/sbin/getenforce", "/usr/sbin/aa-status", "/usr/bin/dpkg", "/usr/bin/dnf", "/usr/bin/systemd-analyze", "/usr/bin/apt-config"}
+        if isinstance(argv, str):
+            if not any(executable in argv for executable in allowed):
+                raise AssertionError(f"command executable is not allowlisted: {argv}")
+        elif not argv or str(argv[0]) not in allowed:
+            raise AssertionError(f"command executable is not allowlisted: {argv}")
+    script = task.get("ansible.builtin.script", task.get("script"))
     if isinstance(script, dict) and script.get("cmd") != "discover_management_interface.py":
         raise AssertionError("verifier script is not allowlisted")
 
@@ -63,6 +70,10 @@ class SourceContractTests(unittest.TestCase):
             assert_observational_verifier_task(
                 {"ansible.builtin.command": {"argv": ["firewall-cmd", "--reload"]}}
             )
+        with self.assertRaises(AssertionError):
+            assert_observational_verifier_task({"command": {"argv": ["/usr/bin/rm", "-f", "/tmp/x"]}})
+        with self.assertRaises(AssertionError):
+            assert_observational_verifier_task({"block": [{"file": {"path": "/tmp/x"}}]})
 
     def test_os_bootstrap_uses_only_raw_until_python_is_available(self) -> None:
         tasks = load_tasks("roles/os_bootstrap/tasks/main.yml")

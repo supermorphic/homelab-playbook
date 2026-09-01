@@ -92,6 +92,17 @@ emit_via = stdio
 """
         self.assertEqual("default", self.controls.os_baseline_verify_ini_values(dnf)["commands"]["upgrade_type"])
 
+    def test_apt_policy_rejects_missing_origins(self) -> None:
+        with self.assertRaises(ValueError):
+            self.controls.os_baseline_verify_apt_policy(
+                'APT::Periodic::Unattended-Upgrade "1";\n'
+            )
+
+    def test_verifier_owns_management_interface_discovery_script(self) -> None:
+        script = REPOSITORY_ROOT / "roles/os_baseline_verify/files/discover_management_interface.py"
+        self.assertTrue(script.is_file())
+        self.assertIn("SSH_CONNECTION", script.read_text(encoding="utf-8"))
+
     def test_timer_parser_honors_reset_and_rejects_extra_calendar(self) -> None:
         text = """\
 [Timer]

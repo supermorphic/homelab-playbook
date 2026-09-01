@@ -12,14 +12,24 @@
   register: os_baseline_verify_platform_configuration
 
 - name: Verify native MAC and chrony policy evidence
+  vars:
+    os_baseline_verify_mac_values: >-
+      {{ os_baseline_verify_platform_configuration.results[0].content | b64decode | os_baseline_verify_assignments }}
+    os_baseline_verify_chrony_values: >-
+      {{ os_baseline_verify_platform_configuration.results[1].content | b64decode | os_baseline_verify_chrony_sources }}
   ansible.builtin.assert:
     that:
       - "'chrony' in ansible_facts.packages"
       - >-
         ('selinux-policy-targeted' in ansible_facts.packages and
-         'SELINUX=enforcing' in (os_baseline_verify_platform_configuration.results[0].content | b64decode))
+         os_baseline_verify_mac_values.SELINUX | default('') == 'enforcing' and
+         os_baseline_verify_mac_values.SELINUXTYPE | default('') == 'targeted')
         if ansible_os_family == 'RedHat'
-        else ('apparmor' in ansible_facts.packages and 'apparmor-utils' in ansible_facts.packages)
+        else ('apparmor' in ansible_facts.packages and 'apparmor-utils' in ansible_facts.packages and 'apparmor-profiles' in ansible_facts.packages)
+      - >-
+        (os_baseline_verify_chrony_values | length > 0)
+        if security_baseline_chrony_sources | length == 0
+        else os_baseline_verify_chrony_values == security_baseline_chrony_sources
     fail_msg: Native MAC or chrony package/configuration policy is absent
 
 - name: Read Rocky SELinux state

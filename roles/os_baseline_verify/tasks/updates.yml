@@ -1,17 +1,17 @@
 ---
-- name: Read Debian automatic-update configuration
-  ansible.builtin.slurp:
-    src: "{{ item }}"
-  loop: [/etc/apt/apt.conf.d/20auto-upgrades, /etc/apt/apt.conf.d/50unattended-upgrades]
+- name: Read effective Debian automatic-update configuration
+  ansible.builtin.command:
+    argv: [/usr/bin/apt-config, dump]
   register: os_baseline_verify_debian_updater_configuration
+  changed_when: false
   when: ansible_os_family == 'Debian'
 
 - name: Verify Debian security-only updater configuration
   vars:
     os_baseline_verify_debian_periodic: >-
-      {{ os_baseline_verify_debian_updater_configuration.results[0].content | b64decode | os_baseline_verify_apt_policy }}
+      {{ os_baseline_verify_debian_updater_configuration.stdout | os_baseline_verify_apt_policy }}
     os_baseline_verify_debian_policy: >-
-      {{ os_baseline_verify_debian_updater_configuration.results[1].content | b64decode | os_baseline_verify_apt_policy }}
+      {{ os_baseline_verify_debian_updater_configuration.stdout | os_baseline_verify_apt_policy }}
   ansible.builtin.assert:
     that:
       - os_baseline_verify_debian_periodic.scalar['APT::Periodic::Update-Package-Lists'] == '1'
