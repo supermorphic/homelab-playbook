@@ -951,9 +951,12 @@ class SourceContractTests(unittest.TestCase):
         self.assertTrue(
             all(task.get("no_log") is True for task in validation_tasks)
         )
+        self.assertIs(temporary_directory["changed_when"], False)
+        self.assertIs(candidate["changed_when"], False)
         self.assertTrue(
             all(task.get("no_log") is True for task in validation["always"])
         )
+        self.assertIs(validation["always"][0]["changed_when"], False)
 
         post_update = load_tasks("roles/security_baseline/tasks/post-update.yml")
         self.assertEqual(

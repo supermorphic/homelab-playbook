@@ -13,6 +13,7 @@
         state: file
         prefix: security-baseline-authorized-keys-
       register: security_baseline_authorized_keys_candidate
+      changed_when: false
       no_log: true
 
     - name: Write complete candidate authorized keys content
@@ -22,6 +23,7 @@
         owner: root
         group: root
         mode: "0600"
+      changed_when: false
       no_log: true
 
     - name: Parse complete candidate authorized keys content with OpenSSH
@@ -48,6 +50,7 @@
       ansible.builtin.file:
         path: "{{ security_baseline_authorized_keys_candidate.path }}"
         state: absent
+      changed_when: false
       when:
         - security_baseline_authorized_keys_candidate is defined
         - security_baseline_authorized_keys_candidate.path is defined
