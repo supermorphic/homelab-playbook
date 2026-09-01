@@ -258,8 +258,6 @@ def _collect_rocky_configuration() -> dict[str, object]:
     with dnf.Base() as base:
         base.conf.read()
         base.conf.debuglevel = 0
-        base.conf.gpgcheck = True
-        base.conf.localpkg_gpgcheck = True
         base.conf.assumeyes = True
         base.conf.sslverify = True
         base.conf.installroot = "/"

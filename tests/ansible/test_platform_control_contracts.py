@@ -413,6 +413,85 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
             with self.assertRaises(ValueError):
                 self.repository_trust.validate_rocky_configuration(effective, root)
 
+    def test_rocky_collector_preserves_disabled_global_and_inherited_repo_trust(
+        self,
+    ) -> None:
+        class FakeSubstitutions(dict[str, str]):
+            def update_from_etc(self, _installroot: str) -> None:
+                self["releasever"] = "9"
+
+        class FakeConfiguration:
+            def __init__(self) -> None:
+                self.reposdir = ["/etc/dnf/authoritative.repos.d"]
+                self.tsflags = ["nodocs"]
+                self.gpgcheck = False
+                self.localpkg_gpgcheck = False
+                self.substitutions = FakeSubstitutions()
+
+            def read(self) -> None:
+                return None
+
+            def prepend_installroot(self, _option: str) -> None:
+                return None
+
+        class FakeRepository:
+            id = "baseos"
+            enabled = True
+            gpgkey = ["file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Rocky-9"]
+            repofile = "/etc/dnf/authoritative.repos.d/rocky.repo"
+
+            def __init__(self, gpgcheck: bool) -> None:
+                self.gpgcheck = gpgcheck
+
+        class FakeRepositories:
+            def __init__(self) -> None:
+                self.repository: FakeRepository | None = None
+
+            def all(self) -> list[FakeRepository]:
+                if self.repository is None:
+                    raise AssertionError("repositories were not loaded")
+                return [self.repository]
+
+        class FakeBase:
+            def __init__(self) -> None:
+                self.conf = FakeConfiguration()
+                self.repos = FakeRepositories()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def setup_loggers(self) -> None:
+                return None
+
+            def init_plugins(
+                self,
+                _disabled: set[str],
+                _enabled: set[str],
+            ) -> None:
+                return None
+
+            def pre_configure_plugins(self) -> None:
+                return None
+
+            def read_all_repos(self) -> None:
+                self.repos.repository = FakeRepository(self.conf.gpgcheck)
+
+            def configure_plugins(self) -> None:
+                return None
+
+        fake_dnf = types.SimpleNamespace(Base=FakeBase)
+        with mock.patch.dict(sys.modules, {"dnf": fake_dnf}):
+            effective = self.repository_trust._collect_rocky_configuration()
+
+        self.assertIs(effective["gpgcheck"], False)
+        self.assertIs(effective["localpkg_gpgcheck"], False)
+        self.assertIs(effective["repos"][0]["gpgcheck"], False)
+        with self.assertRaises(ValueError):
+            self.repository_trust.validate_rocky_configuration(effective)
+
 
 class FirewallPolicyTests(unittest.TestCase):
     @classmethod
