@@ -155,6 +155,8 @@ fixtures, logs, or documentation. Each controller has a separate key:
 The repository never stores private key material and stores no plaintext public
 key material. Rotation uses an add-verify-remove sequence so the active key is
 not removed in the same unverified change that introduces its replacement.
+Before exclusive replacement, the complete candidate `authorized_keys` content
+is written to a private temporary file and validated with OpenSSH tooling.
 OpenSSH logs the accepted public-key fingerprint on the managed host for
 attribution and revocation.
 
@@ -193,7 +195,8 @@ The effective policy:
 - uses platform service management without replacing vendor unit files.
 
 The role renders and syntax-checks a candidate before reload. Repository
-verification then checks the complete effective configuration with `sshd -T`,
+verification then checks the complete effective configuration with
+`sshd -T -C` for the actual administrative connection user and endpoints,
 keeps the current connection open through activation, establishes a new
 connection, and confirms the authorized administrative path. An invalid
 candidate never triggers a reload.
@@ -292,7 +295,11 @@ The baseline:
 The SSH dependency does not manage firewall state. Firewall changes establish
 the new management allowance before removing an old allowance, preserve the
 active connection, validate runtime state, and then persist the proven policy.
-Runtime and permanent configuration are read back independently.
+Before any firewall activation or interface move, the baseline proves that the
+active SSH peer belongs to the desired management sources. It also fails closed
+when existing zone bindings, direct openings, or policy objects are outside the
+supported platform state and require operator reconciliation. Runtime and
+permanent configuration are read back independently.
 
 fail2ban is not installed. Under a private-source, key-only SSH policy it adds
 little protection while introducing another privileged daemon, dynamic ban
@@ -356,7 +363,8 @@ Verification checks:
 - the expected operating-system release;
 - the `ansible` account, authoritative public keys, locked password, and
   non-interactive sudo path;
-- effective `sshd -T` authentication, account, and forwarding policy;
+- connection-specific effective `sshd -T -C` authentication, account, and
+  forwarding policy;
 - firewalld service, default policy, private SSH allowance, and matching runtime
   and permanent state;
 - SELinux or AppArmor effective enforcement;
