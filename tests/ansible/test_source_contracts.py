@@ -115,12 +115,44 @@ def assert_observational_script(path: Path) -> None:
     if len(from_imports) != 1 or from_imports[0].module != "__future__" or [alias.name for alias in from_imports[0].names] != ["annotations"]:
         raise AssertionError("verifier script direct callable imports are not allowed")
     if path.name == "discover_chrony_sources.py":
-        allowed_calls = {"Path", "SystemExit", "ValueError", "add", "add_input", "add_source", "append", "discover", "expand", "glob", "is_absolute", "is_dir", "json.dumps", "len", "print", "read", "read_text", "removeprefix", "resolve", "set", "sorted", "split", "splitlines", "startswith", "str", "strip"}
-        for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
-            name = ast.unparse(call.func)
-            leaf = call.func.id if isinstance(call.func, ast.Name) else call.func.attr if isinstance(call.func, ast.Attribute) else ""
-            if name not in allowed_calls and leaf not in allowed_calls:
-                raise AssertionError(f"chrony script call is not a permitted read operation: {name}")
+        function_names = [node.name for node in tree.body if isinstance(node, ast.FunctionDef)]
+        if function_names != ["_target_path", "_host_path", "discover"]:
+            raise AssertionError("chrony script function graph is not exact")
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                if any(
+                    isinstance(target, ast.Name) and target.id in imported
+                    for target in targets
+                ):
+                    raise AssertionError("chrony script cannot shadow imported modules")
+                value = node.value
+                if (isinstance(value, ast.Attribute)
+                        and any(isinstance(target, ast.Name) for target in targets)):
+                    raise AssertionError("chrony script cannot bind callable attributes")
+        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+        call_counts = Counter(ast.unparse(call.func) for call in calls)
+        expected_call_counts = Counter({
+            "ValueError": 12, "pathlib.Path": 6, "len": 4, "str": 5,
+            "read": 3, "_host_path": 3, "configured_path": 3,
+            "state[key].append": 2, "print": 1, "resolved.is_relative_to": 2,
+            "json.dumps": 1, "line.startswith": 2, "discover": 1,
+            "_target_path": 2, "add_input": 2, "sorted": 2,
+            "platform.lower": 1, "root.resolve": 1, "set": 1,
+            "candidate.is_absolute": 1, "configured.is_absolute": 1,
+            "configured.relative_to": 1, "path.resolve": 1, "host.resolve": 1,
+            "stack.add": 1, "resolved.relative_to": 1, "resolved.is_file": 1,
+            "resolved.read_text(encoding='utf-8').splitlines": 1,
+            "stack.remove": 1, "SystemExit": 1, "raw.strip": 1,
+            "line.split": 1, "fields[0].lower": 1, "resolved.read_text": 1,
+            "line.removeprefix('# homelab-disabled: ').strip": 1,
+            "add_source": 1, "line.removeprefix": 1,
+            "pathlib.Path(value).is_file": 1, "directory.is_dir": 1,
+            "directory.glob": 1, "selected.values": 1, "glob.glob": 1,
+            "child.is_file": 1,
+        })
+        if call_counts != expected_call_counts:
+            raise AssertionError("chrony script call receivers are not exact")
         return
     allowed_calls = {
         "os.getpid", "connection.split", "str", "subprocess.run", "json.loads", "print",
@@ -210,7 +242,7 @@ def assert_observational_verifier_task(task: dict[str, object]) -> None:
     if script is not None:
         scripts = {
             ("discover_management_interface.py", "/usr/bin/python3"),
-            ("discover_chrony_sources.py {{ '/etc/chrony.conf' if ansible_os_family == 'RedHat'\n   else '/etc/chrony/chrony.conf' }}", "/usr/bin/python3"),
+            ("discover_chrony_sources.py {{ 'rocky' if ansible_os_family == 'RedHat' else 'debian' }} {{ '/etc/chrony.conf' if ansible_os_family == 'RedHat'\n   else '/etc/chrony/chrony.conf' }}", "/usr/bin/python3"),
         }
         if not isinstance(script, dict) or set(script) != {"cmd", "executable"} or (script["cmd"], script["executable"]) not in scripts:
             raise AssertionError("verifier script invocation is not allowlisted")
@@ -268,6 +300,17 @@ class SourceContractTests(unittest.TestCase):
                 source.write_text(contents, encoding="utf-8")
                 with self.assertRaises(AssertionError):
                     assert_observational_script(source)
+
+            source = Path(temporary_directory) / "discover_chrony_sources.py"
+            source.write_text(
+                "from __future__ import annotations\n"
+                "import glob\nimport json\nimport pathlib\nimport sys\n"
+                "read_text = pathlib.Path.unlink\n"
+                "read_text(pathlib.Path('/tmp/x'))\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(AssertionError):
+                assert_observational_script(source)
 
     def test_os_bootstrap_uses_only_raw_until_python_is_available(self) -> None:
         tasks = load_tasks("roles/os_bootstrap/tasks/main.yml")
@@ -590,18 +633,37 @@ class SourceContractTests(unittest.TestCase):
 
     def test_chrony_override_text_transition_restores_vendor_inputs_after_approved_sources(self) -> None:
         tasks = load_tasks("roles/security_baseline/tasks/pre-update.yml")
+        add_sources = next(task for task in tasks if task["name"] == "Add trusted chrony sources before disabling vendor sources")
         disable_vendor = next(task for task in tasks if task["name"] == "Disable vendor chrony sources after adding trusted sources")
-        base = "confdir /etc/chrony/conf.d\npool 2.debian.pool.ntp.org iburst\nsourcedir /run/chrony-dhcp\n"
-        approved = "# BEGIN ANSIBLE MANAGED TRUSTED CHRONY SOURCES\nserver approved.example iburst\n# END ANSIBLE MANAGED TRUSTED CHRONY SOURCES\n" + base
-        disabled = re.sub(
-            disable_vendor["ansible.builtin.replace"]["regexp"],
-            "# homelab-disabled: \\g<1>", approved, flags=re.MULTILINE,
-        )
-        self.assertIn("server approved.example iburst", disabled)
-        self.assertNotIn("\npool 2.debian.pool.ntp.org iburst\n", disabled)
-        restored = re.sub(r"^# homelab-disabled: ", "", disabled, flags=re.MULTILINE)
-        self.assertLess(restored.index("# END ANSIBLE MANAGED TRUSTED CHRONY SOURCES"), restored.index("pool 2.debian.pool.ntp.org iburst"))
-        self.assertEqual(base, re.sub(r"# BEGIN ANSIBLE MANAGED TRUSTED CHRONY SOURCES\n.*?# END ANSIBLE MANAGED TRUSTED CHRONY SOURCES\n", "", restored, flags=re.DOTALL))
+        restore_vendor = next(task for task in tasks if task["name"] == "Restore exact vendor chrony source lines before removing trusted sources")
+        remove_sources = next(task for task in tasks if task["name"] == "Remove trusted chrony sources after restoring vendor sources")
+        marker = add_sources["ansible.builtin.blockinfile"]["marker"]
+        begin, end = marker.format(mark="BEGIN"), marker.format(mark="END")
+        for base in (
+            "pool 2.debian.pool.ntp.org iburst\nsourcedir /run/chrony-dhcp\nsourcedir /etc/chrony/sources.d\nconfdir /etc/chrony/conf.d\n",
+            "pool 2.rocky.pool.ntp.org iburst\nsourcedir /run/chrony-dhcp\n",
+            "POOL 2.debian.pool.ntp.org iburst\nSOURCEDIR /run/chrony-dhcp /etc/chrony/sources.d\nCONFDIR /etc/chrony/conf.d\n",
+        ):
+            with self.subTest(base=base):
+                approved = f"{begin}\nserver approved.example iburst\n{end}\n{base}"
+                before, after = approved.split(end + "\n", 1)
+                disabled = before + end + "\n" + re.sub(
+                    disable_vendor["ansible.builtin.replace"]["regexp"],
+                    disable_vendor["ansible.builtin.replace"]["replace"],
+                    after,
+                    flags=re.MULTILINE,
+                )
+                self.assertIn("server approved.example iburst", disabled)
+                self.assertNotIn("\n" + base.splitlines()[0], disabled)
+                restored = re.sub(
+                    restore_vendor["ansible.builtin.replace"]["regexp"],
+                    restore_vendor["ansible.builtin.replace"]["replace"],
+                    disabled,
+                    flags=re.MULTILINE,
+                )
+                self.assertLess(restored.index(end), restored.index(base.splitlines()[0]))
+                self.assertEqual("absent", remove_sources["ansible.builtin.blockinfile"]["state"])
+                self.assertEqual(base, re.sub(re.escape(begin) + r"\n.*?" + re.escape(end) + r"\n", "", restored, flags=re.DOTALL))
 
     def test_verifier_platform_policy_evidence_is_unguarded_and_semantic(self) -> None:
         tasks = load_tasks("roles/os_baseline_verify/tasks/platform.yml")

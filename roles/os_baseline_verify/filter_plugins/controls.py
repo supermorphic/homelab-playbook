@@ -272,48 +272,116 @@ def os_baseline_verify_chrony_policy(text: str, requested: object) -> list[str]:
     return active_sources
 
 
-def os_baseline_verify_chrony_effective_policy(state: object, requested: object) -> list[str]:
-    """Validate a complete source view read from active chrony inputs."""
+def os_baseline_verify_chrony_effective_policy(
+    state: object,
+    requested: object,
+    platform: object,
+) -> list[str]:
+    """Validate the complete Chrony decision for Debian 13 or Rocky 9."""
+    platform_names = {"Debian": "debian", "RedHat": "rocky"}
+    if not isinstance(platform, str) or platform not in platform_names:
+        raise ValueError("chrony platform is unsupported")
+    expected_platform = platform_names[platform]
     if not isinstance(state, Mapping) or not isinstance(requested, list):
         raise ValueError("chrony effective state is invalid")
-    expected_keys = {"sources", "disabled_sources", "active_inputs", "disabled_inputs", "markers"}
-    if set(state) != expected_keys or not all(isinstance(source, str) and source for source in requested):
+    expected_keys = {
+        "platform", "sources", "disabled_sources", "active_inputs",
+        "disabled_inputs", "markers",
+    }
+    if (set(state) != expected_keys or state["platform"] != expected_platform
+            or not all(isinstance(source, str) and source for source in requested)):
         raise ValueError("chrony effective state is invalid")
-    allowed_origins = {"primary", "include", "confdir", "sourcedir"}
+    primary_paths = {
+        "debian": "/etc/chrony/chrony.conf",
+        "rocky": "/etc/chrony.conf",
+    }
+    vendor_pools = {
+        "debian": "2.debian.pool.ntp.org",
+        "rocky": "2.rocky.pool.ntp.org",
+    }
+    vendor_inputs = {
+        "debian": [
+            ("sourcedir", ("/run/chrony-dhcp",)),
+            ("sourcedir", ("/etc/chrony/sources.d",)),
+            ("confdir", ("/etc/chrony/conf.d",)),
+        ],
+        "rocky": [("sourcedir", ("/run/chrony-dhcp",))],
+    }
 
-    def entries(name: str) -> list[Mapping[str, str]]:
+    def sources(name: str) -> list[Mapping[str, str]]:
         value = state[name]
         if not isinstance(value, list):
             raise ValueError("chrony source entries are invalid")
         result: list[Mapping[str, str]] = []
         for entry in value:
-            if not isinstance(entry, Mapping) or set(entry) != {"source", "origin"}:
+            if not isinstance(entry, Mapping) or set(entry) != {
+                "source", "directive", "configured_path", "resolved_path",
+            }:
                 raise ValueError("chrony source entry is invalid")
-            source, origin = entry["source"], entry["origin"]
-            if not isinstance(source, str) or not isinstance(origin, str) or origin not in allowed_origins:
+            if (not all(isinstance(entry[key], str) and entry[key] for key in entry)
+                    or entry["directive"] not in {"server", "pool", "peer"}):
                 raise ValueError("chrony source entry is invalid")
             result.append(entry)
         return result
 
-    sources = entries("sources")
-    disabled_sources = entries("disabled_sources")
-    for name in ("active_inputs", "disabled_inputs"):
-        if not isinstance(state[name], list) or not all(value in {"include", "confdir", "sourcedir"} for value in state[name]):
+    def inputs(name: str) -> list[tuple[str, tuple[str, ...]]]:
+        value = state[name]
+        if not isinstance(value, list):
             raise ValueError("chrony source input is invalid")
+        result: list[tuple[str, tuple[str, ...]]] = []
+        for entry in value:
+            if not isinstance(entry, Mapping) or set(entry) != {
+                "kind", "configured_paths", "resolved_paths",
+            }:
+                raise ValueError("chrony source input is invalid")
+            kind, configured, resolved = (
+                entry["kind"], entry["configured_paths"], entry["resolved_paths"],
+            )
+            if (kind not in {"include", "confdir", "sourcedir"}
+                    or not isinstance(configured, list) or not configured
+                    or not all(isinstance(path, str) and path.startswith("/") for path in configured)
+                    or not isinstance(resolved, list)
+                    or not all(isinstance(path, str) and path.startswith("/") for path in resolved)):
+                raise ValueError("chrony source input is invalid")
+            result.append((kind, tuple(configured)))
+        return result
+
+    active_sources = sources("sources")
+    disabled_sources = sources("disabled_sources")
+    active_inputs = inputs("active_inputs")
+    disabled_inputs = inputs("disabled_inputs")
     markers = state["markers"]
-    if not isinstance(markers, Mapping) or set(markers) != {"begin", "end"} or not all(isinstance(markers[key], int) for key in markers):
+    if (not isinstance(markers, Mapping) or set(markers) != {"begin", "end"}
+            or not all(isinstance(markers[key], int) for key in markers)):
         raise ValueError("chrony markers are invalid")
-    active = [entry["source"] for entry in sources]
+    active = [entry["source"] for entry in active_sources]
+    primary_path = primary_paths[expected_platform]
+    expected_inputs = vendor_inputs[expected_platform]
+    expected_vendor_source = vendor_pools[expected_platform]
     if requested:
         if (markers != {"begin": 1, "end": 1} or active != requested
-                or state["active_inputs"] or not disabled_sources):
+                or active_inputs != [] or disabled_inputs != expected_inputs
+                or not disabled_sources
+                or any(entry["directive"] != "server" or entry["configured_path"] != primary_path
+                       for entry in active_sources)
+                or not any(entry["source"] == expected_vendor_source
+                           and entry["directive"] == "pool"
+                           and entry["configured_path"] == primary_path
+                           for entry in disabled_sources)):
             raise ValueError("chrony approved-source policy is not exact")
-    else:
-        vendor = re.compile(r"^(?:[0-9]+\.)?(?:debian|rocky)\.pool\.ntp\.org$")
-        primary = [entry["source"] for entry in sources if entry["origin"] == "primary"]
-        if (markers != {"begin": 0, "end": 0} or disabled_sources or state["disabled_inputs"]
-                or not primary or not all(vendor.fullmatch(source) for source in primary)):
+        return active
+    if (markers != {"begin": 0, "end": 0} or disabled_sources
+            or disabled_inputs or active_inputs != expected_inputs):
+        raise ValueError("chrony vendor-source policy is not exact")
+    has_vendor_pool = False
+    for entry in active_sources:
+        if (entry["source"] == expected_vendor_source and entry["directive"] == "pool"
+                and entry["configured_path"] == primary_path):
+            has_vendor_pool = True
+        elif not entry["configured_path"].startswith("/run/chrony-dhcp/"):
             raise ValueError("chrony vendor-source policy is not exact")
+    if not has_vendor_pool:
+        raise ValueError("chrony vendor-source policy is not exact")
     return active
 
 
