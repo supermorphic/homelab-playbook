@@ -5,6 +5,7 @@ from __future__ import annotations
 import configparser
 import ast
 from collections import Counter
+from copy import deepcopy
 import re
 import subprocess
 import tempfile
@@ -214,7 +215,378 @@ def assert_observational_verifier_task(task: dict[str, object]) -> None:
         assert_observational_script(REPOSITORY_ROOT / "roles/os_baseline_verify/files" / str(script["cmd"]).split()[0])
 
 
+COMBINED_REBOOT_EXPRESSION = """{{ (system_maintenance_reboot_required | default(false) | bool)
+or (security_baseline_reboot_required | default(false) | bool) }}"""
+
+
+def normalize_expression(value: object) -> str:
+    if not isinstance(value, str):
+        raise AssertionError(f"expected a Jinja expression, got {value!r}")
+    return " ".join(value.split())
+
+
+def task_module(task: dict[str, object]) -> str:
+    actions = [key for key in task if key not in TASK_META_KEYS]
+    if len(actions) != 1:
+        raise AssertionError(f"task does not have one direct module: {task!r}")
+    return actions[0]
+
+
+def unique_task_index(
+    tasks: list[dict[str, object]], module: str, payload: object,
+) -> int:
+    matches = [
+        index for index, task in enumerate(tasks)
+        if module in task and task[module] == payload
+    ]
+    if len(matches) != 1:
+        raise AssertionError(
+            f"expected one {module} task with payload {payload!r}, got {len(matches)}"
+        )
+    return matches[0]
+
+
+def unique_module_index(tasks: list[dict[str, object]], module: str) -> int:
+    matches = [
+        index for index, task in enumerate(tasks)
+        if task_module(task) == module
+    ]
+    if len(matches) != 1:
+        raise AssertionError(f"expected one {module} task, got {len(matches)}")
+    return matches[0]
+
+
+def unique_fact_task_index(tasks: list[dict[str, object]], fact: str) -> int:
+    matches = [
+        index for index, task in enumerate(tasks)
+        if isinstance(task.get("ansible.builtin.set_fact"), dict)
+        and fact in task["ansible.builtin.set_fact"]
+    ]
+    if len(matches) != 1:
+        raise AssertionError(f"expected one set_fact task for {fact}, got {len(matches)}")
+    return matches[0]
+
+
+def assert_combined_reboot_fact(task: dict[str, object]) -> None:
+    facts = task.get("ansible.builtin.set_fact")
+    if not isinstance(facts, dict) or set(facts) != {"os_reboot_required"}:
+        raise AssertionError("reboot combination must set only os_reboot_required")
+    if normalize_expression(facts["os_reboot_required"]) != normalize_expression(
+        COMBINED_REBOOT_EXPRESSION
+    ):
+        raise AssertionError("reboot combination must OR both default-false boolean facts")
+
+
+def assert_reboot_result_is_recorded(
+    reboot_task: dict[str, object], record_task: dict[str, object],
+) -> None:
+    registered = reboot_task.get("register")
+    if not isinstance(registered, str) or not registered:
+        raise AssertionError("reboot task must register its result")
+    facts = record_task.get("ansible.builtin.set_fact")
+    if not isinstance(facts, dict) or set(facts) != {"os_reboot_performed"}:
+        raise AssertionError("reboot record must set only os_reboot_performed")
+    expected = f"{{{{ {registered}.changed | default(false) | bool }}}}"
+    if normalize_expression(facts["os_reboot_performed"]) != expected:
+        raise AssertionError("reboot record must consume the registered reboot result")
+
+
+def assert_strictly_ordered(*indices: int) -> None:
+    if list(indices) != sorted(indices) or len(set(indices)) != len(indices):
+        raise AssertionError(f"tasks are not strictly ordered: {indices}")
+
+
+def assert_scheduler_neutral_maintenance(play: dict[str, object]) -> None:
+    executable_sections = {
+        section
+        for section in ("roles", "tasks", "pre_tasks", "post_tasks", "handlers")
+        if section in play
+    }
+    if executable_sections != {"pre_tasks", "post_tasks"}:
+        raise AssertionError(
+            "maintenance may execute only its pre_tasks and post_tasks sections"
+        )
+    actual_modules = [task_module(task) for task in play["pre_tasks"]]
+    if actual_modules != [
+        "ansible.builtin.assert",
+        "ansible.builtin.assert",
+        "ansible.builtin.import_role",
+        "ansible.builtin.import_role",
+        "ansible.builtin.set_fact",
+        "ansible.builtin.debug",
+        "ansible.builtin.reboot",
+        "ansible.builtin.set_fact",
+        "ansible.builtin.meta",
+        "ansible.builtin.setup",
+    ]:
+        raise AssertionError("maintenance executable task composition is not allowed")
+
+
 class SourceContractTests(unittest.TestCase):
+    def test_os_playbooks_are_sequential_and_reboot_at_playbook_level(self) -> None:
+        provision, maintain = (
+            load_yaml_documents(path)[0]
+            for path in ("playbooks/os/provision.yml", "playbooks/os/maintain.yml")
+        )
+        for plays in (provision, maintain):
+            self.assertTrue(all(play["serial"] == 1 for play in plays))
+            self.assertTrue(all(play["any_errors_fatal"] is True for play in plays))
+
+        provisioning = provision[1]
+        maintenance = maintain[0]
+        self.assertIs(provisioning["vars"]["os_reboot_enabled"], False)
+        self.assertIs(maintenance["vars"]["os_reboot_enabled"], False)
+
+        provisioning_pre = provisioning["pre_tasks"]
+        provisioning_post = provisioning["post_tasks"]
+        pre_update = unique_task_index(
+            provisioning_pre,
+            "ansible.builtin.import_role",
+            {"name": "security_baseline", "tasks_from": "pre-update.yml"},
+        )
+        full_update = unique_task_index(
+            provisioning_pre,
+            "ansible.builtin.import_role",
+            {"name": "system_maintenance", "tasks_from": "full-update.yml"},
+        )
+        security_post_update = unique_task_index(
+            provisioning_pre,
+            "ansible.builtin.import_role",
+            {"name": "security_baseline", "tasks_from": "post-update.yml"},
+        )
+        automatic_updates = unique_task_index(
+            provisioning_pre,
+            "ansible.builtin.import_role",
+            {"name": "system_maintenance", "tasks_from": "automatic-updates.yml"},
+        )
+        reboot_state = unique_task_index(
+            provisioning_pre,
+            "ansible.builtin.import_role",
+            {"name": "system_maintenance", "tasks_from": "reboot-state.yml"},
+        )
+        combine = unique_fact_task_index(provisioning_pre, "os_reboot_required")
+        assert_combined_reboot_fact(provisioning_pre[combine])
+        reboot = unique_task_index(provisioning_pre, "ansible.builtin.reboot", None)
+        self.assertEqual(
+            ["os_reboot_required | bool", "os_reboot_enabled | bool"],
+            provisioning_pre[reboot]["when"],
+        )
+        record = unique_fact_task_index(provisioning_pre, "os_reboot_performed")
+        self.assertEqual(reboot + 1, record)
+        assert_reboot_result_is_recorded(
+            provisioning_pre[reboot], provisioning_pre[record]
+        )
+        reset = unique_task_index(
+            provisioning_pre, "ansible.builtin.meta", "reset_connection"
+        )
+        setup = unique_task_index(provisioning_pre, "ansible.builtin.setup", None)
+        post_boot = unique_task_index(
+            provisioning_pre,
+            "ansible.builtin.import_role",
+            {"name": "security_baseline", "tasks_from": "mac.yml"},
+        )
+        for index in (reset, setup, post_boot):
+            self.assertEqual("os_reboot_performed | bool", provisioning_pre[index]["when"])
+        assert_strictly_ordered(
+            pre_update,
+            full_update,
+            security_post_update,
+            automatic_updates,
+            reboot_state,
+            combine,
+            reboot,
+            record,
+            reset,
+            setup,
+            post_boot,
+        )
+        self.assertEqual(1, len(provisioning_post))
+        verifier = unique_task_index(
+            provisioning_post,
+            "ansible.builtin.import_role",
+            {"name": "os_baseline_verify"},
+        )
+        self.assertEqual(0, verifier)
+
+        maintenance_pre = maintenance["pre_tasks"]
+        maintenance_post = maintenance["post_tasks"]
+        assert_scheduler_neutral_maintenance(maintenance)
+        maintenance_update = unique_task_index(
+            maintenance_pre,
+            "ansible.builtin.import_role",
+            {"name": "system_maintenance", "tasks_from": "full-update.yml"},
+        )
+        maintenance_reboot_state = unique_task_index(
+            maintenance_pre,
+            "ansible.builtin.import_role",
+            {"name": "system_maintenance", "tasks_from": "reboot-state.yml"},
+        )
+        maintenance_combine = unique_fact_task_index(
+            maintenance_pre, "os_reboot_required"
+        )
+        assert_combined_reboot_fact(maintenance_pre[maintenance_combine])
+        report = unique_module_index(maintenance_pre, "ansible.builtin.debug")
+        self.assertEqual(
+            "A reboot is required. Re-run with -e os_reboot_enabled=true to authorize the reboot.",
+            normalize_expression(maintenance_pre[report]["ansible.builtin.debug"]["msg"]),
+        )
+        self.assertEqual(
+            ["os_reboot_required | bool", "not (os_reboot_enabled | bool)"],
+            maintenance_pre[report]["when"],
+        )
+        maintenance_reboot = unique_task_index(
+            maintenance_pre, "ansible.builtin.reboot", None
+        )
+        self.assertEqual(
+            ["os_reboot_required | bool", "os_reboot_enabled | bool"],
+            maintenance_pre[maintenance_reboot]["when"],
+        )
+        maintenance_record = unique_fact_task_index(
+            maintenance_pre, "os_reboot_performed"
+        )
+        self.assertEqual(maintenance_reboot + 1, maintenance_record)
+        assert_reboot_result_is_recorded(
+            maintenance_pre[maintenance_reboot], maintenance_pre[maintenance_record]
+        )
+        maintenance_reset = unique_task_index(
+            maintenance_pre, "ansible.builtin.meta", "reset_connection"
+        )
+        maintenance_setup = unique_task_index(
+            maintenance_pre, "ansible.builtin.setup", None
+        )
+        for index in (maintenance_reset, maintenance_setup):
+            self.assertEqual(
+                "os_reboot_performed | bool", maintenance_pre[index]["when"]
+            )
+        assert_strictly_ordered(
+            maintenance_update,
+            maintenance_reboot_state,
+            maintenance_combine,
+            report,
+            maintenance_reboot,
+            maintenance_record,
+            maintenance_reset,
+            maintenance_setup,
+        )
+        self.assertEqual(1, len(maintenance_post))
+        maintenance_verifier = unique_task_index(
+            maintenance_post,
+            "ansible.builtin.import_role",
+            {"name": "os_baseline_verify"},
+        )
+        self.assertEqual(0, maintenance_verifier)
+        self.assertEqual(
+            "ansible_os_family != 'Archlinux'",
+            maintenance_post[maintenance_verifier]["when"],
+        )
+
+    def test_os_playbook_contracts_reject_unsafe_composition_mutations(self) -> None:
+        provision, maintenance = (
+            load_yaml_documents(path)[0]
+            for path in ("playbooks/os/provision.yml", "playbooks/os/maintain.yml")
+        )
+        combined_index = unique_fact_task_index(
+            provision[1]["pre_tasks"], "os_reboot_required"
+        )
+        bad_combination = deepcopy(provision[1]["pre_tasks"][combined_index])
+        bad_combination["ansible.builtin.set_fact"]["os_reboot_required"] = (
+            COMBINED_REBOOT_EXPRESSION.replace("\nor ", "\nand ")
+        )
+        with self.assertRaises(AssertionError):
+            assert_combined_reboot_fact(bad_combination)
+
+        for play in (provision[1], maintenance[0]):
+            pre_tasks = play["pre_tasks"]
+            reboot = unique_task_index(pre_tasks, "ansible.builtin.reboot", None)
+            record = unique_fact_task_index(pre_tasks, "os_reboot_performed")
+            missing_register = deepcopy(pre_tasks[reboot])
+            del missing_register["register"]
+            with self.assertRaises(AssertionError):
+                assert_reboot_result_is_recorded(missing_register, pre_tasks[record])
+
+            mismatched_register = deepcopy(pre_tasks[reboot])
+            mismatched_register["register"] = "different_reboot_result"
+            with self.assertRaises(AssertionError):
+                assert_reboot_result_is_recorded(mismatched_register, pre_tasks[record])
+
+        reordered = deepcopy(provision[1]["pre_tasks"])
+        reboot_state = unique_task_index(
+            reordered,
+            "ansible.builtin.import_role",
+            {"name": "system_maintenance", "tasks_from": "reboot-state.yml"},
+        )
+        combine = unique_fact_task_index(reordered, "os_reboot_required")
+        moved = reordered.pop(reboot_state)
+        reordered.insert(combine + 1, moved)
+        with self.assertRaises(AssertionError):
+            assert_strictly_ordered(
+                unique_task_index(
+                    reordered,
+                    "ansible.builtin.import_role",
+                    {"name": "security_baseline", "tasks_from": "post-update.yml"},
+                ),
+                unique_task_index(
+                    reordered,
+                    "ansible.builtin.import_role",
+                    {"name": "system_maintenance", "tasks_from": "reboot-state.yml"},
+                ),
+                unique_fact_task_index(reordered, "os_reboot_required"),
+            )
+
+        for section in ("roles", "tasks"):
+            scheduled = deepcopy(maintenance[0])
+            scheduled[section] = []
+            with self.subTest(section=section):
+                with self.assertRaises(AssertionError):
+                    assert_scheduler_neutral_maintenance(scheduled)
+
+        scheduled_task = deepcopy(maintenance[0])
+        scheduled_task["pre_tasks"].append(
+            {"ansible.builtin.cron": {"name": "maintenance", "minute": "0"}}
+        )
+        with self.assertRaises(AssertionError):
+            assert_scheduler_neutral_maintenance(scheduled_task)
+
+    def test_os_maintenance_rejects_unsupported_distribution_releases(self) -> None:
+        """Full maintenance must stop before updating unsupported family members."""
+        unsupported = (
+            {"ansible_os_family": "Debian", "ansible_distribution": "Debian", "ansible_distribution_major_version": "12"},
+            {"ansible_os_family": "RedHat", "ansible_distribution": "RedHat", "ansible_distribution_major_version": "9"},
+        )
+        for facts in unsupported:
+            with self.subTest(facts=facts):
+                result = subprocess.run(
+                    [
+                        "ansible-playbook",
+                        "playbooks/os/maintain.yml",
+                        "--inventory",
+                        "servers,",
+                        "--connection",
+                        "local",
+                        "--limit",
+                        "servers",
+                        "--check",
+                        "--extra-vars",
+                        str({"ansible_become": False, **facts}),
+                    ],
+                    cwd=REPOSITORY_ROOT,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                output = result.stdout + result.stderr
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "maintenance supports Debian 13, Rocky Linux 9, and Arch Linux only",
+                    output,
+                )
+
+    def test_complete_provisioning_starts_without_facts_or_become(self) -> None:
+        first = load_yaml_documents("playbooks/os/provision.yml")[0][0]
+        self.assertIs(first["gather_facts"], False)
+        self.assertIs(first["become"], False)
+        self.assertEqual(["os_bootstrap"], first["roles"])
+
     def test_os_baseline_verifier_is_observational(self) -> None:
         task_paths = sorted(
             (REPOSITORY_ROOT / "roles/os_baseline_verify/tasks").glob("*.yml")

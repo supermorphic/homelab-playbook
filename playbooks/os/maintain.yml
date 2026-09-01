@@ -1,0 +1,83 @@
+---
+- name: Run scheduler-neutral full OS maintenance
+  hosts: servers
+  serial: 1
+  any_errors_fatal: true
+  gather_facts: true
+  become: true
+  vars:
+    os_reboot_enabled: false
+  pre_tasks:
+    - name: Validate full-maintenance platform support
+      ansible.builtin.assert:
+        that:
+          - >-
+            (ansible_distribution == 'Debian' and
+             ansible_distribution_major_version == '13') or
+            (ansible_distribution == 'Rocky' and
+             ansible_distribution_major_version == '9') or
+            ansible_distribution == 'Archlinux'
+        fail_msg: >-
+          os maintenance supports Debian 13, Rocky Linux 9, and Arch Linux only
+
+    - name: Validate complete-platform verification inputs
+      ansible.builtin.assert:
+        that:
+          - security_baseline_authorized_keys | length > 0
+          - security_baseline_management_sources | length > 0
+        fail_msg: >-
+          complete-platform maintenance verification requires authorized
+          controller keys and management sources
+      no_log: true
+      when: ansible_os_family != 'Archlinux'
+
+    - name: Run the explicit maintenance full update
+      ansible.builtin.import_role:
+        name: system_maintenance
+        tasks_from: full-update.yml
+
+    - name: Inspect maintenance reboot-required state
+      ansible.builtin.import_role:
+        name: system_maintenance
+        tasks_from: reboot-state.yml
+
+    - name: Combine maintenance reboot requirements
+      ansible.builtin.set_fact:
+        os_reboot_required: >-
+          {{ (system_maintenance_reboot_required | default(false) | bool)
+             or (security_baseline_reboot_required | default(false) | bool) }}
+
+    - name: Report a reboot that requires operator authorization
+      ansible.builtin.debug:
+        msg: >-
+          A reboot is required. Re-run with -e os_reboot_enabled=true to
+          authorize the reboot.
+      when:
+        - os_reboot_required | bool
+        - not (os_reboot_enabled | bool)
+
+    - name: Reboot after maintenance when authorized
+      ansible.builtin.reboot:
+      register: os_maintenance_reboot
+      when:
+        - os_reboot_required | bool
+        - os_reboot_enabled | bool
+
+    - name: Record whether Ansible controlled the maintenance reboot
+      ansible.builtin.set_fact:
+        os_reboot_performed: >-
+          {{ os_maintenance_reboot.changed | default(false) | bool }}
+
+    - name: Reset the connection after an Ansible-controlled reboot
+      ansible.builtin.meta: reset_connection
+      when: os_reboot_performed | bool
+
+    - name: Gather facts after an Ansible-controlled reboot
+      ansible.builtin.setup:
+      when: os_reboot_performed | bool
+
+  post_tasks:
+    - name: Verify the complete OS baseline after maintenance
+      ansible.builtin.import_role:
+        name: os_baseline_verify
+      when: ansible_os_family != 'Archlinux'
