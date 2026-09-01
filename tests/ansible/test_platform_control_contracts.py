@@ -528,6 +528,36 @@ class FirewallPolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.controls.security_baseline_firewall_rules(payload)
 
+    def test_management_peer_must_be_covered_by_desired_private_sources(
+        self,
+    ) -> None:
+        self.assertTrue(
+            self.controls.security_baseline_firewall_peer_is_covered(
+                "10.0.0.5",
+                ["10.0.0.0/24"],
+            )
+        )
+        self.assertFalse(
+            self.controls.security_baseline_firewall_peer_is_covered(
+                "10.0.0.5",
+                ["192.168.50.0/24"],
+            )
+        )
+
+    def test_management_peer_preflight_precedes_firewall_mutation(self) -> None:
+        tasks = load_tasks("roles/security_baseline/tasks/firewall.yml")
+        names = [task["name"] for task in tasks]
+        coverage = names.index("Validate management peer against desired sources")
+        for mutation in (
+            "Install firewalld",
+            "Create permanent homelab firewall zone",
+            "Enable and start firewalld",
+            "Bind runtime management interface to homelab",
+            "Persist management interface binding to homelab",
+        ):
+            with self.subTest(mutation=mutation):
+                self.assertLess(coverage, names.index(mutation))
+
     def test_exact_policy_rejects_alternate_binding_and_every_direct_opening(
         self,
     ) -> None:

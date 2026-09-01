@@ -73,6 +73,21 @@ def security_baseline_firewall_rules(payload: Mapping[str, object]) -> list[str]
     return rules
 
 
+def security_baseline_firewall_peer_is_covered(
+    management_peer: str,
+    management_sources: object,
+) -> bool:
+    """Return whether the active SSH peer is inside a desired source CIDR."""
+    peer = ipaddress.ip_address(management_peer)
+    return any(
+        peer.version == network.version and peer in network
+        for network in (
+            ipaddress.ip_network(source, strict=True)
+            for source in _validate_private_sources(management_sources)
+        )
+    )
+
+
 def security_baseline_firewall_reload_required(
     runtime: Mapping[str, object],
     desired_rules: list[str],
@@ -205,6 +220,7 @@ class FilterModule:
     def filters(self) -> dict[str, object]:
         return {
             "security_baseline_firewall_rules": security_baseline_firewall_rules,
+            "security_baseline_firewall_peer_is_covered": security_baseline_firewall_peer_is_covered,
             "security_baseline_firewall_reload_required": security_baseline_firewall_reload_required,
             "security_baseline_firewall_target_from_list_all": security_baseline_firewall_target_from_list_all,
             "security_baseline_firewall_policy_errors": security_baseline_firewall_policy_errors,

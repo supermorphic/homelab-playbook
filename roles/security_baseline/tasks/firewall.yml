@@ -8,6 +8,34 @@
          } | security_baseline_firewall_rules }}
   no_log: true
 
+- name: Discover target-side management interface
+  ansible.builtin.script:
+    cmd: discover_management_interface.py
+    executable: /usr/bin/python3
+  register: security_baseline_firewall_management_raw
+  changed_when: false
+  no_log: true
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Record target-side management interface
+  ansible.builtin.set_fact:
+    security_baseline_firewall_management: >-
+      {{ security_baseline_firewall_management_raw.stdout | from_json }}
+  no_log: true
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Validate management peer against desired sources
+  ansible.builtin.assert:
+    that:
+      - >-
+        security_baseline_firewall_management.peer
+        | security_baseline_firewall_peer_is_covered(
+            security_baseline_management_sources
+          )
+    fail_msg: The active SSH peer is outside the desired management sources
+  no_log: true
+  when: security_baseline_apply_firewall_runtime | bool
+
 - name: Install firewalld
   ansible.builtin.package:
     name: firewalld
@@ -163,22 +191,6 @@
     permanent: false
     immediate: true
   loop: "{{ security_baseline_firewall_desired_rules }}"
-  no_log: true
-  when: security_baseline_apply_firewall_runtime | bool
-
-- name: Discover target-side management interface
-  ansible.builtin.script:
-    cmd: discover_management_interface.py
-    executable: /usr/bin/python3
-  register: security_baseline_firewall_management_raw
-  changed_when: false
-  no_log: true
-  when: security_baseline_apply_firewall_runtime | bool
-
-- name: Record target-side management interface
-  ansible.builtin.set_fact:
-    security_baseline_firewall_management: >-
-      {{ security_baseline_firewall_management_raw.stdout | from_json }}
   no_log: true
   when: security_baseline_apply_firewall_runtime | bool
 
