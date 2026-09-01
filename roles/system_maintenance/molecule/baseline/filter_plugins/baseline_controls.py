@@ -40,6 +40,33 @@ EXPECTED_TIMER = {
     "RandomizedDelaySec": "0",
     "Persistent": "true",
 }
+EXPECTED_SSH_POLICY = {
+    "allowusers": "allowusers ansible",
+    "pubkeyauthentication": "pubkeyauthentication yes",
+    "passwordauthentication": "passwordauthentication no",
+    "kbdinteractiveauthentication": "kbdinteractiveauthentication no",
+    "permitemptypasswords": "permitemptypasswords no",
+    "permitrootlogin": "permitrootlogin no",
+    "allowagentforwarding": "allowagentforwarding no",
+    "allowtcpforwarding": "allowtcpforwarding no",
+    "x11forwarding": "x11forwarding no",
+    "permittunnel": "permittunnel no",
+}
+
+
+def system_maintenance_molecule_baseline_sshd_errors(
+    lines: object,
+) -> list[str]:
+    """Return connection-specific SSH policy differences."""
+    if not isinstance(lines, list) or not all(
+        isinstance(line, str) for line in lines
+    ):
+        raise ValueError("effective SSH policy must be a list of lines")
+    return [
+        name
+        for name, expected in EXPECTED_SSH_POLICY.items()
+        if lines.count(expected) != 1
+    ]
 
 
 def _command_results(
@@ -277,6 +304,7 @@ def system_maintenance_molecule_baseline_rocky_updater_errors(
 class FilterModule:
     def filters(self) -> dict[str, object]:
         return {
+            "system_maintenance_molecule_baseline_sshd_errors": system_maintenance_molecule_baseline_sshd_errors,
             "system_maintenance_molecule_baseline_firewall_errors": system_maintenance_molecule_baseline_firewall_errors,
             "system_maintenance_molecule_baseline_debian_updater_errors": system_maintenance_molecule_baseline_debian_updater_errors,
             "system_maintenance_molecule_baseline_rocky_updater_errors": system_maintenance_molecule_baseline_rocky_updater_errors,

@@ -105,24 +105,51 @@
         cmd: /usr/sbin/sshd -t
       changed_when: false
 
-    - name: Read effective OpenSSH policy
+    - name: Read effective OpenSSH policy for the administrative context
       ansible.builtin.command:
-        argv: [/usr/sbin/sshd, -T]
+        argv:
+          - /usr/sbin/sshd
+          - -T
+          - -C
+          - user=ansible,host=127.0.0.1,addr=127.0.0.1,laddr=127.0.0.1,lport=22
       register: system_maintenance_molecule_baseline_sshd_effective
       changed_when: false
 
     - name: Verify effective OpenSSH policy
+      vars:
+        system_maintenance_molecule_baseline_sshd_problems: >-
+          {{ system_maintenance_molecule_baseline_sshd_effective.stdout_lines
+             | system_maintenance_molecule_baseline_sshd_errors }}
       ansible.builtin.assert:
         that:
-          - "'allowusers ansible' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
-          - "'pubkeyauthentication yes' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
-          - "'passwordauthentication no' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
-          - "'kbdinteractiveauthentication no' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
-          - "'permitrootlogin no' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
-          - "'allowagentforwarding no' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
-          - "'allowtcpforwarding no' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
-          - "'x11forwarding no' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
-          - "'permittunnel no' in system_maintenance_molecule_baseline_sshd_effective.stdout_lines"
+          - system_maintenance_molecule_baseline_sshd_problems | length == 0
+
+    - name: Exercise an adversarial matching OpenSSH policy in memory
+      ansible.builtin.command:
+        argv:
+          - /usr/sbin/sshd
+          - -T
+          - -f
+          - /dev/stdin
+          - -C
+          - user=ansible,host=127.0.0.1,addr=127.0.0.1,laddr=127.0.0.1,lport=22
+        stdin: |
+          Include /etc/ssh/sshd_config
+          Match User ansible
+            PasswordAuthentication yes
+            AllowTcpForwarding yes
+      register: system_maintenance_molecule_baseline_sshd_adversarial
+      changed_when: false
+
+    - name: Prove the oracle rejects matching SSH weakening
+      vars:
+        system_maintenance_molecule_baseline_sshd_adversarial_problems: >-
+          {{ system_maintenance_molecule_baseline_sshd_adversarial.stdout_lines
+             | system_maintenance_molecule_baseline_sshd_errors }}
+      ansible.builtin.assert:
+        that:
+          - "'passwordauthentication' in system_maintenance_molecule_baseline_sshd_adversarial_problems"
+          - "'allowtcpforwarding' in system_maintenance_molecule_baseline_sshd_adversarial_problems"
 
     - name: Read permanent firewalld default configuration
       ansible.builtin.slurp:

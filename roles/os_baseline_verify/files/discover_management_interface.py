@@ -10,7 +10,7 @@ import pathlib
 import subprocess
 
 
-def discover() -> dict[str, str]:
+def discover() -> dict[str, str | int]:
     process = os.getpid()
     connection = ""
     while process > 1 and not connection:
@@ -25,11 +25,21 @@ def discover() -> dict[str, str]:
     if len(fields) != 4:
         raise ValueError("SSH_CONNECTION is absent or invalid")
     peer = str(ipaddress.ip_address(fields[0]))
+    local_address = str(ipaddress.ip_address(fields[2]))
+    local_port = int(fields[3])
+    if not 1 <= local_port <= 65535:
+        raise ValueError("SSH_CONNECTION local port is invalid")
     route = subprocess.run(["/usr/sbin/ip", "-json", "route", "get", peer], check=True, capture_output=True, text=True)
     routes = json.loads(route.stdout)
     if not isinstance(routes, list) or len(routes) != 1 or not isinstance(routes[0].get("dev"), str):
         raise ValueError("management route is ambiguous")
-    return {"peer": peer, "interface": routes[0]["dev"]}
+    return {
+        "peer": peer,
+        "host": peer,
+        "local_address": local_address,
+        "local_port": local_port,
+        "interface": routes[0]["dev"],
+    }
 
 
 if __name__ == "__main__":

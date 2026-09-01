@@ -56,4 +56,14 @@
       - "{{ hostvars['localhost'].system_maintenance_molecule_public_key }}"
     security_baseline_management_sources:
       - 10.0.0.0/8
+    security_baseline_sshd_connection_context:
+      host: 127.0.0.1
+      peer: 127.0.0.1
+      local_address: 127.0.0.1
+      local_port: 22
+    os_baseline_verify_sshd_connection_context:
+      host: 127.0.0.1
+      peer: 127.0.0.1
+      local_address: 127.0.0.1
+      local_port: 22
     system_maintenance_native_reboot_enabled: false

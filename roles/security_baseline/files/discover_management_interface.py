@@ -26,11 +26,15 @@ def _ssh_connection_from_ancestry() -> str:
     raise ValueError("SSH_CONNECTION is absent from the management process ancestry")
 
 
-def discover() -> dict[str, str]:
+def discover() -> dict[str, str | int]:
     fields = _ssh_connection_from_ancestry().split()
     if len(fields) != 4:
         raise ValueError("SSH_CONNECTION does not have four fields")
     peer = str(ipaddress.ip_address(fields[0]))
+    local_address = str(ipaddress.ip_address(fields[2]))
+    local_port = int(fields[3])
+    if not 1 <= local_port <= 65535:
+        raise ValueError("SSH_CONNECTION local port is invalid")
     route = subprocess.run(
         ["/usr/sbin/ip", "-json", "route", "get", peer],
         check=True,
@@ -47,7 +51,13 @@ def discover() -> dict[str, str]:
         or any(character in interface for character in " /!*")
     ):
         raise ValueError("management route has an invalid interface")
-    return {"peer": peer, "interface": interface}
+    return {
+        "peer": peer,
+        "host": peer,
+        "local_address": local_address,
+        "local_port": local_port,
+        "interface": interface,
+    }
 
 
 def main() -> int:

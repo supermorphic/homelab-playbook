@@ -42,9 +42,45 @@
     argv: [sudo, -n, "true"]
   changed_when: false
 
-- name: Read effective SSH policy
+- name: Discover administrative SSH connection context
+  ansible.builtin.script:
+    cmd: discover_management_interface.py
+    executable: /usr/bin/python3
+  register: os_baseline_verify_sshd_connection_raw
+  changed_when: false
+  no_log: true
+  when: os_baseline_verify_sshd_connection_context | length == 0
+
+- name: Record administrative SSH connection context
+  ansible.builtin.set_fact:
+    os_baseline_verify_sshd_connection: >-
+      {{ os_baseline_verify_sshd_connection_context
+         if os_baseline_verify_sshd_connection_context | length > 0
+         else os_baseline_verify_sshd_connection_raw.stdout | from_json }}
+  no_log: true
+
+- name: Validate administrative SSH connection context
+  ansible.builtin.assert:
+    that:
+      - os_baseline_verify_sshd_connection.host == os_baseline_verify_sshd_connection.peer
+      - os_baseline_verify_sshd_connection.peer is match('^[0-9a-fA-F:.]+$')
+      - os_baseline_verify_sshd_connection.local_address is match('^[0-9a-fA-F:.]+$')
+      - os_baseline_verify_sshd_connection.local_port | int > 0
+      - os_baseline_verify_sshd_connection.local_port | int <= 65535
+    fail_msg: Administrative SSH connection context is invalid
+  no_log: true
+
+- name: Read effective SSH policy for the administrative connection
   ansible.builtin.command:
-    argv: [/usr/sbin/sshd, -T]
+    argv:
+      - /usr/sbin/sshd
+      - -T
+      - -C
+      - >-
+        {{ 'user=ansible,host=' ~ os_baseline_verify_sshd_connection.host
+           ~ ',addr=' ~ os_baseline_verify_sshd_connection.peer
+           ~ ',laddr=' ~ os_baseline_verify_sshd_connection.local_address
+           ~ ',lport=' ~ (os_baseline_verify_sshd_connection.local_port | string) }}
   register: os_baseline_verify_sshd_effective
   changed_when: false
 

@@ -83,6 +83,47 @@ def exact_firewall_results() -> tuple[list[dict[str, object]], list[dict[str, ob
     return zone, direct
 
 
+class SshOracleTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.controls = load_controls()
+        self.exact = [
+            "allowusers ansible",
+            "pubkeyauthentication yes",
+            "passwordauthentication no",
+            "kbdinteractiveauthentication no",
+            "permitemptypasswords no",
+            "permitrootlogin no",
+            "allowagentforwarding no",
+            "allowtcpforwarding no",
+            "x11forwarding no",
+            "permittunnel no",
+        ]
+
+    def test_exact_administrative_ssh_policy_has_no_errors(self) -> None:
+        self.assertEqual(
+            [],
+            self.controls.system_maintenance_molecule_baseline_sshd_errors(
+                self.exact
+            ),
+        )
+
+    def test_matching_user_block_weakening_is_rejected(self) -> None:
+        weakened = [
+            "passwordauthentication yes"
+            if line == "passwordauthentication no"
+            else "allowtcpforwarding yes"
+            if line == "allowtcpforwarding no"
+            else line
+            for line in self.exact
+        ]
+        self.assertEqual(
+            ["passwordauthentication", "allowtcpforwarding"],
+            self.controls.system_maintenance_molecule_baseline_sshd_errors(
+                weakened
+            ),
+        )
+
+
 class FirewallOracleTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:

@@ -507,6 +507,53 @@ class MoleculeScenarioContractTests(unittest.TestCase):
         self.assertIn("firewall_bindings.stdout", normalized_problems)
         self.assertIn("firewall_policies.stdout", normalized_problems)
 
+    def test_baseline_sshd_oracle_exercises_matching_connection_policy(self) -> None:
+        verify = load_baseline_yaml("verify.yml")[0]
+        tasks = verify["tasks"]
+        effective = next(
+            task
+            for task in tasks
+            if task["name"]
+            == "Read effective OpenSSH policy for the administrative context"
+        )
+        adversarial = next(
+            task
+            for task in tasks
+            if task["name"]
+            == "Exercise an adversarial matching OpenSSH policy in memory"
+        )
+        for task in (effective, adversarial):
+            argv = task["ansible.builtin.command"]["argv"]
+            self.assertIn("-C", argv)
+            context = argv[argv.index("-C") + 1]
+            for field in (
+                "user=ansible",
+                "host=127.0.0.1",
+                "addr=127.0.0.1",
+                "laddr=127.0.0.1",
+                "lport=22",
+            ):
+                self.assertIn(field, context)
+            self.assertIs(task["changed_when"], False)
+        self.assertEqual(
+            "/dev/stdin",
+            adversarial["ansible.builtin.command"]["argv"][3],
+        )
+        adversarial_input = adversarial["ansible.builtin.command"]["stdin"]
+        self.assertIn("Match User ansible", adversarial_input)
+        self.assertIn("PasswordAuthentication yes", adversarial_input)
+        self.assertIn("AllowTcpForwarding yes", adversarial_input)
+
+        rejection = next(
+            task
+            for task in tasks
+            if task["name"] == "Prove the oracle rejects matching SSH weakening"
+        )
+        self.assertIn(
+            "system_maintenance_molecule_baseline_sshd_errors",
+            str(rejection),
+        )
+
     def test_baseline_verifier_proves_repository_sudo_policy_before_effective_sudo(self) -> None:
         verify = load_baseline_yaml("verify.yml")[0]
         tasks = verify["tasks"]

@@ -1,2 +1,3 @@
 ---
 os_baseline_verify_runtime_controls: true
+os_baseline_verify_sshd_connection_context: {}

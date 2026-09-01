@@ -44,7 +44,6 @@ TASK_META_KEYS = {
 
 READ_ONLY_ARGV = {
     ("sudo", "-n", "true"),
-    ("/usr/sbin/sshd", "-T"),
     ("/usr/sbin/getenforce",),
     ("/usr/sbin/aa-status", "--enabled"),
     ("/usr/sbin/aa-status", "--json"),
@@ -67,6 +66,11 @@ READ_ONLY_ARGV = {
     ("/usr/bin/firewall-offline-cmd", "--list-all-policies"),
     ("/usr/bin/firewall-cmd", "--list-all-policies"),
 }
+
+READ_ONLY_SSHD_CONTEXT = """{{ 'user=ansible,host=' ~ os_baseline_verify_sshd_connection.host
+~ ',addr=' ~ os_baseline_verify_sshd_connection.peer
+~ ',laddr=' ~ os_baseline_verify_sshd_connection.local_address
+~ ',lport=' ~ (os_baseline_verify_sshd_connection.local_port | string) }}"""
 
 READ_ONLY_ARGV_TEMPLATES = {
     "{{ ['/usr/bin/firewall-offline-cmd', '--zone=homelab', item] }}",
@@ -147,11 +151,11 @@ def assert_observational_script(path: Path) -> None:
     calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
     call_counts = Counter(ast.unparse(call.func) for call in calls)
     expected_call_counts = Counter({
-        "os.getpid": 1, "connection.split": 1, "str": 1, "subprocess.run": 1,
-        "json.loads": 1, "print": 1, "len": 2, "ValueError": 2,
-        "ipaddress.ip_address": 1, "json.dumps": 1,
+        "os.getpid": 1, "connection.split": 1, "str": 2, "subprocess.run": 1,
+        "json.loads": 1, "print": 1, "len": 2, "ValueError": 3,
+        "ipaddress.ip_address": 2, "json.dumps": 1,
         "pathlib.Path(f'/proc/{process}/environ').read_bytes().split": 1,
-        "int": 1, "isinstance": 2, "discover": 1, "entry.startswith": 1,
+        "int": 2, "isinstance": 2, "discover": 1, "entry.startswith": 1,
         "routes[0].get": 1, "pathlib.Path(f'/proc/{process}/environ').read_bytes": 1,
         "entry.split(b'=', 1)[1].decode": 1,
         "pathlib.Path(f'/proc/{process}/stat').read_text().rsplit(') ', 1)[1].split": 1,
@@ -188,6 +192,11 @@ def assert_read_only_command(task: dict[str, object], command: object) -> None:
         expected_loop = FIREWALL_TEMPLATE_LOOPS.get(normalized)
         if expected_loop is not None and task.get("loop") != expected_loop:
             raise AssertionError("templated verifier command loop is not exact")
+    elif isinstance(argv, list) and argv[:3] == ["/usr/sbin/sshd", "-T", "-C"]:
+        if len(argv) != 4 or " ".join(str(argv[3]).split()) != " ".join(
+            READ_ONLY_SSHD_CONTEXT.split()
+        ):
+            raise AssertionError(f"sshd connection context is not exact: {argv}")
     elif not isinstance(argv, list) or tuple(argv) not in READ_ONLY_ARGV | READ_ONLY_ARGV_DYNAMIC_LISTS:
         raise AssertionError(f"command argv is not allowlisted: {argv}")
     if task.get("changed_when") is not False:
@@ -1003,6 +1012,62 @@ class SourceContractTests(unittest.TestCase):
             self.assertTrue(
                 result.returncode != 0 or len(result.stdout.splitlines()) != 2
             )
+
+    def test_effective_sshd_checks_use_the_administrative_connection_context(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "roles/security_baseline/tasks/access.yml",
+                "Discover administrative SSH connection context",
+                "Read effective SSH policy for the administrative connection",
+            ),
+            (
+                "roles/os_baseline_verify/tasks/access.yml",
+                "Discover administrative SSH connection context",
+                "Read effective SSH policy for the administrative connection",
+            ),
+        )
+        for path, discovery_name, read_name in cases:
+            with self.subTest(path=path):
+                tasks = load_tasks(path)
+                names = [task["name"] for task in tasks]
+                self.assertLess(names.index(discovery_name), names.index(read_name))
+                read = tasks[names.index(read_name)]
+                argv = read["ansible.builtin.command"]["argv"]
+                self.assertEqual(["/usr/sbin/sshd", "-T", "-C"], argv[:3])
+                context = argv[3]
+                for field in (
+                    "user=ansible",
+                    "host=",
+                    "addr=",
+                    "laddr=",
+                    "lport=",
+                ):
+                    self.assertIn(field, context)
+                self.assertIs(read["changed_when"], False)
+
+        for path in (
+            "roles/security_baseline/files/discover_management_interface.py",
+            "roles/os_baseline_verify/files/discover_management_interface.py",
+        ):
+            source = (REPOSITORY_ROOT / path).read_text(encoding="utf-8")
+            self.assertIn("fields[0]", source)
+            self.assertIn("fields[2]", source)
+            self.assertIn("fields[3]", source)
+
+        converge = load_yaml_documents(
+            "roles/system_maintenance/molecule/baseline/converge.yml"
+        )[0][1]
+        self.assertEqual(
+            {
+                "host": "127.0.0.1",
+                "peer": "127.0.0.1",
+                "local_address": "127.0.0.1",
+                "local_port": 22,
+            },
+            converge["vars"]["security_baseline_sshd_connection_context"],
+        )
 
     def test_firewall_policy_is_private_source_only_and_runtime_guarded(
         self,

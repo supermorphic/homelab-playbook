@@ -2,6 +2,7 @@
 security_baseline_authorized_keys: []
 security_baseline_management_sources: []
 security_baseline_firewall_services: []
+security_baseline_sshd_connection_context: {}
 security_baseline_apply_firewall_runtime: true
 security_baseline_apply_kernel_controls: true
 security_baseline_apply_time_runtime: true
