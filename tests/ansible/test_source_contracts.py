@@ -24,6 +24,24 @@ def load_tasks(relative_path: str) -> list[dict[str, object]]:
 
 
 class SourceContractTests(unittest.TestCase):
+    def test_os_baseline_verifier_is_observational(self) -> None:
+        task_paths = sorted(
+            (REPOSITORY_ROOT / "roles/os_baseline_verify/tasks").glob("*.yml")
+        )
+        self.assertTrue(task_paths)
+        source = "\n".join(
+            path.read_text(encoding="utf-8") for path in task_paths
+        )
+        for forbidden in (
+            "ansible.builtin.apt:", "ansible.builtin.dnf:",
+            "ansible.builtin.package:", "ansible.builtin.service:",
+            "ansible.builtin.systemd_service:", "ansible.builtin.copy:",
+            "ansible.builtin.template:", "ansible.builtin.reboot:",
+            "ansible.posix.firewalld:", "ansible.posix.selinux:",
+        ):
+            self.assertNotIn(forbidden, source)
+        self.assertNotIn("status.json", source)
+
     def test_os_bootstrap_uses_only_raw_until_python_is_available(self) -> None:
         tasks = load_tasks("roles/os_bootstrap/tasks/main.yml")
         python_task = next(

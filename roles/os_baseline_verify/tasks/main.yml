@@ -1,0 +1,25 @@
+---
+- name: Validate OS baseline verification platform
+  ansible.builtin.assert:
+    that:
+      - >-
+        (ansible_distribution == 'Debian' and
+         ansible_distribution_major_version == '13') or
+        (ansible_distribution == 'Rocky' and
+         ansible_distribution_major_version == '9')
+    fail_msg: OS baseline verification supports Debian 13 and Rocky Linux 9 only
+
+- name: Verify administrative access state
+  ansible.builtin.import_tasks: access.yml
+
+- name: Verify firewall state
+  ansible.builtin.import_tasks: firewall.yml
+
+- name: Verify platform security controls
+  ansible.builtin.import_tasks: platform.yml
+
+- name: Verify native security update state
+  ansible.builtin.import_tasks: updates.yml
+
+- name: Verify service and journal state
+  ansible.builtin.import_tasks: services.yml

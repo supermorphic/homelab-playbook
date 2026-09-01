@@ -1,0 +1,67 @@
+---
+- name: Read authoritative ansible account record
+  ansible.builtin.getent:
+    database: passwd
+    key: ansible
+  no_log: true
+
+- name: Read authoritative ansible shadow record
+  ansible.builtin.getent:
+    database: shadow
+    key: ansible
+  no_log: true
+
+- name: Read authoritative ansible authorized keys
+  ansible.builtin.slurp:
+    src: /home/ansible/.ssh/authorized_keys
+  register: os_baseline_verify_authorized_keys
+  no_log: true
+
+- name: Verify authoritative ansible access records
+  vars:
+    os_baseline_verify_authorized_key_lines: >-
+      {{ os_baseline_verify_authorized_keys.content
+         | b64decode | split('\n') | map('trim')
+         | reject('equalto', '') | list | sort }}
+  ansible.builtin.assert:
+    that:
+      - "'ansible' in getent_passwd"
+      - "'ansible' in getent_shadow"
+      - getent_passwd.ansible[5] == '/bin/bash'
+      - getent_shadow.ansible[0] is match('^[!*]')
+      - >-
+        os_baseline_verify_authorized_key_lines
+        == (security_baseline_authorized_keys | map('trim') | list | sort)
+    fail_msg: The authoritative ansible account or authorized keys do not match policy
+  no_log: true
+
+- name: Verify ansible non-interactive sudo access
+  become: true
+  become_user: ansible
+  ansible.builtin.command:
+    argv: [sudo, -n, "true"]
+  changed_when: false
+
+- name: Read effective SSH policy
+  ansible.builtin.command:
+    argv: [/usr/sbin/sshd, -T]
+  register: os_baseline_verify_sshd_effective
+  changed_when: false
+
+- name: Verify effective SSH policy
+  ansible.builtin.assert:
+    that:
+      - "'allowusers ansible' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'pubkeyauthentication yes' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'passwordauthentication no' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'kbdinteractiveauthentication no' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'permitemptypasswords no' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'permitrootlogin no' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'allowagentforwarding no' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'allowtcpforwarding no' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'x11forwarding no' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'permittunnel no' in os_baseline_verify_sshd_effective.stdout_lines"
+      - >-
+        os_baseline_verify_sshd_effective.stdout_lines
+        | select('match', '^subsystem sftp(?: |$)') | list | length > 0
+    fail_msg: Effective SSH policy does not match the repository-owned policy

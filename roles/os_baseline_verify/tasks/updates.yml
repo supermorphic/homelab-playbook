@@ -1,0 +1,126 @@
+---
+- name: Read Debian unattended-upgrades configuration
+  ansible.builtin.slurp:
+    src: /etc/apt/apt.conf.d/50unattended-upgrades
+  register: os_baseline_verify_debian_updater_configuration
+  when: ansible_os_family == 'Debian'
+
+- name: Verify Debian security-only updater configuration
+  vars:
+    os_baseline_verify_debian_updater_text: >-
+      {{ os_baseline_verify_debian_updater_configuration.content | b64decode }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        'origin=Debian,codename=${distro_codename}-security,label=Debian-Security'
+        in os_baseline_verify_debian_updater_text
+      - >-
+        'Unattended-Upgrade::Remove-Unused-Dependencies "false";'
+        in os_baseline_verify_debian_updater_text
+    fail_msg: Debian automatic updates are not restricted to the configured security policy
+  when: ansible_os_family == 'Debian'
+
+- name: Read Rocky automatic DNF configuration
+  ansible.builtin.slurp:
+    src: /etc/dnf/automatic.conf
+  register: os_baseline_verify_rocky_updater_configuration
+  when: ansible_os_family == 'RedHat'
+
+- name: Verify Rocky security-only updater configuration
+  vars:
+    os_baseline_verify_rocky_updater_text: >-
+      {{ os_baseline_verify_rocky_updater_configuration.content | b64decode }}
+  ansible.builtin.assert:
+    that:
+      - "'upgrade_type = security' in os_baseline_verify_rocky_updater_text"
+      - >-
+        ('reboot = when-needed' if system_maintenance_native_reboot_enabled | bool
+         else 'reboot = never') in os_baseline_verify_rocky_updater_text
+    fail_msg: Rocky automatic updates are not restricted to the configured security policy
+  when: ansible_os_family == 'RedHat'
+
+- name: Read native security update timer enablement
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemctl
+      - is-enabled
+      - >-
+        {{ 'apt-daily-upgrade.timer' if ansible_os_family == 'Debian'
+           else 'dnf-automatic.timer' }}
+  register: os_baseline_verify_updater_timer
+  changed_when: false
+  when: os_baseline_verify_runtime_controls | bool
+
+- name: Read native security update timer configuration
+  ansible.builtin.slurp:
+    src: >-
+      {{ '/etc/systemd/system/apt-daily-upgrade.timer.d/override.conf'
+         if ansible_os_family == 'Debian'
+         else '/etc/systemd/system/dnf-automatic.timer.d/override.conf' }}
+  register: os_baseline_verify_updater_timer_configuration
+
+- name: Verify native security update timer configuration
+  vars:
+    os_baseline_verify_updater_timer_text: >-
+      {{ os_baseline_verify_updater_timer_configuration.content | b64decode }}
+  ansible.builtin.assert:
+    that:
+      - >-
+        'OnCalendar=' ~ system_maintenance_security_update_calendar
+        in os_baseline_verify_updater_timer_text
+    fail_msg: Native security update timer does not match the configured maintenance window
+
+- name: Verify native security update timer enablement
+  ansible.builtin.assert:
+    that:
+      - os_baseline_verify_updater_timer.stdout | trim == 'enabled'
+    fail_msg: Native security update timer is not enabled
+  when: os_baseline_verify_runtime_controls | bool
+
+- name: Check Debian package manager health
+  ansible.builtin.command:
+    argv: [/usr/bin/dpkg, --audit]
+  register: os_baseline_verify_debian_package_health
+  changed_when: false
+  when: ansible_os_family == 'Debian'
+
+- name: Verify Debian package manager health
+  ansible.builtin.assert:
+    that:
+      - os_baseline_verify_debian_package_health.stdout | trim == ''
+    fail_msg: dpkg reports packages requiring repair
+  when: ansible_os_family == 'Debian'
+
+- name: Check Rocky package manager health
+  ansible.builtin.command:
+    argv: [/usr/bin/dnf, check]
+  changed_when: false
+  when: ansible_os_family == 'RedHat'
+
+- name: Read Debian reboot-required marker
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: os_baseline_verify_debian_reboot_marker
+  when: ansible_os_family == 'Debian'
+
+- name: Record Debian reboot-required state
+  ansible.builtin.set_fact:
+    os_baseline_reboot_required: "{{ os_baseline_verify_debian_reboot_marker.stat.exists }}"  # noqa var-naming[no-role-prefix] - Required public fact.
+  when: ansible_os_family == 'Debian'
+
+- name: Read Rocky reboot-required state
+  ansible.builtin.command:
+    argv: [/usr/bin/dnf, needs-restarting, -r]
+  register: os_baseline_verify_rocky_reboot_state
+  changed_when: false
+  failed_when: os_baseline_verify_rocky_reboot_state.rc not in [0, 1]
+  when: ansible_os_family == 'RedHat'
+
+- name: Record Rocky reboot-required state
+  ansible.builtin.set_fact:
+    os_baseline_reboot_required: "{{ os_baseline_verify_rocky_reboot_state.rc == 1 }}"  # noqa var-naming[no-role-prefix] - Required public fact.
+  when: ansible_os_family == 'RedHat'
+
+- name: Report reboot-required state
+  ansible.builtin.debug:
+    msg: "OS baseline reboot required: {{ os_baseline_reboot_required | bool }}"

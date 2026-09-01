@@ -1,0 +1,56 @@
+---
+- name: Check persistent journal storage directory
+  ansible.builtin.stat:
+    path: /var/log/journal
+  register: os_baseline_verify_journal_directory
+
+- name: Read effective journald configuration
+  ansible.builtin.command:
+    argv: [/usr/bin/systemd-analyze, cat-config, systemd/journald.conf]
+  register: os_baseline_verify_journald_configuration
+  changed_when: false
+
+- name: Verify persistent bounded journald configuration
+  vars:
+    os_baseline_verify_journald_values: >-
+      {{ dict(os_baseline_verify_journald_configuration.stdout
+         | regex_findall('(?m)^\\s*(Storage|SystemMaxUse|SystemKeepFree)\\s*=\\s*([^\\s#]+)\\s*$')) }}
+  ansible.builtin.assert:
+    that:
+      - os_baseline_verify_journal_directory.stat.isdir
+      - os_baseline_verify_journald_values.Storage | default('') == 'persistent'
+      - >-
+        os_baseline_verify_journald_values.SystemMaxUse | default('')
+        == security_baseline_journal_system_max_use
+      - >-
+        os_baseline_verify_journald_values.SystemKeepFree | default('')
+        == security_baseline_journal_system_keep_free
+    fail_msg: Effective journald configuration does not match the repository policy
+
+- name: Read auditd service state
+  ansible.builtin.command:
+    argv: [/usr/bin/systemctl, is-active, auditd]
+  register: os_baseline_verify_auditd_state
+  changed_when: false
+  when: os_baseline_verify_runtime_controls | bool
+
+- name: Verify auditd service state
+  ansible.builtin.assert:
+    that:
+      - os_baseline_verify_auditd_state.stdout | trim == 'active'
+    fail_msg: auditd is not active
+  when: os_baseline_verify_runtime_controls | bool
+
+- name: Read failed systemd units
+  ansible.builtin.command:
+    argv: [/usr/bin/systemctl, --failed, --no-legend, --plain]
+  register: os_baseline_verify_failed_units
+  changed_when: false
+  when: os_baseline_verify_runtime_controls | bool
+
+- name: Verify no systemd units are failed
+  ansible.builtin.assert:
+    that:
+      - os_baseline_verify_failed_units.stdout | trim == ''
+    fail_msg: systemd has failed units
+  when: os_baseline_verify_runtime_controls | bool
