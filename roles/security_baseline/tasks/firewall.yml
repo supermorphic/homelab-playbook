@@ -41,6 +41,81 @@
     name: firewalld
     state: present
 
+- name: Read initial firewalld service activity
+  ansible.builtin.command:
+    argv: [/usr/bin/systemctl, is-active, firewalld.service]
+  register: security_baseline_firewall_initial_service
+  changed_when: false
+  failed_when: security_baseline_firewall_initial_service.rc not in [0, 3]
+
+- name: Read permanent global firewall surfaces before mutation
+  ansible.builtin.include_tasks: firewall-read-global-state.yml
+  vars:
+    security_baseline_firewall_global_command: /usr/bin/firewall-offline-cmd
+    security_baseline_firewall_global_scope: []
+    security_baseline_firewall_global_binding_option: --list-all-zones
+
+- name: Record permanent global firewall surfaces before mutation
+  ansible.builtin.set_fact:
+    security_baseline_firewall_permanent_global_before: >-
+      {{ security_baseline_firewall_global_snapshot }}
+  no_log: true
+
+- name: Reject unsupported permanent firewall surfaces
+  vars:
+    security_baseline_firewall_permanent_global_problems: >-
+      {{ security_baseline_firewall_permanent_global_before.bindings
+         | security_baseline_firewall_global_surface_errors(
+             security_baseline_firewall_permanent_global_before.direct,
+             security_baseline_firewall_permanent_global_before.policies,
+             security_baseline_firewall_management.interface
+               if security_baseline_apply_firewall_runtime | bool else '',
+             true,
+             ansible_os_family
+           ) }}
+  ansible.builtin.assert:
+    that:
+      - security_baseline_firewall_permanent_global_problems | length == 0
+    fail_msg: >-
+      Existing permanent bindings, direct rules, or policy objects are outside
+      the repository firewall contract; operator reconciliation is required
+  no_log: true
+
+- name: Read runtime global firewall surfaces before mutation
+  ansible.builtin.include_tasks: firewall-read-global-state.yml
+  vars:
+    security_baseline_firewall_global_command: /usr/bin/firewall-cmd
+    security_baseline_firewall_global_scope: []
+    security_baseline_firewall_global_binding_option: --get-active-zones
+  when: security_baseline_firewall_initial_service.rc == 0
+
+- name: Record runtime global firewall surfaces before mutation
+  ansible.builtin.set_fact:
+    security_baseline_firewall_runtime_global_before: >-
+      {{ security_baseline_firewall_global_snapshot }}
+  no_log: true
+  when: security_baseline_firewall_initial_service.rc == 0
+
+- name: Reject unsupported runtime firewall surfaces
+  vars:
+    security_baseline_firewall_runtime_global_problems: >-
+      {{ security_baseline_firewall_runtime_global_before.bindings
+         | security_baseline_firewall_global_surface_errors(
+             security_baseline_firewall_runtime_global_before.direct,
+             security_baseline_firewall_runtime_global_before.policies,
+             security_baseline_firewall_management.interface | default(''),
+             true,
+             ansible_os_family
+           ) }}
+  ansible.builtin.assert:
+    that:
+      - security_baseline_firewall_runtime_global_problems | length == 0
+    fail_msg: >-
+      Existing active bindings, direct rules, or policy objects are outside
+      the repository firewall contract; operator reconciliation is required
+  no_log: true
+  when: security_baseline_firewall_initial_service.rc == 0
+
 - name: Create permanent homelab firewall zone
   ansible.posix.firewalld:
     zone: homelab
@@ -261,27 +336,6 @@
       - security_baseline_firewall_management_runtime_after.stdout | trim == 'homelab'
       - security_baseline_firewall_management_permanent_after.stdout | trim == 'homelab'
     fail_msg: Management interface is not bound to homelab in both firewall states
-  when: security_baseline_apply_firewall_runtime | bool
-
-- name: Read active firewall bindings before management proof
-  ansible.builtin.command:
-    argv: [/usr/bin/firewall-cmd, --get-active-zones]
-  register: security_baseline_firewall_active_bindings_before
-  changed_when: false
-  no_log: true
-  when: security_baseline_apply_firewall_runtime | bool
-
-- name: Reject source bindings that override the management interface zone
-  ansible.builtin.assert:
-    that:
-      - >-
-        security_baseline_firewall_active_bindings_before.stdout
-        | security_baseline_firewall_conflicting_sources(
-            security_baseline_firewall_management.peer
-          )
-        | length == 0
-    fail_msg: A source binding outside homelab can override management policy
-  no_log: true
   when: security_baseline_apply_firewall_runtime | bool
 
 - name: Configure homelab as the permanent default firewall zone
@@ -560,24 +614,67 @@
   no_log: true
   when: security_baseline_apply_firewall_runtime | bool
 
-- name: Read active firewall bindings after exact reconciliation
-  ansible.builtin.command:
-    argv: [/usr/bin/firewall-cmd, --get-active-zones]
-  register: security_baseline_firewall_active_bindings_after
-  changed_when: false
+- name: Read permanent global firewall surfaces after reconciliation
+  ansible.builtin.include_tasks: firewall-read-global-state.yml
+  vars:
+    security_baseline_firewall_global_command: /usr/bin/firewall-offline-cmd
+    security_baseline_firewall_global_scope: []
+    security_baseline_firewall_global_binding_option: --list-all-zones
+
+- name: Record permanent global firewall surfaces after reconciliation
+  ansible.builtin.set_fact:
+    security_baseline_firewall_permanent_global_after: >-
+      {{ security_baseline_firewall_global_snapshot }}
+  no_log: true
+
+- name: Verify exact permanent global firewall surfaces
+  vars:
+    security_baseline_firewall_permanent_global_problems: >-
+      {{ security_baseline_firewall_permanent_global_after.bindings
+         | security_baseline_firewall_global_surface_errors(
+             security_baseline_firewall_permanent_global_after.direct,
+             security_baseline_firewall_permanent_global_after.policies,
+             security_baseline_firewall_management.interface
+               if security_baseline_apply_firewall_runtime | bool else '',
+             false,
+             ansible_os_family
+           ) }}
+  ansible.builtin.assert:
+    that:
+      - security_baseline_firewall_permanent_global_problems | length == 0
+    fail_msg: Permanent global firewall surfaces are not exact
+  no_log: true
+
+- name: Read runtime global firewall surfaces after reconciliation
+  ansible.builtin.include_tasks: firewall-read-global-state.yml
+  vars:
+    security_baseline_firewall_global_command: /usr/bin/firewall-cmd
+    security_baseline_firewall_global_scope: []
+    security_baseline_firewall_global_binding_option: --get-active-zones
+  when: security_baseline_apply_firewall_runtime | bool
+
+- name: Record runtime global firewall surfaces after reconciliation
+  ansible.builtin.set_fact:
+    security_baseline_firewall_runtime_global_after: >-
+      {{ security_baseline_firewall_global_snapshot }}
   no_log: true
   when: security_baseline_apply_firewall_runtime | bool
 
-- name: Verify management path has no higher-priority source binding
+- name: Verify exact runtime global firewall surfaces
+  vars:
+    security_baseline_firewall_runtime_global_problems: >-
+      {{ security_baseline_firewall_runtime_global_after.bindings
+         | security_baseline_firewall_global_surface_errors(
+             security_baseline_firewall_runtime_global_after.direct,
+             security_baseline_firewall_runtime_global_after.policies,
+             security_baseline_firewall_management.interface,
+             false,
+             ansible_os_family
+           ) }}
   ansible.builtin.assert:
     that:
-      - >-
-        security_baseline_firewall_active_bindings_after.stdout
-        | security_baseline_firewall_conflicting_sources(
-            security_baseline_firewall_management.peer
-          )
-        | length == 0
-    fail_msg: A source binding outside homelab can override management policy
+      - security_baseline_firewall_runtime_global_problems | length == 0
+    fail_msg: Runtime global firewall surfaces are not exact
   no_log: true
   when: security_baseline_apply_firewall_runtime | bool
 

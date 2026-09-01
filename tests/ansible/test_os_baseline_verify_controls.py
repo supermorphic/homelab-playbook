@@ -128,20 +128,63 @@ class VerifierControlTests(unittest.TestCase):
                 mutated = self.controls.os_baseline_verify_firewall_state_from_results(changed, "homelab")
                 self.assertTrue(self.controls.os_baseline_verify_firewall_state_errors(mutated, desired, "eth0"))
 
-    def test_firewall_result_layout_rejects_malformed_results_and_active_peer_conflicts(self) -> None:
+    def test_firewall_result_layout_rejects_malformed_results(self) -> None:
         with self.assertRaises(ValueError):
             self.controls.os_baseline_verify_firewall_state_from_results([], "homelab")
-        active = """\
-homelab
-  interfaces: eth0
-  sources:
-trusted
-  sources: 192.168.1.0/24
+
+    def test_global_firewall_surface_reducer_rejects_bindings_direct_and_policies(
+        self,
+    ) -> None:
+        bindings = "homelab\n  interfaces: eth0\n  sources:\n"
+        direct = [
+            {"item": "--get-all-chains", "stdout": ""},
+            {"item": "--get-all-rules", "stdout": ""},
+            {"item": "--get-all-passthroughs", "stdout": ""},
+        ]
+        policies = """\
+allow-host-ipv6
+  priority: -15000
+  target: CONTINUE
+  ingress-zones: ANY
+  egress-zones: HOST
+  services:
+  ports:
+  protocols:
+  masquerade: no
+  forward-ports:
+  source-ports:
+  icmp-blocks:
+  rich rules:
+    rule family="ipv6" icmp-type name="neighbour-advertisement" accept
+    rule family="ipv6" icmp-type name="neighbour-solicitation" accept
+    rule family="ipv6" icmp-type name="redirect" accept
+    rule family="ipv6" icmp-type name="router-advertisement" accept
 """
-        self.assertEqual(["192.168.1.0/24"], self.controls.os_baseline_verify_conflicting_sources(active, "192.168.1.10"))
-        self.assertEqual([], self.controls.os_baseline_verify_conflicting_sources(active, "10.1.2.3"))
-        malformed = "external\n  sources: not-a-network\n"
-        self.assertEqual(["not-a-network"], self.controls.os_baseline_verify_conflicting_sources(malformed, "192.168.1.10"))
+        self.assertEqual(
+            [],
+            self.controls.os_baseline_verify_firewall_global_surface_errors(
+                bindings,
+                direct,
+                policies,
+                "eth0",
+                "Debian",
+            ),
+        )
+        mutations = (
+            (bindings + "public\n  interfaces: eth1\n  sources:\n", direct, policies),
+            (bindings + "trusted\n  interfaces:\n  sources: 10.0.0.0/8\n", direct, policies),
+            (bindings, [{**direct[0], "stdout": "ipv4 filter EXTRA"}, *direct[1:]], policies),
+            (bindings, direct, policies + "\noperator-policy"),
+        )
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                self.assertTrue(
+                    self.controls.os_baseline_verify_firewall_global_surface_errors(
+                        *mutation,
+                        "eth0",
+                        "Debian",
+                    )
+                )
 
     def test_ordered_journald_reducer_keeps_empty_last_assignment(self) -> None:
         text = """\

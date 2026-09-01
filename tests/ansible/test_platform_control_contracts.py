@@ -518,6 +518,61 @@ class FirewallPolicyTests(unittest.TestCase):
             "rich_rules": [rule],
         }
 
+    @staticmethod
+    def global_direct_results(
+        opening: tuple[str, str] | None = None,
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "item": item,
+                "stdout": value if opening and opening[0] == item else "",
+            }
+            for item, value in (
+                ("--get-all-chains", "ipv4 filter EXTRA"),
+                ("--get-all-rules", "ipv4 filter INPUT 0 -j ACCEPT"),
+                ("--get-all-passthroughs", "ipv4 -A INPUT -j ACCEPT"),
+            )
+        ]
+
+    @staticmethod
+    def expected_policy(os_family: str = "Debian") -> str:
+        rules = [
+            "neighbour-advertisement",
+            "neighbour-solicitation",
+            "redirect",
+            "router-advertisement",
+        ]
+        if os_family == "RedHat":
+            rules.extend(
+                (
+                    "mld-listener-done",
+                    "mld-listener-query",
+                    "mld-listener-report",
+                    "mld2-listener-report",
+                )
+            )
+        return "\n".join(
+            [
+                "allow-host-ipv6",
+                "  priority: -15000",
+                "  target: CONTINUE",
+                "  ingress-zones: ANY",
+                "  egress-zones: HOST",
+                "  services:",
+                "  ports:",
+                "  protocols:",
+                "  masquerade: no",
+                "  forward-ports:",
+                "  source-ports:",
+                "  icmp-blocks:",
+                "  rich rules:",
+                *[
+                    f'    rule family="ipv6" icmp-type name="{name}" accept'
+                    for name in rules
+                ],
+            ]
+        )
+
     def test_extension_contract_rejects_ssh(self) -> None:
         payload = {
             "management_sources": ["10.0.0.0/24"],
@@ -557,6 +612,118 @@ class FirewallPolicyTests(unittest.TestCase):
         ):
             with self.subTest(mutation=mutation):
                 self.assertLess(coverage, names.index(mutation))
+
+    def test_global_firewall_surfaces_fail_closed_on_every_unsupported_opening(
+        self,
+    ) -> None:
+        expected = "homelab\n  interfaces: eth0\n  sources:\n"
+        self.assertEqual(
+            [],
+            self.controls.security_baseline_firewall_global_surface_errors(
+                expected,
+                self.global_direct_results(),
+                self.expected_policy(),
+                "eth0",
+                False,
+                "Debian",
+            ),
+        )
+        mutations = {
+            "extra interface": (
+                expected + "public\n  interfaces: eth1\n  sources:\n",
+                self.global_direct_results(),
+                self.expected_policy(),
+            ),
+            "source binding": (
+                expected + "trusted\n  interfaces:\n  sources: 10.0.0.0/8\n",
+                self.global_direct_results(),
+                self.expected_policy(),
+            ),
+            "direct chain": (
+                expected,
+                self.global_direct_results(("--get-all-chains", "opening")),
+                self.expected_policy(),
+            ),
+            "direct rule": (
+                expected,
+                self.global_direct_results(("--get-all-rules", "opening")),
+                self.expected_policy(),
+            ),
+            "direct passthrough": (
+                expected,
+                self.global_direct_results(("--get-all-passthroughs", "opening")),
+                self.expected_policy(),
+            ),
+            "policy object": (
+                expected,
+                self.global_direct_results(),
+                self.expected_policy() + "\noperator-policy",
+            ),
+        }
+        for label, (bindings, direct, policies) in mutations.items():
+            with self.subTest(label=label):
+                self.assertTrue(
+                    self.controls.security_baseline_firewall_global_surface_errors(
+                        bindings,
+                        direct,
+                        policies,
+                        "eth0",
+                        False,
+                        "Debian",
+                    )
+                )
+
+    def test_global_firewall_preflight_allows_only_management_interface_transition(
+        self,
+    ) -> None:
+        transitional = "public\n  interfaces: eth0\n  sources:\n"
+        self.assertEqual(
+            [],
+            self.controls.security_baseline_firewall_global_surface_errors(
+                transitional,
+                self.global_direct_results(),
+                self.expected_policy(),
+                "eth0",
+                True,
+                "Debian",
+            ),
+        )
+        self.assertTrue(
+            self.controls.security_baseline_firewall_global_surface_errors(
+                transitional,
+                self.global_direct_results(),
+                self.expected_policy(),
+                "eth0",
+                False,
+                "Debian",
+            )
+        )
+
+        self.assertEqual(
+            [],
+            self.controls.security_baseline_firewall_global_surface_errors(
+                "homelab\n  interfaces: eth0\n  sources:\n",
+                self.global_direct_results(),
+                self.expected_policy("RedHat"),
+                "eth0",
+                False,
+                "RedHat",
+            ),
+        )
+
+    def test_global_firewall_preflight_precedes_zone_and_service_mutation(
+        self,
+    ) -> None:
+        tasks = load_tasks("roles/security_baseline/tasks/firewall.yml")
+        names = [task["name"] for task in tasks]
+        preflight = names.index("Reject unsupported permanent firewall surfaces")
+        for mutation in (
+            "Create permanent homelab firewall zone",
+            "Enable and start firewalld",
+            "Bind runtime management interface to homelab",
+        ):
+            with self.subTest(mutation=mutation):
+                self.assertLess(preflight, names.index(mutation))
 
     def test_exact_policy_rejects_alternate_binding_and_every_direct_opening(
         self,
@@ -758,30 +925,6 @@ homelab (active)
                 {"runtime": runtime, "permanent": permanent},
                 rules,
                 "eth0",
-            ),
-        )
-
-    def test_only_source_bindings_relevant_to_management_peer_conflict(self) -> None:
-        unrelated = """\
-containers
-  sources: 10.88.0.0/16
-"""
-        self.assertEqual(
-            [],
-            self.controls.security_baseline_firewall_conflicting_sources(
-                unrelated,
-                "10.0.0.5",
-            ),
-        )
-        matching = unrelated + """\
-public
-  sources: 10.0.0.0/24
-"""
-        self.assertEqual(
-            ["10.0.0.0/24"],
-            self.controls.security_baseline_firewall_conflicting_sources(
-                matching,
-                "10.0.0.5",
             ),
         )
 

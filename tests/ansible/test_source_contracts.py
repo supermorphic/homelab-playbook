@@ -63,12 +63,17 @@ READ_ONLY_ARGV = {
     ("/usr/bin/systemctl", "is-active", "chronyd.service"),
     ("/usr/bin/systemctl", "is-active", "auditd"),
     ("/usr/bin/systemctl", "--failed", "--no-legend", "--plain"),
+    ("/usr/bin/firewall-offline-cmd", "--list-all-zones"),
+    ("/usr/bin/firewall-offline-cmd", "--list-all-policies"),
+    ("/usr/bin/firewall-cmd", "--list-all-policies"),
 }
 
 READ_ONLY_ARGV_TEMPLATES = {
     "{{ ['/usr/bin/firewall-offline-cmd', '--zone=homelab', item] }}",
     "{{ ['/usr/bin/firewall-cmd', '--zone=homelab', item] }}",
     "{{ ['/usr/bin/firewall-cmd', item] }}",
+    "{{ ['/usr/bin/firewall-offline-cmd', '--direct', item] }}",
+    "{{ ['/usr/bin/firewall-cmd', '--direct', item] }}",
     "{{ ['/usr/bin/systemctl', 'is-enabled',\n    {{ 'apt-daily-upgrade.timer' if ansible_os_family == 'Debian'\n       else 'dnf-automatic.timer' }}] }}",
     "{{ ['/usr/bin/systemd-analyze', 'cat-config',\n    {{ 'systemd/system/apt-daily-upgrade.timer'\n       if ansible_os_family == 'Debian'\n       else 'systemd/system/dnf-automatic.timer' }}] }}",
 }
@@ -97,6 +102,16 @@ FIREWALL_TEMPLATE_LOOPS = {
         "--get-default-zone",
         "--get-zone-of-interface={{ os_baseline_verify_management.interface }}",
         "--get-active-zones",
+    ],
+    "{{ ['/usr/bin/firewall-offline-cmd', '--direct', item] }}": [
+        "--get-all-chains",
+        "--get-all-rules",
+        "--get-all-passthroughs",
+    ],
+    "{{ ['/usr/bin/firewall-cmd', '--direct', item] }}": [
+        "--get-all-chains",
+        "--get-all-rules",
+        "--get-all-passthroughs",
     ],
 }
 

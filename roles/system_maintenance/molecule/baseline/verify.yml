@@ -168,6 +168,20 @@
       changed_when: false
       no_log: true
 
+    - name: Read permanent global firewall zone bindings
+      ansible.builtin.command:
+        argv: [/usr/bin/firewall-offline-cmd, --list-all-zones]
+      register: system_maintenance_molecule_baseline_firewall_bindings
+      changed_when: false
+      no_log: true
+
+    - name: Read permanent firewalld policy objects
+      ansible.builtin.command:
+        argv: [/usr/bin/firewall-offline-cmd, --list-all-policies]
+      register: system_maintenance_molecule_baseline_firewall_policies
+      changed_when: false
+      no_log: true
+
     - name: Verify permanent private-management firewall policy
       vars:
         system_maintenance_molecule_baseline_firewall_problems: >-
@@ -175,7 +189,10 @@
              | b64decode
              | system_maintenance_molecule_baseline_firewall_errors(
                  system_maintenance_molecule_baseline_permanent_firewall.results,
-                 system_maintenance_molecule_baseline_direct_firewall.results) }}
+                 system_maintenance_molecule_baseline_direct_firewall.results,
+                 system_maintenance_molecule_baseline_firewall_bindings.stdout,
+                 system_maintenance_molecule_baseline_firewall_policies.stdout,
+                 ansible_os_family) }}
       ansible.builtin.assert:
         that:
           - system_maintenance_molecule_baseline_firewall_problems | length == 0

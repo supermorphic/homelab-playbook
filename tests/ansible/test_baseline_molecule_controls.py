@@ -12,6 +12,25 @@ CONTROLS_PATH = (
     REPOSITORY_ROOT
     / "roles/system_maintenance/molecule/baseline/filter_plugins/baseline_controls.py"
 )
+DEBIAN_FIREWALL_POLICY = """\
+allow-host-ipv6
+  priority: -15000
+  target: CONTINUE
+  ingress-zones: ANY
+  egress-zones: HOST
+  services:
+  ports:
+  protocols:
+  masquerade: no
+  forward-ports:
+  source-ports:
+  icmp-blocks:
+  rich rules:
+    rule family="ipv6" icmp-type name="neighbour-advertisement" accept
+    rule family="ipv6" icmp-type name="neighbour-solicitation" accept
+    rule family="ipv6" icmp-type name="redirect" accept
+    rule family="ipv6" icmp-type name="router-advertisement" accept
+"""
 
 
 def load_controls():
@@ -74,11 +93,17 @@ class FirewallOracleTests(unittest.TestCase):
         zone: list[dict[str, object]],
         direct: list[dict[str, object]],
         configuration: str = "DefaultZone=homelab\n",
+        bindings: str = "homelab\n  interfaces:\n  sources:\n",
+        policies: str = DEBIAN_FIREWALL_POLICY,
+        os_family: str = "Debian",
     ) -> list[str]:
         return self.controls.system_maintenance_molecule_baseline_firewall_errors(
             configuration,
             zone,
             direct,
+            bindings,
+            policies,
+            os_family,
         )
 
     def test_exact_permanent_firewall_policy_has_no_errors(self) -> None:
@@ -144,6 +169,25 @@ class FirewallOracleTests(unittest.TestCase):
             result["stdout_lines"] = [opening]
             with self.subTest(item=item):
                 self.assertIn("direct-openings", self.errors(zone, direct))
+
+    def test_global_bindings_and_policy_objects_are_rejected(self) -> None:
+        zone, direct = exact_firewall_results()
+        self.assertIn(
+            "zone-bindings",
+            self.errors(
+                zone,
+                direct,
+                bindings="homelab\n  interfaces:\n  sources:\npublic\n  interfaces: eth1\n  sources:\n",
+            ),
+        )
+        self.assertIn(
+            "policy-objects",
+            self.errors(
+                zone,
+                direct,
+                policies=DEBIAN_FIREWALL_POLICY + "\noperator-policy",
+            ),
+        )
 
     def test_missing_or_extra_rich_rule_is_rejected(self) -> None:
         for rules in (

@@ -75,9 +75,16 @@ def system_maintenance_molecule_baseline_firewall_errors(
     configuration: object,
     zone_results: object,
     direct_results: object,
+    binding_text: object,
+    policy_text: object,
+    os_family: object,
 ) -> list[str]:
     """Return exact permanent firewall policy differences."""
-    if not isinstance(configuration, str):
+    if (
+        not isinstance(configuration, str)
+        or not isinstance(binding_text, str)
+        or not isinstance(policy_text, str)
+    ):
         raise ValueError("firewalld configuration must be text")
     zone = _command_results(zone_results, EXPECTED_ZONE_READS)
     direct = _command_results(direct_results, EXPECTED_DIRECT_READS)
@@ -114,6 +121,53 @@ def system_maintenance_molecule_baseline_firewall_errors(
         errors.append("rich-rules")
     if any(str(result["stdout"]).strip() for result in direct.values()):
         errors.append("direct-openings")
+    for raw in binding_text.splitlines():
+        if raw[:1].isspace():
+            field, separator, values = raw.strip().partition(":")
+            if separator and field in {"interfaces", "sources"} and values.split():
+                errors.append("zone-bindings")
+                break
+    if os_family not in {"Debian", "RedHat"}:
+        raise ValueError("firewall policy platform is unsupported")
+    policy_rules = [
+        "neighbour-advertisement",
+        "neighbour-solicitation",
+        "redirect",
+        "router-advertisement",
+    ]
+    if os_family == "RedHat":
+        policy_rules.extend(
+            (
+                "mld-listener-done",
+                "mld-listener-query",
+                "mld-listener-report",
+                "mld2-listener-report",
+            )
+        )
+    expected_policy = [
+        "allow-host-ipv6",
+        "priority: -15000",
+        "target: CONTINUE",
+        "ingress-zones: ANY",
+        "egress-zones: HOST",
+        "services:",
+        "ports:",
+        "protocols:",
+        "masquerade: no",
+        "forward-ports:",
+        "source-ports:",
+        "icmp-blocks:",
+        "rich rules:",
+        *[
+            f'rule family="ipv6" icmp-type name="{name}" accept'
+            for name in policy_rules
+        ],
+    ]
+    actual_policy = [line.strip() for line in policy_text.splitlines() if line.strip()]
+    if actual_policy and actual_policy[0] == "allow-host-ipv6 (active)":
+        actual_policy[0] = "allow-host-ipv6"
+    if sorted(actual_policy) != sorted(expected_policy):
+        errors.append("policy-objects")
     return errors
 
 

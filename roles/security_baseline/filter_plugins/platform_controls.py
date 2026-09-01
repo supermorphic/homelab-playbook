@@ -21,6 +21,11 @@ FIREWALL_EMPTY_FIELDS = (
     "source_ports",
     "forward_ports",
 )
+FIREWALL_DIRECT_READS = {
+    "--get-all-chains",
+    "--get-all-rules",
+    "--get-all-passthroughs",
+}
 
 
 def _validate_private_sources(values: object) -> list[str]:
@@ -86,6 +91,133 @@ def security_baseline_firewall_peer_is_covered(
             for source in _validate_private_sources(management_sources)
         )
     )
+
+
+def _firewall_zone_bindings(text: object) -> list[tuple[str, str, str]]:
+    if not isinstance(text, str):
+        raise ValueError("firewall zone bindings must be text")
+    zone = ""
+    seen: set[str] = set()
+    bindings: list[tuple[str, str, str]] = []
+    for raw_line in text.splitlines():
+        if not raw_line.strip():
+            continue
+        if not raw_line[:1].isspace():
+            zone = raw_line.split()[0]
+            if not SERVICE_NAME.fullmatch(zone) or zone in seen:
+                raise ValueError("firewall zone output is malformed")
+            seen.add(zone)
+            continue
+        field, separator, values = raw_line.strip().partition(":")
+        if separator and field in {"interfaces", "sources"}:
+            if not zone:
+                raise ValueError("firewall binding has no zone")
+            bindings.extend((zone, field, value) for value in values.split())
+    return bindings
+
+
+def _firewall_direct_openings(results: object) -> list[str]:
+    if not isinstance(results, list):
+        raise ValueError("firewall direct results must be a list")
+    indexed: dict[str, str] = {}
+    for result in results:
+        if not isinstance(result, Mapping):
+            raise ValueError("firewall direct result is malformed")
+        item = result.get("item")
+        stdout = result.get("stdout")
+        if (
+            not isinstance(item, str)
+            or item in indexed
+            or not isinstance(stdout, str)
+        ):
+            raise ValueError("firewall direct result is malformed")
+        indexed[item] = stdout
+    if set(indexed) != FIREWALL_DIRECT_READS:
+        raise ValueError("firewall direct result layout is not exact")
+    return [item for item, stdout in indexed.items() if stdout.strip()]
+
+
+def _expected_firewalld_policy_lines(os_family: str) -> list[str]:
+    rules = [
+        "neighbour-advertisement",
+        "neighbour-solicitation",
+        "redirect",
+        "router-advertisement",
+    ]
+    if os_family == "RedHat":
+        rules.extend(
+            (
+                "mld-listener-done",
+                "mld-listener-query",
+                "mld-listener-report",
+                "mld2-listener-report",
+            )
+        )
+    elif os_family != "Debian":
+        raise ValueError("firewalld policy platform is unsupported")
+    return [
+        "allow-host-ipv6",
+        "priority: -15000",
+        "target: CONTINUE",
+        "ingress-zones: ANY",
+        "egress-zones: HOST",
+        "services:",
+        "ports:",
+        "protocols:",
+        "masquerade: no",
+        "forward-ports:",
+        "source-ports:",
+        "icmp-blocks:",
+        "rich rules:",
+        *[
+            f'rule family="ipv6" icmp-type name="{name}" accept'
+            for name in rules
+        ],
+    ]
+
+
+def _firewalld_policy_is_exact(policy_text: str, os_family: str) -> bool:
+    lines = [line.strip() for line in policy_text.splitlines() if line.strip()]
+    if lines and lines[0] == "allow-host-ipv6 (active)":
+        lines[0] = "allow-host-ipv6"
+    return sorted(lines) == sorted(_expected_firewalld_policy_lines(os_family))
+
+
+def security_baseline_firewall_global_surface_errors(
+    binding_text: object,
+    direct_results: object,
+    policy_text: object,
+    management_interface: str,
+    allow_transition: bool,
+    os_family: str,
+) -> list[str]:
+    """Reject global firewall surfaces outside the repository baseline."""
+    if not isinstance(policy_text, str):
+        raise ValueError("firewall policy objects must be text")
+    bindings = _firewall_zone_bindings(binding_text)
+    errors: list[str] = []
+    sources = [binding for binding in bindings if binding[1] == "sources"]
+    interfaces = [binding for binding in bindings if binding[1] == "interfaces"]
+    if sources:
+        errors.append("source bindings are unsupported")
+    if allow_transition:
+        if any(binding[2] != management_interface for binding in interfaces):
+            errors.append("an unsupported interface binding is active")
+        if len(interfaces) > 1:
+            errors.append("the management interface has multiple bindings")
+    else:
+        expected = (
+            [("homelab", "interfaces", management_interface)]
+            if management_interface
+            else []
+        )
+        if interfaces != expected:
+            errors.append("interface bindings do not match policy")
+    if _firewall_direct_openings(direct_results):
+        errors.append("direct firewall openings are unsupported")
+    if not _firewalld_policy_is_exact(policy_text, os_family):
+        errors.append("firewalld policy objects do not match platform policy")
+    return errors
 
 
 def security_baseline_firewall_reload_required(
@@ -163,31 +295,6 @@ def security_baseline_firewall_policy_errors(
     return errors
 
 
-def security_baseline_firewall_conflicting_sources(
-    text: str,
-    management_peer: str,
-) -> list[str]:
-    """Return source bindings that can override this management connection."""
-    peer = ipaddress.ip_address(management_peer)
-    zone = ""
-    conflicts: list[str] = []
-    for raw_line in text.splitlines():
-        if raw_line and not raw_line[:1].isspace():
-            zone = raw_line.strip()
-            continue
-        line = raw_line.strip()
-        if zone != "homelab" and line.startswith("sources:"):
-            for source in line.partition(":")[2].split():
-                try:
-                    network = ipaddress.ip_network(source, strict=False)
-                except ValueError:
-                    conflicts.append(source)
-                    continue
-                if network.version == peer.version and peer in network:
-                    conflicts.append(source)
-    return conflicts
-
-
 def security_baseline_journal_size_is_valid(value: object) -> bool:
     """Accept a conservative non-zero subset of systemd IEC size syntax."""
     return isinstance(value, str) and JOURNAL_SIZE.fullmatch(value) is not None
@@ -221,10 +328,10 @@ class FilterModule:
         return {
             "security_baseline_firewall_rules": security_baseline_firewall_rules,
             "security_baseline_firewall_peer_is_covered": security_baseline_firewall_peer_is_covered,
+            "security_baseline_firewall_global_surface_errors": security_baseline_firewall_global_surface_errors,
             "security_baseline_firewall_reload_required": security_baseline_firewall_reload_required,
             "security_baseline_firewall_target_from_list_all": security_baseline_firewall_target_from_list_all,
             "security_baseline_firewall_policy_errors": security_baseline_firewall_policy_errors,
-            "security_baseline_firewall_conflicting_sources": security_baseline_firewall_conflicting_sources,
             "security_baseline_journal_size_is_valid": security_baseline_journal_size_is_valid,
             "security_baseline_journald_effective_values": security_baseline_journald_effective_values,
         }

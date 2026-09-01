@@ -466,6 +466,20 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             ["--get-all-chains", "--get-all-rules", "--get-all-passthroughs"],
             direct_reads["loop"],
         )
+        bindings_read = next(
+            task
+            for task in verify["tasks"]
+            if task.get("ansible.builtin.command", {}).get("argv")
+            == ["/usr/bin/firewall-offline-cmd", "--list-all-zones"]
+        )
+        policies_read = next(
+            task
+            for task in verify["tasks"]
+            if task.get("ansible.builtin.command", {}).get("argv")
+            == ["/usr/bin/firewall-offline-cmd", "--list-all-policies"]
+        )
+        self.assertIs(bindings_read["changed_when"], False)
+        self.assertIs(policies_read["changed_when"], False)
         assertion = next(
             task
             for task in verify["tasks"]
@@ -490,6 +504,8 @@ class MoleculeScenarioContractTests(unittest.TestCase):
         )
         self.assertIn("permanent_firewall.results", normalized_problems)
         self.assertIn("direct_firewall.results", normalized_problems)
+        self.assertIn("firewall_bindings.stdout", normalized_problems)
+        self.assertIn("firewall_policies.stdout", normalized_problems)
 
     def test_baseline_verifier_proves_repository_sudo_policy_before_effective_sudo(self) -> None:
         verify = load_baseline_yaml("verify.yml")[0]

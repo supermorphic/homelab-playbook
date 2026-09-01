@@ -14,6 +14,11 @@ PRIVATE_NETWORKS = tuple(
 EMPTY_FIREWALL_FIELDS = (
     "sources", "services", "ports", "protocols", "source_ports", "forward_ports",
 )
+DIRECT_FIREWALL_READS = {
+    "--get-all-chains",
+    "--get-all-rules",
+    "--get-all-passthroughs",
+}
 
 
 def _private_sources(value: object) -> list[str]:
@@ -119,24 +124,100 @@ def os_baseline_verify_firewall_state_from_results(results: object, interface_zo
     }
 
 
-def os_baseline_verify_conflicting_sources(text: str, peer: str) -> list[str]:
-    """Find source-zone bindings outside homelab that include the management peer."""
-    address = ipaddress.ip_address(peer)
+def os_baseline_verify_firewall_global_surface_errors(
+    binding_text: object,
+    direct_results: object,
+    policy_text: object,
+    interface: str,
+    os_family: str,
+) -> list[str]:
+    """Independently reject global bindings, direct openings, and policies."""
+    if not isinstance(binding_text, str) or not isinstance(policy_text, str):
+        raise ValueError("global firewall evidence is malformed")
     zone = ""
-    conflicts: list[str] = []
-    for raw in text.splitlines():
-        if raw and not raw[:1].isspace():
-            zone = raw.strip()
-        elif zone != "homelab" and raw.strip().startswith("sources:"):
-            for source in raw.partition(":")[2].split():
-                try:
-                    network = ipaddress.ip_network(source, strict=False)
-                except ValueError:
-                    conflicts.append(source)
-                else:
-                    if network.version == address.version and address in network:
-                        conflicts.append(source)
-    return conflicts
+    seen: set[str] = set()
+    bindings: list[tuple[str, str, str]] = []
+    for raw in binding_text.splitlines():
+        if not raw.strip():
+            continue
+        if not raw[:1].isspace():
+            zone = raw.split()[0]
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", zone) or zone in seen:
+                raise ValueError("global firewall zone output is malformed")
+            seen.add(zone)
+            continue
+        field, separator, values = raw.strip().partition(":")
+        if separator and field in {"interfaces", "sources"}:
+            if not zone:
+                raise ValueError("global firewall binding has no zone")
+            bindings.extend((zone, field, value) for value in values.split())
+
+    if not isinstance(direct_results, list):
+        raise ValueError("direct firewall evidence is malformed")
+    direct: dict[str, str] = {}
+    for result in direct_results:
+        if not isinstance(result, Mapping):
+            raise ValueError("direct firewall result is malformed")
+        item = result.get("item")
+        stdout = result.get("stdout")
+        if not isinstance(item, str) or item in direct or not isinstance(stdout, str):
+            raise ValueError("direct firewall result is malformed")
+        direct[item] = stdout
+    if set(direct) != DIRECT_FIREWALL_READS:
+        raise ValueError("direct firewall result layout is not exact")
+
+    errors: list[str] = []
+    if any(field == "sources" for _zone, field, _value in bindings):
+        errors.append("source-bindings")
+    expected_interfaces = [("homelab", "interfaces", interface)] if interface else []
+    if [binding for binding in bindings if binding[1] == "interfaces"] != expected_interfaces:
+        errors.append("interface-bindings")
+    if any(stdout.strip() for stdout in direct.values()):
+        errors.append("direct-openings")
+    policy_rules = [
+        "neighbour-advertisement",
+        "neighbour-solicitation",
+        "redirect",
+        "router-advertisement",
+    ]
+    if os_family == "RedHat":
+        policy_rules.extend(
+            (
+                "mld-listener-done",
+                "mld-listener-query",
+                "mld-listener-report",
+                "mld2-listener-report",
+            )
+        )
+    elif os_family != "Debian":
+        raise ValueError("firewalld policy platform is unsupported")
+    expected_policy = [
+        "allow-host-ipv6",
+        "priority: -15000",
+        "target: CONTINUE",
+        "ingress-zones: ANY",
+        "egress-zones: HOST",
+        "services:",
+        "ports:",
+        "protocols:",
+        "masquerade: no",
+        "forward-ports:",
+        "source-ports:",
+        "icmp-blocks:",
+        "rich rules:",
+        *[
+            f'rule family="ipv6" icmp-type name="{name}" accept'
+            for name in policy_rules
+        ],
+    ]
+    actual_policy = [
+        line.strip() for line in policy_text.splitlines() if line.strip()
+    ]
+    if actual_policy and actual_policy[0] == "allow-host-ipv6 (active)":
+        actual_policy[0] = "allow-host-ipv6"
+    if sorted(actual_policy) != sorted(expected_policy):
+        errors.append("policy-objects")
+    return errors
 
 
 def os_baseline_verify_journald_values(text: str) -> dict[str, str]:
@@ -241,7 +322,7 @@ class FilterModule:
             "os_baseline_verify_firewall_rules": os_baseline_verify_firewall_rules,
             "os_baseline_verify_firewall_state_errors": os_baseline_verify_firewall_state_errors,
             "os_baseline_verify_firewall_state_from_results": os_baseline_verify_firewall_state_from_results,
-            "os_baseline_verify_conflicting_sources": os_baseline_verify_conflicting_sources,
+            "os_baseline_verify_firewall_global_surface_errors": os_baseline_verify_firewall_global_surface_errors,
             "os_baseline_verify_journald_values": os_baseline_verify_journald_values,
             "os_baseline_verify_ini_values": os_baseline_verify_ini_values,
             "os_baseline_verify_apt_policy": os_baseline_verify_apt_policy,
