@@ -6,6 +6,53 @@
     shell: /bin/bash
     password_lock: true
 
+- name: Validate candidate authorized keys with OpenSSH
+  block:
+    - name: Create private candidate authorized keys file
+      ansible.builtin.tempfile:
+        state: file
+        prefix: security-baseline-authorized-keys-
+      register: security_baseline_authorized_keys_candidate
+      no_log: true
+
+    - name: Write complete candidate authorized keys content
+      ansible.builtin.copy:
+        content: "{{ security_baseline_authorized_keys | join('\n') ~ '\n' }}"
+        dest: "{{ security_baseline_authorized_keys_candidate.path }}"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Parse complete candidate authorized keys content with OpenSSH
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/ssh-keygen
+          - -l
+          - -f
+          - "{{ security_baseline_authorized_keys_candidate.path }}"
+      register: security_baseline_authorized_keys_validation
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Require every candidate authorized key to parse
+      ansible.builtin.assert:
+        that:
+          - security_baseline_authorized_keys_validation.rc == 0
+          - security_baseline_authorized_keys_validation.stdout_lines | length == security_baseline_authorized_keys | length
+        fail_msg: Complete candidate authorized_keys content is not valid OpenSSH public-key data
+      no_log: true
+  always:
+    - name: Remove private candidate authorized keys file
+      ansible.builtin.file:
+        path: "{{ security_baseline_authorized_keys_candidate.path }}"
+        state: absent
+      when:
+        - security_baseline_authorized_keys_candidate is defined
+        - security_baseline_authorized_keys_candidate.path is defined
+      no_log: true
+
 - name: Reconcile authorized controller keys
   ansible.posix.authorized_key:
     user: ansible

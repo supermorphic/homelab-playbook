@@ -899,6 +899,108 @@ class SourceContractTests(unittest.TestCase):
         self.assertIs(keys["ansible.posix.authorized_key"]["exclusive"], True)
         self.assertIs(keys["no_log"], True)
 
+    def test_security_baseline_validates_complete_authorized_key_blob_with_openssh(
+        self,
+    ) -> None:
+        tasks = load_tasks("roles/security_baseline/tasks/access.yml")
+        validation = next(
+            task
+            for task in tasks
+            if task["name"] == "Validate candidate authorized keys with OpenSSH"
+        )
+        keys_index = next(
+            index
+            for index, task in enumerate(tasks)
+            if task["name"] == "Reconcile authorized controller keys"
+        )
+        validation_index = tasks.index(validation)
+        self.assertLess(validation_index, keys_index)
+
+        validation_tasks = validation["block"]
+        temporary_directory = validation_tasks[0]
+        candidate = validation_tasks[1]
+        openssh = validation_tasks[2]
+        assertion = validation_tasks[3]
+        self.assertEqual(
+            "file",
+            temporary_directory["ansible.builtin.tempfile"]["state"],
+        )
+        self.assertEqual("0600", candidate["ansible.builtin.copy"]["mode"])
+        self.assertIn(
+            "security_baseline_authorized_keys | join(",
+            candidate["ansible.builtin.copy"]["content"],
+        )
+        self.assertEqual(
+            [
+                "/usr/bin/ssh-keygen",
+                "-l",
+                "-f",
+                "{{ security_baseline_authorized_keys_candidate.path }}",
+            ],
+            openssh["ansible.builtin.command"]["argv"],
+        )
+        self.assertIs(openssh["failed_when"], False)
+        self.assertIn(
+            "security_baseline_authorized_keys_validation.rc == 0",
+            assertion["ansible.builtin.assert"]["that"],
+        )
+        self.assertIn(
+            "security_baseline_authorized_keys_validation.stdout_lines | length == security_baseline_authorized_keys | length",
+            assertion["ansible.builtin.assert"]["that"],
+        )
+        self.assertTrue(
+            all(task.get("no_log") is True for task in validation_tasks)
+        )
+        self.assertTrue(
+            all(task.get("no_log") is True for task in validation["always"])
+        )
+
+        post_update = load_tasks("roles/security_baseline/tasks/post-update.yml")
+        self.assertEqual(
+            "access.yml",
+            post_update[0]["ansible.builtin.import_tasks"],
+        )
+        provision = load_yaml_documents("playbooks/os/provision.yml")[0][1]
+        self.assertIn(
+            {"name": "security_baseline", "tasks_from": "post-update.yml"},
+            [
+                task["ansible.builtin.import_role"]
+                for task in provision["pre_tasks"]
+                if "ansible.builtin.import_role" in task
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "controller"
+            subprocess.run(
+                [
+                    "ssh-keygen",
+                    "-q",
+                    "-t",
+                    "ed25519",
+                    "-N",
+                    "",
+                    "-f",
+                    str(key_path),
+                ],
+                check=True,
+            )
+            candidate_path = Path(directory) / "authorized_keys"
+            candidate_path.write_text(
+                key_path.with_suffix(".pub").read_text(encoding="utf-8")
+                + "not-a-public-key\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["ssh-keygen", "-l", "-f", str(candidate_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertTrue(
+                result.returncode != 0 or len(result.stdout.splitlines()) != 2
+            )
+
     def test_firewall_policy_is_private_source_only_and_runtime_guarded(
         self,
     ) -> None:

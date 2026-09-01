@@ -19,19 +19,6 @@
       connection user, authorized controller keys, and management sources
   no_log: true
 
-- name: Validate authorized controller key formats
-  ansible.builtin.assert:
-    that:
-      - >-
-        item is match(
-          '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|'
-          ~ 'sk-ssh-ed25519@openssh\\.com|'
-          ~ 'sk-ecdsa-sha2-nistp256@openssh\\.com) '
-        )
-    fail_msg: Authorized controller keys must use a supported OpenSSH key type
-  loop: "{{ security_baseline_authorized_keys }}"
-  no_log: true
-
 - name: Configure pre-update repository trust and time policy
   ansible.builtin.import_tasks: pre-update.yml
 
