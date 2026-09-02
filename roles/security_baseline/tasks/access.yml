@@ -91,6 +91,7 @@
     sshd_sysconfig_override_crypto_policy: false
     sshd_config:
       AllowUsers: ansible
+      UseDNS: false
       PubkeyAuthentication: true
       PasswordAuthentication: false
       KbdInteractiveAuthentication: false
@@ -156,6 +157,7 @@
   ansible.builtin.assert:
     that:
       - "'allowusers ansible' in security_baseline_sshd_effective.stdout_lines"
+      - "'usedns no' in security_baseline_sshd_effective.stdout_lines"
       - "'pubkeyauthentication yes' in security_baseline_sshd_effective.stdout_lines"
       - "'passwordauthentication no' in security_baseline_sshd_effective.stdout_lines"
       - "'kbdinteractiveauthentication no' in security_baseline_sshd_effective.stdout_lines"

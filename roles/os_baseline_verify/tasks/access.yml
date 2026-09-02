@@ -88,6 +88,7 @@
   ansible.builtin.assert:
     that:
       - "'allowusers ansible' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'usedns no' in os_baseline_verify_sshd_effective.stdout_lines"
       - "'pubkeyauthentication yes' in os_baseline_verify_sshd_effective.stdout_lines"
       - "'passwordauthentication no' in os_baseline_verify_sshd_effective.stdout_lines"
       - "'kbdinteractiveauthentication no' in os_baseline_verify_sshd_effective.stdout_lines"

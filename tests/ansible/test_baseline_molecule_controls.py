@@ -88,6 +88,7 @@ class SshOracleTests(unittest.TestCase):
         self.controls = load_controls()
         self.exact = [
             "allowusers ansible",
+            "usedns no",
             "pubkeyauthentication yes",
             "passwordauthentication no",
             "kbdinteractiveauthentication no",
@@ -118,6 +119,18 @@ class SshOracleTests(unittest.TestCase):
         ]
         self.assertEqual(
             ["passwordauthentication", "allowtcpforwarding"],
+            self.controls.system_maintenance_molecule_baseline_sshd_errors(
+                weakened
+            ),
+        )
+
+    def test_dns_lookup_enablement_is_rejected(self) -> None:
+        weakened = [
+            "usedns yes" if line == "usedns no" else line
+            for line in self.exact
+        ]
+        self.assertEqual(
+            ["usedns"],
             self.controls.system_maintenance_molecule_baseline_sshd_errors(
                 weakened
             ),

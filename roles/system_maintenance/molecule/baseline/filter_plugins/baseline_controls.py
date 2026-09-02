@@ -42,6 +42,7 @@ EXPECTED_TIMER = {
 }
 EXPECTED_SSH_POLICY = {
     "allowusers": "allowusers ansible",
+    "usedns": "usedns no",
     "pubkeyauthentication": "pubkeyauthentication yes",
     "passwordauthentication": "passwordauthentication no",
     "kbdinteractiveauthentication": "kbdinteractiveauthentication no",

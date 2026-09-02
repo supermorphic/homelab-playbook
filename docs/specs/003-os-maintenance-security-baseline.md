@@ -188,6 +188,8 @@ The effective policy:
 - permits public-key authentication and retains SFTP required by Ansible;
 - disables password, keyboard-interactive, empty-password, and direct root
   authentication;
+- disables client-hostname lookup with `UseDNS no`, so the connection-specific
+  `host` and `addr` inputs both use the authenticated peer address;
 - disables agent forwarding, TCP forwarding, X11 forwarding, and tunnels;
 - uses the standard port and does not bind to a Tailscale-specific address;
 - leaves algorithm selection to the distribution and RHEL system crypto policy;
@@ -197,9 +199,9 @@ The effective policy:
 The role renders and syntax-checks a candidate before reload. Repository
 verification then checks the complete effective configuration with
 `sshd -T -C` for the actual administrative connection user and endpoints,
-keeps the current connection open through activation, establishes a new
-connection, and confirms the authorized administrative path. An invalid
-candidate never triggers a reload.
+independently confirms `usedns no`, keeps the current connection open through
+activation, establishes a new connection, and confirms the authorized
+administrative path. An invalid candidate never triggers a reload.
 
 ## Repository and package policy
 

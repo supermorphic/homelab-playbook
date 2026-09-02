@@ -527,13 +527,16 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             if task["name"]
             == "Exercise an adversarial matching OpenSSH policy in memory"
         )
-        for task in (effective, adversarial):
+        for task, expected_host in (
+            (effective, "127.0.0.1"),
+            (adversarial, "controller.example.invalid"),
+        ):
             argv = task["ansible.builtin.command"]["argv"]
             self.assertIn("-C", argv)
             context = argv[argv.index("-C") + 1]
             for field in (
                 "user=ansible",
-                "host=127.0.0.1",
+                f"host={expected_host}",
                 "addr=127.0.0.1",
                 "laddr=127.0.0.1",
                 "lport=22",
@@ -545,7 +548,10 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             adversarial["ansible.builtin.command"]["argv"][3],
         )
         adversarial_input = adversarial["ansible.builtin.command"]["stdin"]
-        self.assertIn("Match User ansible", adversarial_input)
+        self.assertIn(
+            "Match Host controller.example.invalid User ansible",
+            adversarial_input,
+        )
         self.assertIn("PasswordAuthentication yes", adversarial_input)
         self.assertIn("AllowTcpForwarding yes", adversarial_input)
 

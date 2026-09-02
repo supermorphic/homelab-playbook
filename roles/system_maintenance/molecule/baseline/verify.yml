@@ -132,10 +132,10 @@
           - -f
           - /dev/stdin
           - -C
-          - user=ansible,host=127.0.0.1,addr=127.0.0.1,laddr=127.0.0.1,lport=22
+          - user=ansible,host=controller.example.invalid,addr=127.0.0.1,laddr=127.0.0.1,lport=22
         stdin: |
           Include /etc/ssh/sshd_config
-          Match User ansible
+          Match Host controller.example.invalid User ansible
             PasswordAuthentication yes
             AllowTcpForwarding yes
       register: system_maintenance_molecule_baseline_sshd_adversarial

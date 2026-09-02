@@ -1046,6 +1046,42 @@ class SourceContractTests(unittest.TestCase):
                 ):
                     self.assertIn(field, context)
                 self.assertIs(read["changed_when"], False)
+                context_assertion = next(
+                    task
+                    for task in tasks
+                    if task["name"]
+                    == "Validate administrative SSH connection context"
+                )
+                self.assertTrue(
+                    any(
+                        ".host == " in expression and ".peer" in expression
+                        for expression in context_assertion[
+                            "ansible.builtin.assert"
+                        ]["that"]
+                    )
+                )
+                policy_assertion = next(
+                    task
+                    for task in tasks
+                    if task["name"] == "Verify effective SSH policy"
+                )
+                self.assertIn(
+                    "'usedns no' in "
+                    + (
+                        "security_baseline_sshd_effective.stdout_lines"
+                        if path.startswith("roles/security_baseline/")
+                        else "os_baseline_verify_sshd_effective.stdout_lines"
+                    ),
+                    policy_assertion["ansible.builtin.assert"]["that"],
+                )
+
+        producer_tasks = load_tasks("roles/security_baseline/tasks/access.yml")
+        ssh_role = next(
+            task
+            for task in producer_tasks
+            if task["name"] == "Configure focused SSH policy"
+        )
+        self.assertIs(ssh_role["vars"]["sshd_config"].get("UseDNS"), False)
 
         for path in (
             "roles/security_baseline/files/discover_management_interface.py",
@@ -1067,6 +1103,10 @@ class SourceContractTests(unittest.TestCase):
                 "local_port": 22,
             },
             converge["vars"]["security_baseline_sshd_connection_context"],
+        )
+        self.assertEqual(
+            converge["vars"]["security_baseline_sshd_connection_context"],
+            converge["vars"]["os_baseline_verify_sshd_connection_context"],
         )
 
     def test_firewall_policy_is_private_source_only_and_runtime_guarded(
