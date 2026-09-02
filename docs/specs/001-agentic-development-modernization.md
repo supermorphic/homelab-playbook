@@ -155,14 +155,11 @@ The maintained production target is deliberately narrow:
 - Debian 13 for general-purpose hosts;
 - Raspberry Pi OS based on Debian for Raspberry Pi hosts.
 
-Arch Linux and Red Hat-family logic may remain only where it is useful historical
-or experimental source. It is not a validated production contract until a real
-consumer and test target are defined. Unsupported production paths should fail
-clearly rather than silently skip required work. The tested Arch Linux package
-and locale tasks and the historical Red Hat-family maintenance tasks remain in
-`roles/system_maintenance/tasks/`, with their exact Galaxy collection
-dependencies. The role dispatcher preserves all three operating-system paths;
-only Debian has an active production consumer and live validation boundary.
+Debian 13 is the primary production platform. Rocky Linux 9 is the explicitly
+covered secondary platform for repository-owned operating-system maintenance.
+Unsupported production paths fail clearly rather than silently skip required
+work. The `system_maintenance` role therefore dispatches only its Debian and
+Red Hat-family implementations.
 
 ## Inventory design
 

@@ -6,7 +6,7 @@ Issue: [#11 Establish multi-OS Molecule validation](https://github.com/supermorp
 
 Add change-directed executable validation for the repository-owned
 `system_maintenance` role. The validation uses Molecule and rootless Podman to
-exercise Debian 13, Rocky Linux 9, and Arch Linux in systemd-capable containers.
+exercise Debian 13 and Rocky Linux 9 in systemd-capable containers.
 
 This initiative adds and activates the change-directed `molecule` validation
 depth. It adds container evidence without contacting an inventory host, using a
@@ -20,9 +20,8 @@ repository secret, or claiming VM or physical-hardware coverage.
    committed image digests.
 4. Each platform explicitly pulls its base once per invocation, then builds and
    tests without another registry check.
-5. Debian and Rocky run natively on ARM64 and AMD64. The default platform set
-   skips Arch on ARM64 hosts and includes native Arch on AMD64 hosts. GitHub's
-   AMD64 matrix always includes Arch.
+5. Debian and Rocky run natively on ARM64 and AMD64. The same two-platform set
+   runs locally and in GitHub Actions.
 6. Local platform workers and GitHub matrix jobs use the same worker lifecycle.
 7. Local and GitHub platform validation runs concurrently.
 8. Base and built images remain cached. Test containers are recreated for every
@@ -31,15 +30,15 @@ repository secret, or claiming VM or physical-hardware coverage.
    are reported separately.
 
 These decisions replace issue #11's initial privileged-container and immutable
-image-pin assumptions. They preserve its operating-system, systemd, executable
-behavior, change-directed validation, and container-only boundaries.
+image-pin assumptions. They preserve its systemd, executable behavior,
+change-directed validation, and container-only boundaries.
 
 ## Scope
 
 ### Included
 
 - one `default` Molecule scenario for `roles/system_maintenance`;
-- Debian 13, Rocky Linux 9, and Arch Linux container platforms;
+- Debian 13 and Rocky Linux 9 container platforms;
 - rootless Podman preflight, image acquisition, image building, container
   lifecycle, and cleanup;
 - converge, deterministic-task idempotence, and independent verification
@@ -47,7 +46,7 @@ behavior, change-directed validation, and container-only boundaries.
 - explicit suppression of real reboot attempts during container tests while
   retaining the production default;
 - a public scenario test command and shared per-platform worker;
-- parallel local execution and a three-job GitHub Actions matrix;
+- parallel local execution and a two-job GitHub Actions matrix;
 - activation of classifier, `full`, and merge-gate support for the `molecule`
   depth;
 - separate timing and image-provenance reporting; and
@@ -96,6 +95,11 @@ Ansible create and destroy playbooks. It does not install or use
 bootstrap owns exact controller and Galaxy installation. This prevents parallel
 workers from attempting concurrent dependency installation into shared paths.
 
+The dependency audit retains every declared Galaxy role and collection.
+`community.general` remains necessary for Rocky Linux DNF configuration,
+`community.library_inventory_filtering_v1` remains its explicit dependency, and
+`containers.podman` remains necessary for the Molecule lifecycle.
+
 Podman is a host runtime, not a Python project dependency. The repository does
 not install it through bootstrap or invoke it with elevated privileges. The
 embedded test preflight checks required capabilities and reports the detected
@@ -131,11 +135,10 @@ would add friction without a proportionate safeguard.
 | --- | --- | --- | --- |
 | Debian 13 | `docker.io/library/debian:13` | native ARM64 | native AMD64 |
 | Rocky Linux 9 | `docker.io/rockylinux/rockylinux:9` | native ARM64 | native AMD64 |
-| Arch Linux | `docker.io/archlinux/archlinux:base` | skipped | native AMD64 |
 
-The Debian and Rocky tags follow their selected major release lines. The Arch
-tag follows Arch Linux's rolling distribution model. They intentionally move as
-upstream publishers release maintenance and security updates.
+The Debian and Rocky tags follow their selected major release lines. They
+intentionally move as upstream publishers release maintenance and security
+updates.
 
 Every reference is fully qualified to avoid short-name registry resolution.
 The repository records the locally resolved image identifier after each pull,
@@ -156,11 +159,12 @@ Before local workers or a GitHub platform worker starts, the repository runner:
 7. acquires one non-blocking host-local invocation lock shared by linked
    worktrees of this repository.
 
-Invalid usage or an unknown selector exits with status `2`. An unavailable
-dependency, Podman executable, Podman service or machine, rootless mode, cgroup
-v2 host, or invocation lock exits with status `1` and one actionable message.
-Expected setup failures print no traceback. The runner does not pull an image,
-inspect or delete a container, or start workers until this preflight succeeds.
+Invalid usage, an unknown selector, or an unknown workflow platform exits with
+status `2`. An unavailable dependency, Podman executable, Podman service or
+machine, rootless mode, cgroup v2 host, or invocation lock exits with status `1`
+and one actionable message. Expected setup failures print no traceback. The
+runner does not pull an image, inspect or delete a container, or start workers
+until this preflight succeeds.
 
 On macOS, an unreachable Podman service reports that the operator should run
 `podman machine start`. On Linux, it reports that rootless Podman must be made
@@ -184,7 +188,7 @@ After global preflight, each platform worker owns this sequence:
 A container with the expected name but missing or different ownership labels is
 not deleted; that worker fails with a collision message. The invocation lock
 prevents overlapping local runs from treating another active run as stale while
-still allowing the three workers within one invocation to run concurrently.
+still allowing the two workers within one invocation to run concurrently.
 The lock identity derives from Git's common directory so linked worktrees on the
 same host coordinate with each other. The lock is released on success, failure,
 or interruption. GitHub matrix jobs run on separate ephemeral hosts and
@@ -221,11 +225,10 @@ The preflight must prove:
 - the Podman host supplies cgroup v2; and
 - the default platform set matches the Podman host architecture.
 
-The preflight does not pull or start a separate probe image. An ARM64 default
-run omits Arch and reports that GitHub CI covers it on native AMD64. The
-internal platform selector overrides the default with one exact worker. GitHub
-sets it for each matrix job and runs Arch on its AMD64 host; it is not a public
-command argument.
+The preflight does not pull or start a separate probe image. The default run
+selects Debian and Rocky on both supported host architectures. The internal
+platform selector overrides the default with one exact worker. GitHub sets it
+to Debian or Rocky for each matrix job; it is not a public command argument.
 
 After container creation, a bounded readiness check confirms that systemd is PID
 1 and responds inside the container. This is the authoritative proof that the
@@ -271,8 +274,8 @@ the exact names owned by this scenario. It does not prune Podman storage or
 remove unrelated containers, images, networks, or volumes.
 
 Workers use distinct container names, built-image tags, logs, and Molecule
-ephemeral state. This isolation permits three local workers to execute at the
-same time without sharing mutable scenario state.
+ephemeral state. This isolation permits two local workers to execute at the same
+time without sharing mutable scenario state.
 
 ## Role contract and reboot control
 
@@ -314,8 +317,6 @@ The initial assertions cover current role-owned invariants:
   complete successfully;
 - Rocky Linux has `installonly_limit=2`, the EPEL package is installed, and the
   EPEL repository is disabled by default;
-- Arch Linux has the requested `en_US.UTF-8` locale and `/etc/locale.conf`
-  content and permissions;
 - a functioning systemd process exists in each test container.
 
 Assertions use package facts, file metadata and content, service-manager facts,
@@ -335,15 +336,14 @@ mise run test:molecule -- system_maintenance/default
 ```
 
 It validates the exact role/scenario selector and returns failure if any worker
-fails. On ARM64 it runs Debian and Rocky and reports that Arch is skipped. On
-AMD64 it runs all three platforms. Unknown roles, scenarios, or extra public
-arguments fail with a concise usage message and status `2` before Podman is
-inspected.
+fails. It runs Debian and Rocky on both ARM64 and AMD64. Unknown roles,
+scenarios, workflow platforms, or extra public arguments fail with a concise
+usage message and status `2` before Podman is inspected.
 
 The local runner starts the selected isolated platform workers concurrently.
 It waits for all workers so one failure does not discard useful results from
-the other platforms. Output identifies the originating platform, and the final
-summary reports every result and any architecture-based skip.
+the other platform. Output identifies the originating platform, and the final
+summary reports every result.
 
 Molecule's experimental collection-only worker interface is not part of this
 design. Repository orchestration supplies bounded parallelism for this
@@ -383,12 +383,11 @@ classify
    |-- ansible (ansible, molecule, or full) ------|
    `-- molecule (molecule or full)                 |-- merge-gate
          |-- Debian 13                             |
-         |-- Rocky Linux 9                         |
-         `-- Arch Linux ---------------------------|
+         `-- Rocky Linux 9 ------------------------|
 ```
 
-The matrix uses `ubuntu-24.04`, `fail-fast: false`, and at most three concurrent
-jobs. Every platform is native AMD64 in GitHub Actions. Each matrix job invokes
+The matrix uses `ubuntu-24.04`, `fail-fast: false`, and at most two concurrent
+jobs. Both platforms are native AMD64 in GitHub Actions. Each matrix job invokes
 the same platform worker used by the local command and has a bounded timeout.
 The initial timeout allows for a cold image build and full package upgrade; it
 must be tightened later if measured results support a smaller reliable bound.
@@ -464,6 +463,13 @@ Implementation follows repository test and validation policy:
    request; and
 6. collect successful GitHub matrix timing from the pull request.
 
+Focused tests use positive current invariants as their oracles. They require the
+exact Debian and Red Hat role dispatch set, the exact Debian 13 and Rocky Linux
+9 Molecule set, and the exact two-entry GitHub matrix. Complete OS provisioning
+must reject an unsupported operating-system family before configuration roles
+run, and the Molecule runner must reject an unknown workflow platform before
+invoking Podman. No permanent forbidden-reference scan is part of the contract.
+
 The implementation report records, for every platform and for the local and
 GitHub workflow totals:
 
@@ -474,20 +480,19 @@ GitHub workflow totals:
 - whether execution was native or emulated; and
 - the proportion of overall platform time spent building the test image.
 
-The initial data establishes whether a later prebuilt-image design is warranted.
-Arch timing comes from the native AMD64 GitHub worker.
+Run-specific measurements belong in implementation reports rather than this
+durable specification.
 
 ## Acceptance criteria
 
-Issue #11 is complete when:
+The current contract is satisfied when:
 
 1. Molecule and `containers.podman` are exactly pinned through uv and Galaxy
    dependency management;
-2. `mise run test:molecule -- system_maintenance/default` runs the
-   architecture-selected platforms concurrently with Podman only;
-3. local ARM64 runs native Debian and Rocky and reports Arch as skipped, local
-   AMD64 runs all three platforms natively, and GitHub's AMD64 matrix runs all
-   three platforms natively;
+2. `mise run test:molecule -- system_maintenance/default` runs Debian and Rocky
+   concurrently with Podman only;
+3. local ARM64 and AMD64 runs select native Debian and Rocky, and GitHub's AMD64
+   matrix runs both platforms natively;
 4. Podman is rootless and all scenario hosts use `container_privileged: false`,
    `container_systemd: always`, and no added capabilities;
 5. one embedded global preflight rejects invalid selectors, unavailable or
@@ -499,18 +504,17 @@ Issue #11 is complete when:
 7. base and built images remain after local testing, while exact label-owned
    scenario containers are destroyed after both success and failure;
 8. converge, deterministic-task idempotence, and independent verification pass
-   for each selected operating system, including Arch in GitHub's AMD64 matrix;
-   live full-upgrade tasks run during converge and are excluded only from the
-   idempotence pass because maintained package repositories can change during a
-   scenario run;
+   for Debian and Rocky; live full-upgrade tasks run during converge and are
+   excluded only from the idempotence pass because maintained package
+   repositories can change during a scenario run;
 9. the role exposes an explicit reboot control whose production default remains
    enabled and whose scenario value prevents actual container reboot;
 10. verification covers representative current role invariants, including Rocky
-   kernel retention and EPEL settings and Arch locale configuration;
+    kernel retention and EPEL settings;
 11. the classifier selects `molecule` only for explicitly mapped role/scenario
     changes, retains shallower depths for unaffected changes, and selects all
     implemented validation for `full`;
-12. GitHub executes a bounded three-platform matrix in parallel and the stable
+12. GitHub executes a bounded two-platform matrix in parallel and the stable
     merge gate requires its success when selected;
 13. local and GitHub workers report pull, build, Molecule, and platform-total
     timing; the local summary and implementation report add their respective
@@ -518,5 +522,8 @@ Issue #11 is complete when:
 14. acquisition, build, assertion, and cleanup failures are distinguishable;
 15. no test contacts inventory hosts, reads Vault material, uses infrastructure
     credentials, or claims VM or hardware evidence; and
-16. all repository-required change-directed validation passes from the issue
+16. support claims, executable behavior, Molecule coverage, CI execution, and
+    documentation agree on the Debian and Rocky platform set while generic CPU-
+    architecture logic remains; and
+17. all repository-required change-directed validation passes from the issue
     branch before completion is claimed.
