@@ -13,6 +13,8 @@ import unittest
 from pathlib import Path
 
 import yaml
+from ansible.parsing.dataloader import DataLoader
+from ansible.template import Templar, trust_as_template
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -25,6 +27,16 @@ def load_yaml_documents(relative_path: str) -> list[object]:
 
 def load_tasks(relative_path: str) -> list[dict[str, object]]:
     return [task for document in load_yaml_documents(relative_path) for task in document]
+
+
+def render_ansible_template(
+    relative_path: str,
+    variables: dict[str, object],
+) -> str:
+    template = trust_as_template(
+        (REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8")
+    )
+    return Templar(loader=DataLoader(), variables=variables).template(template)
 
 
 OBSERVATIONAL_VERIFIER_MODULES = {
@@ -1283,6 +1295,17 @@ class SourceContractTests(unittest.TestCase):
             True,
         )
 
+    def test_rocky_native_reboot_template_coerces_string_booleans(self) -> None:
+        for provided, expected in (("false", "never"), ("true", "when-needed")):
+            with self.subTest(provided=provided):
+                rendered = render_ansible_template(
+                    "roles/system_maintenance/templates/dnf-automatic.conf.j2",
+                    {"system_maintenance_native_reboot_enabled": provided},
+                )
+                configuration = configparser.ConfigParser()
+                configuration.read_string(rendered)
+                self.assertEqual(expected, configuration["commands"]["reboot"])
+
     def test_system_maintenance_configures_native_security_updater_mechanisms(
         self,
     ) -> None:
@@ -1357,14 +1380,9 @@ class SourceContractTests(unittest.TestCase):
             apt_origins,
         )
 
-        dnf_policy = (
-            REPOSITORY_ROOT
-            / "roles/system_maintenance/templates/dnf-automatic.conf.j2"
-        ).read_text(encoding="utf-8")
-        dnf_policy = dnf_policy.replace(
-            "{{ 'when-needed' if system_maintenance_native_reboot_enabled "
-            "else 'never' }}",
-            "when-needed",
+        dnf_policy = render_ansible_template(
+            "roles/system_maintenance/templates/dnf-automatic.conf.j2",
+            {"system_maintenance_native_reboot_enabled": "true"},
         )
         dnf_config = configparser.ConfigParser()
         dnf_config.read_string(dnf_policy)
