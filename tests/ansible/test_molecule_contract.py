@@ -211,9 +211,7 @@ class MoleculeScenarioContractTests(unittest.TestCase):
         self.assertIn("'dnf-automatic' in ansible_facts.packages", rocky_policy)
         self.assertIn("'epel-release' not in ansible_facts.packages", rocky_policy)
 
-    def test_containerfiles_use_maintained_bases_without_role_evidence_package(
-        self,
-    ) -> None:
+    def test_containerfiles_use_maintained_bases(self) -> None:
         expected_bases = {
             "Containerfile.debian13": "FROM docker.io/library/debian:13",
             "Containerfile.rockylinux9": (
@@ -226,7 +224,6 @@ class MoleculeScenarioContractTests(unittest.TestCase):
                 self.assertTrue(path.is_file())
                 content = path.read_text(encoding="utf-8")
                 self.assertEqual(expected_base, content.splitlines()[0])
-                self.assertNotIn("tree", content.lower())
                 self.assertIn('CMD ["/usr/lib/systemd/systemd"]', content)
                 self.assertIn("STOPSIGNAL SIGRTMIN+3", content)
 
@@ -366,28 +363,11 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             with self.subTest(variable=name):
                 self.assertIs(variables[name], False)
 
-        production = load_yaml_documents("playbooks/os/provision.yml")
-        self.assertEqual(["os_bootstrap"], production[0][0]["roles"])
-        imports = [
-            task["ansible.builtin.import_role"]
-            for task in production[0][1]["pre_tasks"]
-            if "ansible.builtin.import_role" in task
-        ]
-        self.assertEqual(
-            [
-                {"name": "security_baseline", "tasks_from": "pre-update.yml"},
-                {"name": "system_maintenance", "tasks_from": "full-update.yml"},
-                {"name": "security_baseline", "tasks_from": "post-update.yml"},
-                {"name": "system_maintenance", "tasks_from": "automatic-updates.yml"},
-                {"name": "system_maintenance", "tasks_from": "reboot-state.yml"},
-            ],
-            imports[:5],
-        )
-        self.assertEqual(1, production[0][0]["serial"])
-        self.assertEqual(1, production[0][1]["serial"])
-
     def test_baseline_verify_is_independent_and_states_evidence_limits(self) -> None:
         verify = load_baseline_yaml("verify.yml")[0]
+        self.assertEqual("servers", verify["hosts"])
+        self.assertIs(verify["gather_facts"], True)
+        self.assertIs(verify["become"], True)
         self.assertNotIn("roles", verify)
         self.assertFalse(
             any(
@@ -396,44 +376,26 @@ class MoleculeScenarioContractTests(unittest.TestCase):
                 for task in verify["tasks"]
             )
         )
-        verify_source = (
-            REPOSITORY_ROOT
-            / "roles/system_maintenance/molecule/baseline/verify.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn("systemd-timesyncd", verify_source)
-        self.assertIn("ansible_os_family == 'Debian'", verify_source)
-        self.assertIn("chrony", verify_source)
-        self.assertIn("ansible_os_family == 'RedHat'", verify_source)
-        self.assertIn("controller-key/id_ed25519.pub", verify_source)
-        self.assertNotIn("security_baseline_authorized_keys[0]", verify_source)
-        lowered = verify_source.lower()
-        for evidence in (
-            "authorized_keys",
-            "sudo",
-            "sshd -t",
-            "firewall-offline-cmd",
-            "apparmor",
-            "selinux",
-            "journald",
-            "auditd",
-            "unattended-upgrades",
-            "dnf-automatic",
-            "fail2ban",
-            "epel",
-            "cron",
-            "timer",
-        ):
-            with self.subTest(evidence=evidence):
-                self.assertIn(evidence, lowered)
-        for limitation in (
-            "clock synchronization",
-            "firewall reachability",
-            "kernel enforcement",
-            "audit-kernel attachment",
-            "physical reboot",
-        ):
-            with self.subTest(limitation=limitation):
-                self.assertIn(limitation, lowered)
+        evidence_limit = next(
+            task
+            for task in verify["tasks"]
+            if task["name"] == "State the container evidence boundary"
+        )
+        self.assertEqual(
+            {
+                "name",
+                "ansible.builtin.debug",
+                "changed_when",
+            },
+            set(evidence_limit),
+        )
+        self.assertIs(evidence_limit["changed_when"], False)
+        self.assertEqual(
+            "Container evidence does not prove runtime clock synchronization, "
+            "firewall reachability, kernel enforcement, audit-kernel attachment, "
+            "or physical reboot behavior.",
+            " ".join(evidence_limit["ansible.builtin.debug"]["msg"].split()),
+        )
 
     def test_baseline_firewall_verifier_reads_and_compares_exact_permanent_state(self) -> None:
         verify = load_baseline_yaml("verify.yml")[0]

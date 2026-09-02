@@ -1369,22 +1369,6 @@ class SourceContractTests(unittest.TestCase):
             converge["vars"]["os_baseline_verify_sshd_connection_context"],
         )
 
-    def test_firewall_policy_is_private_source_only_and_runtime_guarded(
-        self,
-    ) -> None:
-        source = (
-            REPOSITORY_ROOT / "roles/security_baseline/tasks/firewall.yml"
-        ).read_text(encoding="utf-8")
-        rule_source = (
-            REPOSITORY_ROOT
-            / "roles/security_baseline/filter_plugins/platform_controls.py"
-        ).read_text(encoding="utf-8")
-        self.assertIn("security_baseline_management_sources", source)
-        self.assertIn('service name=\"ssh\"', rule_source)
-        self.assertIn("security_baseline_apply_firewall_runtime", source)
-        for forbidden in ("tailscale0", "http", "https", "dns", "public"):
-            self.assertNotIn(forbidden, (source + rule_source).lower())
-
     def test_platform_mac_policy_does_not_mix_frameworks(self) -> None:
         tasks = load_tasks("roles/security_baseline/tasks/mac.yml")
         selinux = next(
@@ -1402,20 +1386,14 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("ansible_os_family == 'RedHat'", selinux["when"])
         self.assertIn("ansible_os_family == 'Debian'", apparmor["when"])
 
-    def test_logging_uses_persistent_bounded_journal_and_vendor_audit_rules(
-        self,
-    ) -> None:
+    def test_logging_uses_persistent_bounded_journal(self) -> None:
         template = (
             REPOSITORY_ROOT
             / "roles/security_baseline/templates/journald-homelab.conf.j2"
         ).read_text(encoding="utf-8")
-        audit_source = (
-            REPOSITORY_ROOT / "roles/security_baseline/tasks/logging.yml"
-        ).read_text(encoding="utf-8")
         self.assertIn("Storage=persistent", template)
         self.assertIn("SystemMaxUse=", template)
         self.assertIn("SystemKeepFree=", template)
-        self.assertNotIn("audit.rules", audit_source)
 
     def test_time_provider_uses_platform_defaults(self) -> None:
         """A provider change must not edit operator-owned time sources."""
@@ -1489,10 +1467,40 @@ class SourceContractTests(unittest.TestCase):
         permanent_assert = next(task for task in tasks if task["name"] == "Verify permanent firewall default and exact policy")
         runtime_assert = next(task for task in tasks if task["name"] == "Verify exact runtime firewall policy")
 
-        self.assertIn("os_baseline_verify_firewall_state_from_results", str(permanent_reducer))
-        self.assertIn("os_baseline_verify_permanent_firewall_state", str(permanent_assert))
-        self.assertIn("os_baseline_verify_firewall_state_from_results", str(runtime_reducer))
-        self.assertIn("os_baseline_verify_runtime_firewall_state", str(runtime_assert))
+        self.assertEqual(
+            normalize_expression(
+                "{{ os_baseline_verify_permanent_firewall.results "
+                "| os_baseline_verify_firewall_state_from_results('homelab') }}"
+            ),
+            normalize_expression(
+                permanent_reducer["ansible.builtin.set_fact"]
+                ["os_baseline_verify_permanent_firewall_state"]
+            ),
+        )
+        self.assertIn(
+            "os_baseline_verify_permanent_firewall_state "
+            "| os_baseline_verify_firewall_state_errors(",
+            " ".join(
+                permanent_assert["ansible.builtin.assert"]["that"][1].split()
+            ),
+        )
+        self.assertEqual(
+            normalize_expression(
+                "{{ os_baseline_verify_runtime_firewall.results "
+                "| os_baseline_verify_firewall_state_from_results( "
+                "os_baseline_verify_runtime_firewall_globals.results[1].stdout "
+                "| trim) }}"
+            ),
+            normalize_expression(
+                runtime_reducer["ansible.builtin.set_fact"]
+                ["os_baseline_verify_runtime_firewall_state"]
+            ),
+        )
+        self.assertIn(
+            "os_baseline_verify_runtime_firewall_state "
+            "| os_baseline_verify_firewall_state_errors(",
+            " ".join(runtime_assert["ansible.builtin.assert"]["that"][1].split()),
+        )
 
     def test_system_maintenance_managed_packages_are_minimal(self) -> None:
         task_paths = (

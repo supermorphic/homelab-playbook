@@ -426,24 +426,77 @@ class AnsibleSourceContracts(unittest.TestCase):
                 "ansible-lint", fake_uv_log.read_text(encoding="utf-8")
             )
 
-    def test_ansible_validation_registers_exact_offline_python_suites(self) -> None:
-        registered_suites = [
-            line.strip().removesuffix("\\").strip()
-            for line in ANSIBLE_VALIDATION.read_text(encoding="utf-8").splitlines()
-            if line.strip().startswith("tests/ansible/test_")
-        ]
+    def test_ansible_validation_discovers_new_offline_python_suites(self) -> None:
+        """A new ``test_*.py`` suite must run without workflow edits."""
+        with tempfile.TemporaryDirectory() as temporary_name:
+            repository_root = Path(temporary_name)
+            ansible_validation = (
+                repository_root / "scripts" / "ci" / "validate-ansible.sh"
+            )
+            ansible_validation.parent.mkdir(parents=True)
+            shutil.copy2(ANSIBLE_VALIDATION, ansible_validation)
+            source_builder = repository_root / "scripts" / "ci" / "ansible-sources.sh"
+            source_builder.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\0' 'playbooks/valid.yml'\n",
+                encoding="utf-8",
+            )
+            valid_source = repository_root / "playbooks" / "valid.yml"
+            valid_source.parent.mkdir(parents=True)
+            valid_source.write_text("---\n", encoding="utf-8")
 
-        self.assertEqual(
-            [
-                "tests/ansible/test_ansible_sources.py",
-                "tests/ansible/test_baseline_molecule_controls.py",
-                "tests/ansible/test_molecule_contract.py",
-                "tests/ansible/test_os_baseline_verify_controls.py",
-                "tests/ansible/test_platform_control_contracts.py",
-                "tests/ansible/test_source_contracts.py",
-            ],
-            registered_suites,
-        )
+            tests_root = repository_root / "tests" / "ansible"
+            tests_root.mkdir(parents=True)
+            for fixture_name in ("inventory-test.sh", "vault-test.sh"):
+                (tests_root / fixture_name).write_text(
+                    "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
+                )
+            (tests_root / "test_new_discovered_suite.py").write_text(
+                "import unittest\n\n"
+                "class NewlyDiscoveredSuite(unittest.TestCase):\n"
+                "    def test_discovery_runs_this_new_suite(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+
+            fake_bin = repository_root / "fake-bin"
+            fake_bin.mkdir()
+            fake_uv = fake_bin / "uv"
+            fake_uv.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\n' \"$*\" >> \"$FAKE_UV_LOG\"\n"
+                "if [[ \"$1 $2 $3 $4 $5\" == \"run --frozen --no-sync python -m\" ]]; then\n"
+                "  shift 3\n"
+                "  exec \"$@\"\n"
+                "fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake_uv.chmod(0o755)
+            fake_uv_log = repository_root / "fake-uv.log"
+            environment = os.environ.copy()
+            environment["PATH"] = (
+                f"{fake_bin}{os.pathsep}{environment.get('PATH', '')}"
+            )
+            environment["FAKE_UV_LOG"] = os.fspath(fake_uv_log)
+
+            result = subprocess.run(
+                ["bash", str(ansible_validation)],
+                cwd=repository_root,
+                env=environment,
+                check=False,
+                capture_output=True,
+            )
+
+            self.assertEqual(0, result.returncode, result.stdout.decode() + result.stderr.decode())
+            self.assertIn(
+                "test_discovery_runs_this_new_suite",
+                result.stderr.decode(),
+            )
+            self.assertIn(
+                "run --frozen --no-sync python -m unittest discover -s tests/ansible -p test_*.py -v",
+                fake_uv_log.read_text(encoding="utf-8"),
+            )
 
     def test_untracked_invalid_module_is_selected_and_fails_semantic_validation(
         self,
