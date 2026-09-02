@@ -176,6 +176,7 @@
         - --list-rich-rules
         - --query-forward
         - --query-masquerade
+        - --query-icmp-block-inversion
       register: system_maintenance_molecule_baseline_permanent_firewall
       changed_when: false
       failed_when: system_maintenance_molecule_baseline_permanent_firewall.rc not in [0, 1]

@@ -49,10 +49,26 @@
   changed_when: false
   when: os_baseline_verify_runtime_controls | bool
 
+- name: Read firewalld service enablement
+  ansible.builtin.command:
+    argv: [/usr/bin/systemctl, is-enabled, firewalld.service]
+  register: os_baseline_verify_firewalld_enablement
+  changed_when: false
+  when: os_baseline_verify_runtime_controls | bool
+
+- name: Read auditd service enablement
+  ansible.builtin.command:
+    argv: [/usr/bin/systemctl, is-enabled, auditd.service]
+  register: os_baseline_verify_auditd_enablement
+  changed_when: false
+  when: os_baseline_verify_runtime_controls | bool
+
 - name: Verify auditd service state
   ansible.builtin.assert:
     that:
       - os_baseline_verify_auditd_state.stdout | trim == 'active'
+      - os_baseline_verify_firewalld_enablement.stdout | trim == 'enabled'
+      - os_baseline_verify_auditd_enablement.stdout | trim == 'enabled'
     fail_msg: auditd is not active
   when: os_baseline_verify_runtime_controls | bool
 

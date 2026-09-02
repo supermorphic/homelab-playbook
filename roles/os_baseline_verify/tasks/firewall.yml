@@ -66,9 +66,11 @@
     - --list-protocols
     - --list-source-ports
     - --list-forward-ports
+    - --list-icmp-blocks
     - --list-rich-rules
     - --query-forward
     - --query-masquerade
+    - --query-icmp-block-inversion
   register: os_baseline_verify_permanent_firewall
   changed_when: false
   failed_when: os_baseline_verify_permanent_firewall.rc not in [0, 1]
@@ -128,9 +130,11 @@
     - --list-protocols
     - --list-source-ports
     - --list-forward-ports
+    - --list-icmp-blocks
     - --list-rich-rules
     - --query-forward
     - --query-masquerade
+    - --query-icmp-block-inversion
   register: os_baseline_verify_runtime_firewall
   changed_when: false
   failed_when: os_baseline_verify_runtime_firewall.rc not in [0, 1]

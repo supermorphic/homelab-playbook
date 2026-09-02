@@ -115,9 +115,12 @@ mise run playbook -- os maintain <inventory> --limit <host>
 ```
 
 Maintenance is a mutating full operating-system update for Debian 13 and Rocky
-Linux 9. It waits for bounded package-manager activity, performs the
-distribution-supported full update, verifies effective state, and processes a
-multi-host selection sequentially.
+Linux 9. Before privileged fact gathering, it rejects password inputs and
+proves the key-only `ansible` login and passwordless sudo path. It then checks
+repository trust and package-manager consistency before package work, waits for
+bounded package-manager activity, performs the distribution-supported full
+update, verifies effective state, and processes a multi-host selection
+sequentially.
 
 The default `os_reboot_enabled` value is `false`. If the full update reports a
 reboot requirement, the playbook explains the required input and leaves the
@@ -194,6 +197,7 @@ mise run test:molecule -- system_maintenance/baseline
 ```
 
 `system_maintenance/baseline` covers complete Debian 13 and Rocky Linux 9
-composition. CI uses native AMD64 workers and runs five matrix jobs. The five
-CI jobs are `classify`, `fast`, `ansible`, `molecule`, and `merge-gate`; all CI
-validation remains offline and secret-free.
+composition. The Molecule matrix has five platform/scenario executions: three
+for the inherited default scenario and two for the complete baseline scenario.
+The top-level workflow jobs are `classify`, `fast`, `ansible`, `molecule`, and
+`merge-gate`; all CI validation remains offline and secret-free.

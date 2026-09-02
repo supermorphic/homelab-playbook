@@ -20,6 +20,7 @@ FIREWALL_EMPTY_FIELDS = (
     "protocols",
     "source_ports",
     "forward_ports",
+    "icmp_blocks",
 )
 FIREWALL_DIRECT_READS = {
     "--get-all-chains",
@@ -59,7 +60,7 @@ def security_baseline_firewall_rules(payload: Mapping[str, object]) -> list[str]
 
     rules = [
         f'rule family="{"ipv6" if ":" in source else "ipv4"}" '
-        f'source address="{source}" service name="ssh" accept'
+        f'source address="{source}" port port="22" protocol="tcp" accept'
         for source in management_sources
     ]
     for extension in extensions:
@@ -263,6 +264,8 @@ def security_baseline_firewall_policy_errors(
             errors.append(f"{mode} forwarding is enabled")
         if state.get("masquerade") is not False:
             errors.append(f"{mode} masquerading is enabled")
+        if state.get("icmp_block_inversion") is not False:
+            errors.append(f"{mode} ICMP block inversion is enabled")
         if state.get("interface_zone") != "homelab":
             errors.append(f"{mode} management interface is not in homelab")
         if sorted(state.get("interfaces", [])) != [management_interface]:
@@ -280,6 +283,7 @@ def security_baseline_firewall_policy_errors(
             "target",
             "forward",
             "masquerade",
+            "icmp_block_inversion",
             "interface_zone",
         }
         list_fields = {"interfaces", "rich_rules", *FIREWALL_EMPTY_FIELDS}

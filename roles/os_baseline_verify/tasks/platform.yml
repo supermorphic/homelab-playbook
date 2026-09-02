@@ -78,6 +78,15 @@
     - os_baseline_verify_runtime_controls | bool
     - ansible_os_family == 'Debian'
 
+- name: Read Debian AppArmor service enablement
+  ansible.builtin.command:
+    argv: [/usr/bin/systemctl, is-enabled, apparmor.service]
+  register: os_baseline_verify_apparmor_service_enablement
+  changed_when: false
+  when:
+    - os_baseline_verify_runtime_controls | bool
+    - ansible_os_family == 'Debian'
+
 - name: Read Debian AppArmor enforcing profile state
   ansible.builtin.command:
     argv: [/usr/sbin/aa-status, --json]
@@ -96,6 +105,7 @@
   ansible.builtin.assert:
     that:
       - os_baseline_verify_apparmor_enabled.rc == 0
+      - os_baseline_verify_apparmor_service_enablement.stdout | trim == 'enabled'
       - >-
         os_baseline_verify_apparmor_status.profiles | dict2items
         | selectattr('value', 'equalto', 'enforce') | map(attribute='key')

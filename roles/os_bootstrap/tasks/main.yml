@@ -1,34 +1,6 @@
 ---
-- name: Read and validate the bootstrap platform
-  ansible.builtin.raw: |
-    set -eu
-    test "$(id -un)" = ansible
-    test -r /etc/os-release
-    . /etc/os-release
-    case "${ID}:${VERSION_ID}" in
-      debian:13|rocky:9*) exit 0 ;;
-      *) printf 'unsupported platform: %s %s\n' "${ID}" "${VERSION_ID}" >&2; exit 64 ;;
-    esac
-  args:
-    executable: /bin/sh
-  register: os_bootstrap_platform
-  changed_when: false
-
-- name: Verify passwordless sudo and package-manager inputs
-  ansible.builtin.raw: |
-    set -eu
-    command -v sudo >/dev/null
-    sudo -n true
-    . /etc/os-release
-    case "${ID}" in
-      debian) test -e /etc/apt/sources.list -o -d /etc/apt/sources.list.d ;;
-      rocky) test -d /etc/yum.repos.d ;;
-      *) exit 64 ;;
-    esac
-  args:
-    executable: /bin/sh
-  register: os_bootstrap_privilege
-  changed_when: false
+- name: Validate connection and privilege prerequisites
+  ansible.builtin.import_tasks: connection-preflight.yml
 
 - name: Install Python only when it is absent
   ansible.builtin.raw: |

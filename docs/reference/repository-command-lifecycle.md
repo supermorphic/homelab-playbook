@@ -155,8 +155,7 @@ mise run playbook -- os maintain <inventory> --limit <host>
 facts without privilege escalation; the output is a snapshot, not a health
 attestation. `os provision` is a mutating complete-baseline operation and
 accepts only Debian 13 and Rocky Linux 9. `os maintain` is a mutating full
-package update for Debian 13, Rocky Linux 9, or Arch Linux. Arch is an explicit
-maintenance-only boundary and does not receive complete-baseline verification.
+package update for the same two platforms.
 
 Both mutating playbooks default `os_reboot_enabled` to `false`. When the
 explicit full update or provisioning transition reports that a reboot is

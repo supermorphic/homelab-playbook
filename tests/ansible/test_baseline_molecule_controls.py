@@ -70,10 +70,11 @@ def exact_firewall_results() -> tuple[list[dict[str, object]], list[dict[str, ob
         command_result(
             "--list-rich-rules",
             'rule family="ipv4" source address="10.0.0.0/8" '
-            'service name="ssh" accept',
+            'port port="22" protocol="tcp" accept',
         ),
         command_result("--query-forward", "no", 1),
         command_result("--query-masquerade", "no", 1),
+        command_result("--query-icmp-block-inversion", "no", 1),
     ]
     direct = [
         command_result("--get-all-chains"),
@@ -88,6 +89,7 @@ class SshOracleTests(unittest.TestCase):
         self.controls = load_controls()
         self.exact = [
             "allowusers ansible",
+            "port 22",
             "usedns no",
             "pubkeyauthentication yes",
             "passwordauthentication no",
@@ -178,6 +180,7 @@ class FirewallOracleTests(unittest.TestCase):
             ("--list-all", "homelab (default)\n  target: ACCEPT", "target"),
             ("--query-forward", "yes", "forward"),
             ("--query-masquerade", "yes", "masquerade"),
+            ("--query-icmp-block-inversion", "yes", "icmp-block-inversion"),
         ):
             zone, direct = exact_firewall_results()
             result = next(value for value in zone if value["item"] == item)
@@ -248,7 +251,7 @@ class FirewallOracleTests(unittest.TestCase):
             [],
             [
                 'rule family="ipv4" source address="10.0.0.0/8" '
-                'service name="ssh" accept',
+                'port port="22" protocol="tcp" accept',
                 'rule family="ipv4" source address="10.0.0.0/8" '
                 'service name="https" accept',
             ],

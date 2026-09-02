@@ -184,7 +184,9 @@ The effective policy:
 - disables client-hostname lookup with `UseDNS no`, so the connection-specific
   `host` and `addr` inputs both use the authenticated peer address;
 - disables agent forwarding, TCP forwarding, X11 forwarding, and tunnels;
-- uses the standard port and does not bind to a Tailscale-specific address;
+- explicitly renders and verifies TCP port 22, rejects a management connection
+  on any other port before access mutation, and does not bind to a
+  Tailscale-specific address;
 - leaves algorithm selection to the distribution and RHEL system crypto policy;
   and
 - uses platform service management without replacing vendor unit files.
@@ -255,6 +257,10 @@ The maintenance playbook:
 
 - remains directly runnable through `mise run playbook` from an operator
   workstation;
+- rejects SSH and become passwords and proves the `ansible` login and
+  passwordless `sudo -n` path before privileged fact gathering;
+- verifies distribution repository trust and package-manager consistency
+  without mutation before it starts package work;
 - validates the target, action, inventory, and package-manager state before
   mutation;
 - waits for bounded native package-manager activity and fails clearly when the
@@ -280,8 +286,8 @@ The baseline:
 - denies unsolicited inbound traffic by default;
 - permits outbound traffic and established return traffic;
 - denies packet forwarding by default;
-- permits SSH only from a non-empty list of explicit private management
-  sources;
+- permits SSH on TCP port 22 only from a non-empty list of explicit private
+  management sources;
 - applies equivalent IPv4 and IPv6 policy when those families are enabled;
 - opens no application, DNS, HTTP, Podman, forwarded, public, or Tailscale
   access; and
@@ -294,7 +300,8 @@ Before any firewall activation or interface move, the baseline proves that the
 active SSH peer belongs to the desired management sources. It also fails closed
 when existing zone bindings, direct openings, or policy objects are outside the
 supported platform state and require operator reconciliation. Runtime and
-permanent configuration are read back independently.
+permanent configuration are read back independently. Exact reconciliation also
+removes ICMP blocks and ICMP-block inversion in both states.
 
 fail2ban is not installed. Under a private-source, key-only SSH policy it adds
 little protection while introducing another privileged daemon, dynamic ban
@@ -363,13 +370,14 @@ Verification checks:
 - the expected operating-system release;
 - the `ansible` account, authoritative public keys, locked password, and
   non-interactive sudo path;
-- connection-specific effective `sshd -T -C` authentication, account, and
-  forwarding policy;
-- firewalld service, default policy, private SSH allowance, and matching runtime
-  and permanent state;
-- SELinux or AppArmor effective enforcement;
+- connection-specific effective `sshd -T -C` authentication, port, account,
+  and forwarding policy;
+- firewalld service enablement, default policy, private port-22 SSH allowance,
+  and matching runtime and permanent state, including ICMP block surfaces;
+- SELinux or AppArmor effective enforcement and AppArmor next-boot enablement;
 - platform-native time-client health and effective clock synchronization;
-- persistent journal availability and auditd service health;
+- persistent journal availability and auditd active and next-boot service
+  health;
 - native security-update configuration and enabled timer;
 - package-manager consistency;
 - reboot-required state; and

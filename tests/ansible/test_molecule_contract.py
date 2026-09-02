@@ -367,10 +367,17 @@ class MoleculeScenarioContractTests(unittest.TestCase):
         bootstrap_tasks = load_yaml_documents(
             "roles/os_bootstrap/tasks/main.yml"
         )[0]
+        connection_preflight_tasks = load_yaml_documents(
+            "roles/os_bootstrap/tasks/connection-preflight.yml"
+        )[0]
         prepare_tasks = load_baseline_yaml("prepare.yml")[0]["tasks"]
         raw_tasks = [
             task
-            for task in [*bootstrap_tasks, *prepare_tasks]
+            for task in [
+                *connection_preflight_tasks,
+                *bootstrap_tasks,
+                *prepare_tasks,
+            ]
             if "ansible.builtin.raw" in task
         ]
         self.assertEqual(4, len(raw_tasks))
@@ -500,6 +507,7 @@ class MoleculeScenarioContractTests(unittest.TestCase):
                 "--list-rich-rules",
                 "--query-forward",
                 "--query-masquerade",
+                "--query-icmp-block-inversion",
             ],
             firewall_reads["loop"],
         )

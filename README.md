@@ -52,10 +52,10 @@ mise run playbook -- os maintain <inventory> --limit <host>
 ```
 
 `inspect` is read-only. `provision` supports complete Debian 13 and Rocky
-Linux 9 provisioning. `maintain` performs an explicit full update on Debian,
-Rocky, or Arch; Arch is not a complete-provisioning target. Provisioning and
-maintenance default to `os_reboot_enabled=false`. A reboot requires an
-explicitly authorized invocation with `-e os_reboot_enabled=true`.
+Linux 9 provisioning. `maintain` performs an explicit full update on the same
+two platforms. Provisioning and maintenance default to
+`os_reboot_enabled=false`. A reboot requires an explicitly authorized
+invocation with `-e os_reboot_enabled=true`.
 
 Routine full updates have no host-local timer or cron job. Issue #4 will use
 Semaphore as the scheduler for the maintenance playbook. Native Debian and

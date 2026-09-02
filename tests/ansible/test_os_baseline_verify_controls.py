@@ -38,16 +38,19 @@ class VerifierControlTests(unittest.TestCase):
                     self.controls.os_baseline_verify_firewall_rules(payload)
 
     def test_firewall_state_rejects_each_policy_bypass(self) -> None:
-        desired = ['rule family="ipv4" source address="192.168.1.0/24" service name="ssh" accept']
+        desired = ['rule family="ipv4" source address="192.168.1.0/24" port port="22" protocol="tcp" accept']
         state = {
             "target": "DROP", "forward": False, "masquerade": False,
+            "icmp_block_inversion": False,
             "interface_zone": "homelab", "interfaces": ["eth0"],
             "sources": [], "services": [], "ports": [], "protocols": [],
-            "source_ports": [], "forward_ports": [], "rich_rules": desired,
+            "source_ports": [], "forward_ports": [], "icmp_blocks": [],
+            "rich_rules": desired,
         }
         for field, value in (
             ("interfaces", ["eth0", "eth1"]), ("sources", ["192.168.2.0/24"]),
             ("masquerade", True), ("forward_ports", ["22:proto=tcp:toport=22"]),
+            ("icmp_blocks", ["echo-request"]), ("icmp_block_inversion", True),
         ):
             mutated = {**state, field: value}
             with self.subTest(field=field):
@@ -58,12 +61,13 @@ class VerifierControlTests(unittest.TestCase):
     ) -> None:
         desired = [
             'rule family="ipv4" source address="10.0.0.0/8" '
-            'service name="ssh" accept'
+            'port port="22" protocol="tcp" accept'
         ]
         state = {
             "target": "DROP",
             "forward": False,
             "masquerade": False,
+            "icmp_block_inversion": False,
             "interface_zone": "homelab",
             "interfaces": [],
             "sources": [],
@@ -72,6 +76,7 @@ class VerifierControlTests(unittest.TestCase):
             "protocols": [],
             "source_ports": [],
             "forward_ports": [],
+            "icmp_blocks": [],
             "rich_rules": desired,
         }
         self.assertEqual(
@@ -92,14 +97,16 @@ class VerifierControlTests(unittest.TestCase):
         )
 
     def test_firewall_result_layout_reduces_clean_and_mutated_state(self) -> None:
-        desired = ['rule family="ipv4" source address="192.168.1.0/24" service name="ssh" accept']
+        desired = ['rule family="ipv4" source address="192.168.1.0/24" port port="22" protocol="tcp" accept']
         results = [
             {"stdout": "homelab (active)\n  target: DROP", "stdout_lines": []},
             {"stdout": "eth0\n", "stdout_lines": ["eth0"]},
             {"stdout": "", "stdout_lines": []}, {"stdout": "", "stdout_lines": []},
             {"stdout": "", "stdout_lines": []}, {"stdout": "", "stdout_lines": []},
             {"stdout": "", "stdout_lines": []}, {"stdout": "", "stdout_lines": []},
-            {"stdout": desired[0], "stdout_lines": desired}, {"rc": 1}, {"rc": 1},
+            {"stdout": "", "stdout_lines": []},
+            {"stdout": desired[0], "stdout_lines": desired},
+            {"rc": 1}, {"rc": 1}, {"rc": 1},
         ]
         state = self.controls.os_baseline_verify_firewall_state_from_results(results, "homelab")
         self.assertEqual([], self.controls.os_baseline_verify_firewall_state_errors(state, desired, "eth0"))
@@ -118,8 +125,9 @@ class VerifierControlTests(unittest.TestCase):
             5: {"stdout": "icmp", "stdout_lines": ["icmp"]},
             6: {"stdout": "1024-65535", "stdout_lines": ["1024-65535"]},
             7: {"stdout": "22:proto=tcp:toport=22", "stdout_lines": ["22:proto=tcp:toport=22"]},
-            8: {"stdout": "unexpected", "stdout_lines": ["unexpected"]},
-            9: {"rc": 0}, 10: {"rc": 0},
+            8: {"stdout": "echo-request", "stdout_lines": ["echo-request"]},
+            9: {"stdout": "unexpected", "stdout_lines": ["unexpected"]},
+            10: {"rc": 0}, 11: {"rc": 0}, 12: {"rc": 0},
         }
         for index, replacement in mutations.items():
             with self.subTest(index=index):

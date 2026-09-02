@@ -73,6 +73,9 @@ READ_ONLY_ARGV = {
     ("/usr/bin/systemctl", "is-enabled", "chronyd.service"),
     ("/usr/bin/systemctl", "is-active", "chronyd.service"),
     ("/usr/bin/systemctl", "is-active", "auditd"),
+    ("/usr/bin/systemctl", "is-enabled", "firewalld.service"),
+    ("/usr/bin/systemctl", "is-enabled", "auditd.service"),
+    ("/usr/bin/systemctl", "is-enabled", "apparmor.service"),
     ("/usr/bin/systemctl", "--failed", "--no-legend", "--plain"),
     ("/usr/bin/firewall-offline-cmd", "--list-all-zones"),
     ("/usr/bin/firewall-offline-cmd", "--list-all-policies"),
@@ -108,8 +111,8 @@ READ_ONLY_ARGV_DYNAMIC_LISTS = {
 FIREWALL_ZONE_READS = [
     "--list-all", "--list-interfaces", "--list-sources", "--list-services",
     "--list-ports", "--list-protocols", "--list-source-ports",
-    "--list-forward-ports", "--list-rich-rules", "--query-forward",
-    "--query-masquerade",
+    "--list-forward-ports", "--list-icmp-blocks", "--list-rich-rules",
+    "--query-forward", "--query-masquerade", "--query-icmp-block-inversion",
 ]
 FIREWALL_TEMPLATE_LOOPS = {
     "{{ ['/usr/bin/firewall-offline-cmd', '--zone=homelab', item] }}": FIREWALL_ZONE_READS,
@@ -419,6 +422,7 @@ def assert_scheduler_neutral_maintenance(play: dict[str, object]) -> None:
         "ansible.builtin.assert",
         "ansible.builtin.import_role",
         "ansible.builtin.import_role",
+        "ansible.builtin.import_role",
         "ansible.builtin.set_fact",
         "ansible.builtin.debug",
         "ansible.builtin.reboot",
@@ -440,7 +444,25 @@ class SourceContractTests(unittest.TestCase):
             self.assertTrue(all(play["any_errors_fatal"] is True for play in plays))
 
         provisioning = provision[1]
-        maintenance = maintain[0]
+        maintenance_preflight = maintain[0]
+        maintenance = maintain[1]
+        self.assertIs(maintenance_preflight["gather_facts"], False)
+        self.assertIs(maintenance_preflight["become"], False)
+        credential_guard = maintenance_preflight["pre_tasks"][0]
+        self.assertEqual(
+            [
+                "ansible_password is not defined",
+                "ansible_ssh_pass is not defined",
+                "ansible_become_password is not defined",
+                "ansible_become_pass is not defined",
+            ],
+            credential_guard["ansible.builtin.assert"]["that"],
+        )
+        self.assertIs(credential_guard["no_log"], True)
+        self.assertEqual(
+            {"name": "os_bootstrap", "tasks_from": "connection-preflight.yml"},
+            maintenance_preflight["pre_tasks"][1]["ansible.builtin.import_role"],
+        )
         self.assertIs(provisioning["vars"]["os_reboot_enabled"], False)
         self.assertIs(maintenance["vars"]["os_reboot_enabled"], False)
 
@@ -537,6 +559,11 @@ class SourceContractTests(unittest.TestCase):
         )
         maintenance_input_preflight = maintenance_pre[1]
         self.assertNotIn("when", maintenance_input_preflight)
+        maintenance_safety_preflight = unique_task_index(
+            maintenance_pre,
+            "ansible.builtin.import_role",
+            {"name": "security_baseline", "tasks_from": "maintenance-preflight.yml"},
+        )
         maintenance_update = unique_task_index(
             maintenance_pre,
             "ansible.builtin.import_role",
@@ -585,6 +612,7 @@ class SourceContractTests(unittest.TestCase):
                 "os_reboot_performed | bool", maintenance_pre[index]["when"]
             )
         assert_strictly_ordered(
+            maintenance_safety_preflight,
             maintenance_update,
             maintenance_reboot_state,
             maintenance_combine,
@@ -604,7 +632,7 @@ class SourceContractTests(unittest.TestCase):
         self.assertNotIn("when", maintenance_post[maintenance_verifier])
 
     def test_os_playbook_contracts_reject_unsafe_composition_mutations(self) -> None:
-        provision, maintenance = (
+        provision, maintenance_document = (
             load_yaml_documents(path)[0]
             for path in ("playbooks/os/provision.yml", "playbooks/os/maintain.yml")
         )
@@ -618,7 +646,7 @@ class SourceContractTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             assert_combined_reboot_fact(bad_combination)
 
-        for play in (provision[1], maintenance[0]):
+        for play in (provision[1], maintenance_document[1]):
             pre_tasks = play["pre_tasks"]
             reboot = unique_task_index(pre_tasks, "ansible.builtin.reboot", None)
             record = unique_fact_task_index(pre_tasks, "os_reboot_performed")
@@ -657,13 +685,13 @@ class SourceContractTests(unittest.TestCase):
             )
 
         for section in ("roles", "tasks"):
-            scheduled = deepcopy(maintenance[0])
+            scheduled = deepcopy(maintenance_document[1])
             scheduled[section] = []
             with self.subTest(section=section):
                 with self.assertRaises(AssertionError):
                     assert_scheduler_neutral_maintenance(scheduled)
 
-        scheduled_task = deepcopy(maintenance[0])
+        scheduled_task = deepcopy(maintenance_document[1])
         scheduled_task["pre_tasks"].append(
             {"ansible.builtin.cron": {"name": "maintenance", "minute": "0"}}
         )
@@ -689,6 +717,8 @@ class SourceContractTests(unittest.TestCase):
                         "--limit",
                         "servers",
                         "--check",
+                        "--start-at-task",
+                        "Validate full-maintenance platform support",
                         "--extra-vars",
                         str({"ansible_become": False, **facts}),
                     ],
@@ -709,6 +739,44 @@ class SourceContractTests(unittest.TestCase):
         self.assertIs(first["gather_facts"], False)
         self.assertIs(first["become"], False)
         self.assertEqual(["os_bootstrap"], first["roles"])
+
+    def test_connection_preflight_rejects_root_and_requires_passwordless_sudo(self) -> None:
+        tasks = load_tasks("roles/os_bootstrap/tasks/connection-preflight.yml")
+        self.assertEqual(2, len(tasks))
+        identity = normalize_expression(tasks[0]["ansible.builtin.raw"])
+        privilege = normalize_expression(tasks[1]["ansible.builtin.raw"])
+        self.assertIn('test "$(id -un)" = ansible', identity)
+        self.assertIn("debian:13|rocky:9*", identity)
+        self.assertIn("command -v sudo", privilege)
+        self.assertIn("sudo -n true", privilege)
+        for task in tasks:
+            self.assertIs(task["changed_when"], False)
+
+    def test_maintenance_safety_preflight_is_read_only_and_precedes_update(self) -> None:
+        tasks = load_tasks("roles/security_baseline/tasks/maintenance-preflight.yml")
+        self.assertEqual(
+            [
+                "Verify effective distribution repository trust",
+                "Check Debian package manager consistency",
+                "Require consistent Debian package manager state",
+                "Check Rocky package manager consistency",
+            ],
+            [task["name"] for task in tasks],
+        )
+        self.assertEqual(
+            {"cmd": "validate_repository_trust.py \"{{ ansible_os_family }}\"", "executable": "/usr/bin/python3"},
+            tasks[0]["ansible.builtin.script"],
+        )
+        self.assertIs(tasks[0]["changed_when"], False)
+        self.assertEqual(["/usr/bin/dpkg", "--audit"], tasks[1]["ansible.builtin.command"]["argv"])
+        self.assertEqual(
+            ["security_baseline_maintenance_debian_package_health.stdout | trim == ''"],
+            tasks[2]["ansible.builtin.assert"]["that"],
+        )
+        self.assertEqual(["/usr/bin/dnf", "check"], tasks[3]["ansible.builtin.command"]["argv"])
+        for task in (tasks[1], tasks[3]):
+            self.assertIs(task["changed_when"], False)
+            self.assertNotIn("failed_when", task)
 
     def test_os_baseline_verifier_is_observational(self) -> None:
         task_paths = sorted(
@@ -942,7 +1010,7 @@ class SourceContractTests(unittest.TestCase):
             load_yaml_documents(path)[0]
             for path in ("playbooks/os/provision.yml", "playbooks/os/maintain.yml")
         )
-        verifier_tasks = (provision[1]["post_tasks"][0], maintain[0]["post_tasks"][0])
+        verifier_tasks = (provision[1]["post_tasks"][0], maintain[1]["post_tasks"][0])
         for task in verifier_tasks:
             with self.subTest(playbook=task["name"]):
                 self.assertEqual(required_role_inputs, task["vars"])
@@ -965,18 +1033,25 @@ class SourceContractTests(unittest.TestCase):
 
     def test_os_bootstrap_uses_only_raw_until_python_is_available(self) -> None:
         tasks = load_tasks("roles/os_bootstrap/tasks/main.yml")
+        connection_tasks = load_tasks(
+            "roles/os_bootstrap/tasks/connection-preflight.yml"
+        )
+        self.assertEqual(
+            {"ansible.builtin.import_tasks": "connection-preflight.yml"},
+            {
+                key: value
+                for key, value in tasks[0].items()
+                if key != "name"
+            },
+        )
         python_task = next(
             task for task in tasks
             if task["name"] == "Install Python only when it is absent"
         )
         python_index = tasks.index(python_task)
 
-        self.assertTrue(
-            all(
-                "ansible.builtin.raw" in task
-                for task in tasks[: python_index + 1]
-            )
-        )
+        self.assertTrue(all("ansible.builtin.raw" in task for task in connection_tasks))
+        self.assertTrue(all("ansible.builtin.raw" in task for task in tasks[1 : python_index + 1]))
         self.assertIn("sudo -n", python_task["ansible.builtin.raw"])
         self.assertNotIn("become", python_task)
         self.assertEqual(
@@ -998,9 +1073,13 @@ class SourceContractTests(unittest.TestCase):
         )
 
     def test_os_bootstrap_has_no_root_or_password_fallback(self) -> None:
-        source = (
-            REPOSITORY_ROOT / "roles/os_bootstrap/tasks/main.yml"
-        ).read_text(encoding="utf-8")
+        source = "\n".join(
+            (REPOSITORY_ROOT / path).read_text(encoding="utf-8")
+            for path in (
+                "roles/os_bootstrap/tasks/main.yml",
+                "roles/os_bootstrap/tasks/connection-preflight.yml",
+            )
+        )
 
         self.assertIn("id -un", source)
         self.assertIn("sudo -n true", source)
@@ -1391,6 +1470,14 @@ class SourceContractTests(unittest.TestCase):
                         ]["that"]
                     )
                 )
+                self.assertIn(
+                    (
+                        "security_baseline_sshd_connection.local_port | int == 22"
+                        if path.startswith("roles/security_baseline/")
+                        else "os_baseline_verify_sshd_connection.local_port | int == 22"
+                    ),
+                    context_assertion["ansible.builtin.assert"]["that"],
+                )
                 policy_assertion = next(
                     task
                     for task in tasks
@@ -1398,6 +1485,15 @@ class SourceContractTests(unittest.TestCase):
                 )
                 self.assertIn(
                     "'usedns no' in "
+                    + (
+                        "security_baseline_sshd_effective.stdout_lines"
+                        if path.startswith("roles/security_baseline/")
+                        else "os_baseline_verify_sshd_effective.stdout_lines"
+                    ),
+                    policy_assertion["ansible.builtin.assert"]["that"],
+                )
+                self.assertIn(
+                    "'port 22' in "
                     + (
                         "security_baseline_sshd_effective.stdout_lines"
                         if path.startswith("roles/security_baseline/")
@@ -1413,6 +1509,12 @@ class SourceContractTests(unittest.TestCase):
             if task["name"] == "Configure focused SSH policy"
         )
         self.assertIs(ssh_role["vars"]["sshd_config"].get("UseDNS"), False)
+        self.assertEqual(22, ssh_role["vars"]["sshd_config"].get("Port"))
+        producer_names = [task["name"] for task in producer_tasks]
+        self.assertLess(
+            producer_names.index("Validate administrative SSH connection context"),
+            producer_names.index("Reconcile ansible administrative account"),
+        )
 
         for path in (
             "roles/security_baseline/files/discover_management_interface.py",
@@ -1540,6 +1642,42 @@ class SourceContractTests(unittest.TestCase):
                 self.assertEqual(
                     ["os_baseline_verify_runtime_controls | bool", "ansible_os_family == 'Debian'" if "Debian" in name else "ansible_os_family == 'RedHat'"],
                     task["when"],
+                )
+
+    def test_verifier_requires_security_services_enabled_for_next_boot(self) -> None:
+        service_tasks = load_tasks("roles/os_baseline_verify/tasks/services.yml")
+        platform_tasks = load_tasks("roles/os_baseline_verify/tasks/platform.yml")
+        expected = {
+            "Read firewalld service enablement": (
+                service_tasks,
+                ["/usr/bin/systemctl", "is-enabled", "firewalld.service"],
+                "os_baseline_verify_firewalld_enablement",
+            ),
+            "Read auditd service enablement": (
+                service_tasks,
+                ["/usr/bin/systemctl", "is-enabled", "auditd.service"],
+                "os_baseline_verify_auditd_enablement",
+            ),
+            "Read Debian AppArmor service enablement": (
+                platform_tasks,
+                ["/usr/bin/systemctl", "is-enabled", "apparmor.service"],
+                "os_baseline_verify_apparmor_service_enablement",
+            ),
+        }
+        for name, (tasks, argv, register) in expected.items():
+            with self.subTest(name=name):
+                read = next(task for task in tasks if task["name"] == name)
+                self.assertEqual(argv, read["ansible.builtin.command"]["argv"])
+                self.assertEqual(register, read["register"])
+                self.assertIs(read["changed_when"], False)
+                assertion = next(
+                    task
+                    for task in tasks
+                    if register in str(task.get("ansible.builtin.assert", {}))
+                )
+                self.assertIn(
+                    f"{register}.stdout | trim == 'enabled'",
+                    assertion["ansible.builtin.assert"]["that"],
                 )
 
     def test_verifier_debian_updater_asserts_the_effective_origin_list(self) -> None:

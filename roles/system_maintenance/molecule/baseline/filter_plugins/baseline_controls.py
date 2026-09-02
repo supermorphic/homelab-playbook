@@ -8,7 +8,7 @@ from collections.abc import Mapping
 
 EXPECTED_RICH_RULE = (
     'rule family="ipv4" source address="10.0.0.0/8" '
-    'service name="ssh" accept'
+    'port port="22" protocol="tcp" accept'
 )
 EMPTY_ZONE_READS = {
     "--list-interfaces": "interfaces",
@@ -26,6 +26,7 @@ EXPECTED_ZONE_READS = {
     "--list-rich-rules",
     "--query-forward",
     "--query-masquerade",
+    "--query-icmp-block-inversion",
 }
 EXPECTED_DIRECT_READS = {
     "--get-all-chains",
@@ -42,6 +43,7 @@ EXPECTED_TIMER = {
 }
 EXPECTED_SSH_POLICY = {
     "allowusers": "allowusers ansible",
+    "port": "port 22",
     "usedns": "usedns no",
     "pubkeyauthentication": "pubkeyauthentication yes",
     "passwordauthentication": "passwordauthentication no",
@@ -135,6 +137,8 @@ def system_maintenance_molecule_baseline_firewall_errors(
         errors.append("forward")
     if zone["--query-masquerade"]["rc"] != 1:
         errors.append("masquerade")
+    if zone["--query-icmp-block-inversion"]["rc"] != 1:
+        errors.append("icmp-block-inversion")
 
     for item, field in EMPTY_ZONE_READS.items():
         if str(zone[item]["stdout"]).split():

@@ -433,6 +433,8 @@
         values: "{{ security_baseline_firewall_runtime_before.source_ports }}"
       - option: --remove-forward-port=
         values: "{{ security_baseline_firewall_runtime_before.forward_ports }}"
+      - option: --remove-icmp-block=
+        values: "{{ security_baseline_firewall_runtime_before.icmp_blocks }}"
   ansible.builtin.command:
     argv:
       - /usr/bin/firewall-cmd
@@ -458,6 +460,8 @@
         values: "{{ security_baseline_firewall_permanent_before.source_ports }}"
       - option: --remove-forward-port=
         values: "{{ security_baseline_firewall_permanent_before.forward_ports }}"
+      - option: --remove-icmp-block=
+        values: "{{ security_baseline_firewall_permanent_before.icmp_blocks }}"
   ansible.builtin.command:
     argv:
       - /usr/bin/firewall-cmd
@@ -557,6 +561,14 @@
     - security_baseline_apply_firewall_runtime | bool
     - security_baseline_firewall_runtime_before.masquerade
 
+- name: Disable runtime homelab ICMP block inversion if present
+  ansible.builtin.command:
+    argv: [/usr/bin/firewall-cmd, --zone=homelab, --remove-icmp-block-inversion]
+  changed_when: true
+  when:
+    - security_baseline_apply_firewall_runtime | bool
+    - security_baseline_firewall_runtime_before.icmp_block_inversion
+
 - name: Remove permanent homelab masquerading if present
   ansible.builtin.command:
     argv:
@@ -568,6 +580,18 @@
   when:
     - security_baseline_apply_firewall_runtime | bool
     - security_baseline_firewall_permanent_before.masquerade
+
+- name: Disable permanent homelab ICMP block inversion if present
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/firewall-cmd
+      - --permanent
+      - --zone=homelab
+      - --remove-icmp-block-inversion
+  changed_when: true
+  when:
+    - security_baseline_apply_firewall_runtime | bool
+    - security_baseline_firewall_permanent_before.icmp_block_inversion
 
 - name: Read reconciled runtime homelab policy
   ansible.builtin.include_tasks: firewall-read-state.yml

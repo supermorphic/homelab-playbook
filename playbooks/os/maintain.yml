@@ -1,4 +1,28 @@
 ---
+- name: Validate maintenance connection and privilege prerequisites
+  hosts: servers
+  serial: 1
+  any_errors_fatal: true
+  gather_facts: false
+  become: false
+  pre_tasks:
+    - name: Reject password-based maintenance credentials
+      ansible.builtin.assert:
+        that:
+          - ansible_password is not defined
+          - ansible_ssh_pass is not defined
+          - ansible_become_password is not defined
+          - ansible_become_pass is not defined
+        fail_msg: >-
+          os maintenance requires key-only SSH and passwordless sudo for the
+          ansible account
+      no_log: true
+
+    - name: Prove maintenance connection and privilege prerequisites
+      ansible.builtin.import_role:
+        name: os_bootstrap
+        tasks_from: connection-preflight.yml
+
 - name: Run scheduler-neutral full OS maintenance
   hosts: servers
   serial: 1
@@ -28,6 +52,11 @@
           complete-platform maintenance verification requires authorized
           controller keys and management sources
       no_log: true
+
+    - name: Verify repository trust and package-manager consistency
+      ansible.builtin.import_role:
+        name: security_baseline
+        tasks_from: maintenance-preflight.yml
 
     - name: Run the explicit maintenance full update
       ansible.builtin.import_role:

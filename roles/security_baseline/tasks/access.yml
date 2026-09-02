@@ -1,4 +1,31 @@
 ---
+- name: Discover administrative SSH connection context
+  ansible.builtin.script:
+    cmd: discover_management_interface.py
+    executable: /usr/bin/python3
+  register: security_baseline_sshd_connection_raw
+  changed_when: false
+  no_log: true
+  when: security_baseline_sshd_connection_context | length == 0
+
+- name: Record administrative SSH connection context
+  ansible.builtin.set_fact:
+    security_baseline_sshd_connection: >-
+      {{ security_baseline_sshd_connection_context
+         if security_baseline_sshd_connection_context | length > 0
+         else security_baseline_sshd_connection_raw.stdout | from_json }}
+  no_log: true
+
+- name: Validate administrative SSH connection context
+  ansible.builtin.assert:
+    that:
+      - security_baseline_sshd_connection.host == security_baseline_sshd_connection.peer
+      - security_baseline_sshd_connection.peer is match('^[0-9a-fA-F:.]+$')
+      - security_baseline_sshd_connection.local_address is match('^[0-9a-fA-F:.]+$')
+      - security_baseline_sshd_connection.local_port | int == 22
+    fail_msg: Administrative SSH connection must use the standard port 22
+  no_log: true
+
 - name: Reconcile ansible administrative account
   ansible.builtin.user:
     name: ansible
@@ -91,6 +118,7 @@
     sshd_sysconfig_override_crypto_policy: false
     sshd_config:
       AllowUsers: ansible
+      Port: 22
       UseDNS: false
       PubkeyAuthentication: true
       PasswordAuthentication: false
@@ -111,34 +139,6 @@
 - name: Wait for connection after SSH policy activation
   ansible.builtin.wait_for_connection:
 
-- name: Discover administrative SSH connection context
-  ansible.builtin.script:
-    cmd: discover_management_interface.py
-    executable: /usr/bin/python3
-  register: security_baseline_sshd_connection_raw
-  changed_when: false
-  no_log: true
-  when: security_baseline_sshd_connection_context | length == 0
-
-- name: Record administrative SSH connection context
-  ansible.builtin.set_fact:
-    security_baseline_sshd_connection: >-
-      {{ security_baseline_sshd_connection_context
-         if security_baseline_sshd_connection_context | length > 0
-         else security_baseline_sshd_connection_raw.stdout | from_json }}
-  no_log: true
-
-- name: Validate administrative SSH connection context
-  ansible.builtin.assert:
-    that:
-      - security_baseline_sshd_connection.host == security_baseline_sshd_connection.peer
-      - security_baseline_sshd_connection.peer is match('^[0-9a-fA-F:.]+$')
-      - security_baseline_sshd_connection.local_address is match('^[0-9a-fA-F:.]+$')
-      - security_baseline_sshd_connection.local_port | int > 0
-      - security_baseline_sshd_connection.local_port | int <= 65535
-    fail_msg: Administrative SSH connection context is invalid
-  no_log: true
-
 - name: Read effective SSH policy for the administrative connection
   ansible.builtin.command:
     argv:
@@ -157,6 +157,7 @@
   ansible.builtin.assert:
     that:
       - "'allowusers ansible' in security_baseline_sshd_effective.stdout_lines"
+      - "'port 22' in security_baseline_sshd_effective.stdout_lines"
       - "'usedns no' in security_baseline_sshd_effective.stdout_lines"
       - "'pubkeyauthentication yes' in security_baseline_sshd_effective.stdout_lines"
       - "'passwordauthentication no' in security_baseline_sshd_effective.stdout_lines"

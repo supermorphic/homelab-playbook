@@ -13,6 +13,7 @@
     - --list-protocols
     - --list-source-ports
     - --list-forward-ports
+    - --list-icmp-blocks
     - --list-rich-rules
   register: security_baseline_firewall_list_state
   changed_when: false
@@ -37,6 +38,7 @@
   loop:
     - --query-forward
     - --query-masquerade
+    - --query-icmp-block-inversion
   register: security_baseline_firewall_scalar_state
   changed_when: false
   failed_when: security_baseline_firewall_scalar_state.rc not in [0, 1]
@@ -59,6 +61,7 @@
            | security_baseline_firewall_target_from_list_all }}
       forward: "{{ security_baseline_firewall_scalar_state.results[0].rc == 0 }}"
       masquerade: "{{ security_baseline_firewall_scalar_state.results[1].rc == 0 }}"
+      icmp_block_inversion: "{{ security_baseline_firewall_scalar_state.results[2].rc == 0 }}"
       interface_zone: "{{ security_baseline_firewall_interface_zone.stdout | trim }}"
       interfaces: "{{ security_baseline_firewall_list_state.results[0].stdout.split() }}"
       sources: "{{ security_baseline_firewall_list_state.results[1].stdout.split() }}"
@@ -67,5 +70,6 @@
       protocols: "{{ security_baseline_firewall_list_state.results[4].stdout.split() }}"
       source_ports: "{{ security_baseline_firewall_list_state.results[5].stdout.split() }}"
       forward_ports: "{{ security_baseline_firewall_list_state.results[6].stdout.split() }}"
-      rich_rules: "{{ security_baseline_firewall_list_state.results[7].stdout_lines }}"
+      icmp_blocks: "{{ security_baseline_firewall_list_state.results[7].stdout.split() }}"
+      rich_rules: "{{ security_baseline_firewall_list_state.results[8].stdout_lines }}"
   no_log: true

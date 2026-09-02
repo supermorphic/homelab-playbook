@@ -507,6 +507,7 @@ class FirewallPolicyTests(unittest.TestCase):
             "target": "DROP",
             "forward": False,
             "masquerade": False,
+            "icmp_block_inversion": False,
             "interface_zone": "homelab",
             "interfaces": ["eth0"],
             "sources": [],
@@ -515,6 +516,7 @@ class FirewallPolicyTests(unittest.TestCase):
             "protocols": [],
             "source_ports": [],
             "forward_ports": [],
+            "icmp_blocks": [],
             "rich_rules": [rule],
         }
 
@@ -597,6 +599,17 @@ class FirewallPolicyTests(unittest.TestCase):
                 "10.0.0.5",
                 ["192.168.50.0/24"],
             )
+        )
+
+    def test_management_ssh_rules_open_only_tcp_port_22(self) -> None:
+        self.assertEqual(
+            [
+                'rule family="ipv4" source address="10.0.0.0/24" '
+                'port port="22" protocol="tcp" accept'
+            ],
+            self.controls.security_baseline_firewall_rules(
+                {"management_sources": ["10.0.0.0/24"], "services": []}
+            ),
         )
 
     def test_management_peer_preflight_precedes_firewall_mutation(self) -> None:
@@ -730,7 +743,7 @@ class FirewallPolicyTests(unittest.TestCase):
     ) -> None:
         rule = (
             'rule family="ipv4" source address="10.0.0.0/24" '
-            'service name="ssh" accept'
+            'port port="22" protocol="tcp" accept'
         )
         exact = self.exact_state(rule)
         states = {"runtime": copy.deepcopy(exact), "permanent": copy.deepcopy(exact)}
@@ -753,6 +766,12 @@ class FirewallPolicyTests(unittest.TestCase):
             ),
             "extra port": lambda state: state["runtime"].update(
                 ports=["2222/tcp"]
+            ),
+            "ICMP block": lambda state: state["runtime"].update(
+                icmp_blocks=["echo-request"]
+            ),
+            "ICMP block inversion": lambda state: state["runtime"].update(
+                icmp_block_inversion=True
             ),
             "extra rich accept": lambda state: state["runtime"].update(
                 rich_rules=state["runtime"]["rich_rules"]
@@ -780,7 +799,7 @@ class FirewallPolicyTests(unittest.TestCase):
     def test_guard_transition_reloads_when_runtime_zone_is_absent(self) -> None:
         rule = (
             'rule family="ipv4" source address="10.0.0.0/24" '
-            'service name="ssh" accept'
+            'port port="22" protocol="tcp" accept'
         )
         second_pass_runtime = {
             "zones": [],
@@ -889,7 +908,7 @@ homelab (active)
             if task["name"] == "Read homelab firewall scalar state"
         )
         self.assertEqual(
-            ["--query-forward", "--query-masquerade"],
+            ["--query-forward", "--query-masquerade", "--query-icmp-block-inversion"],
             scalar_state_task["loop"],
         )
         for task in [*tasks, *read_state_tasks]:
@@ -908,11 +927,11 @@ homelab (active)
         rules = [
             (
                 'rule family="ipv4" source address="10.0.0.0/24" '
-                'service name="ssh" accept'
+                'port port="22" protocol="tcp" accept'
             ),
             (
                 'rule family="ipv4" source address="10.0.1.0/24" '
-                'service name="ssh" accept'
+                'port port="22" protocol="tcp" accept'
             ),
         ]
         runtime = self.exact_state(rules[0])
@@ -959,6 +978,8 @@ homelab (active)
             "--remove-protocol=",
             "--remove-source-port=",
             "--remove-forward-port=",
+            "--remove-icmp-block=",
+            "--remove-icmp-block-inversion",
             "--remove-rich-rule=",
         ):
             self.assertIn(opening, source)

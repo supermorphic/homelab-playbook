@@ -13,6 +13,7 @@ PRIVATE_NETWORKS = tuple(
 )
 EMPTY_FIREWALL_FIELDS = (
     "sources", "services", "ports", "protocols", "source_ports", "forward_ports",
+    "icmp_blocks",
 )
 DIRECT_FIREWALL_READS = {
     "--get-all-chains",
@@ -45,7 +46,10 @@ def os_baseline_verify_firewall_rules(payload: Mapping[str, object]) -> list[str
     rules: list[str] = []
     for source in _private_sources(payload.get("management_sources")):
         family = "ipv6" if ":" in source else "ipv4"
-        rules.append(f'rule family="{family}" source address="{source}" service name="ssh" accept')
+        rules.append(
+            f'rule family="{family}" source address="{source}" '
+            'port port="22" protocol="tcp" accept'
+        )
     services = payload.get("services")
     if not isinstance(services, list):
         raise ValueError("firewall service extensions must be a list")
@@ -67,6 +71,7 @@ def os_baseline_verify_firewall_state_errors(state: Mapping[str, object], desire
     if state.get("target") != "DROP": errors.append("target")
     if state.get("forward") is not False: errors.append("forward")
     if state.get("masquerade") is not False: errors.append("masquerade")
+    if state.get("icmp_block_inversion") is not False: errors.append("icmp-block-inversion")
     if state.get("interface_zone") != "homelab": errors.append("interface-zone")
     expected_interfaces = [interface] if interface else []
     if sorted(state.get("interfaces", [])) != expected_interfaces: errors.append("interfaces")
@@ -78,7 +83,7 @@ def os_baseline_verify_firewall_state_errors(state: Mapping[str, object], desire
 
 def os_baseline_verify_firewall_state_from_results(results: object, interface_zone: str) -> dict[str, object]:
     """Reduce the exact ordered firewalld read command result layout."""
-    if not isinstance(results, list) or len(results) != 11:
+    if not isinstance(results, list) or len(results) != 13:
         raise ValueError("firewall read result layout is invalid")
     if not isinstance(interface_zone, str) or not interface_zone:
         raise ValueError("firewall interface zone is invalid")
@@ -110,8 +115,9 @@ def os_baseline_verify_firewall_state_from_results(results: object, interface_zo
     target = re.search(r"(?m)^\s*target:\s*(\S+)\s*$", stdout(0))
     return {
         "target": target.group(1) if target else "",
-        "forward": query(9),
-        "masquerade": query(10),
+        "forward": query(10),
+        "masquerade": query(11),
+        "icmp_block_inversion": query(12),
         "interface_zone": interface_zone,
         "interfaces": stdout(1).split(),
         "sources": stdout(2).split(),
@@ -120,7 +126,8 @@ def os_baseline_verify_firewall_state_from_results(results: object, interface_zo
         "protocols": stdout(5).split(),
         "source_ports": stdout(6).split(),
         "forward_ports": stdout(7).split(),
-        "rich_rules": stdout_lines(8),
+        "icmp_blocks": stdout(8).split(),
+        "rich_rules": stdout_lines(9),
     }
 
 
