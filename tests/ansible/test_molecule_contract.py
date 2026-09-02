@@ -37,32 +37,63 @@ def load_baseline_yaml(name: str):
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def containerfile_installed_packages(content: str) -> list[str]:
-    """Return the package operands from the Containerfile install command."""
+def containerfile_run_commands(content: str) -> list[str]:
+    """Return every logical RUN command, including its continued lines."""
+    commands = []
     lines = content.splitlines()
-    try:
-        start = next(index for index, line in enumerate(lines) if line.startswith("RUN "))
-    except StopIteration as error:
-        raise AssertionError("Containerfile must have one package-install RUN command") from error
-
-    command_lines = []
-    for line in lines[start:]:
-        command_lines.append(line.removesuffix("\\").strip())
-        if not line.endswith("\\"):
-            break
-    tokens = shlex.split(" ".join(command_lines).removeprefix("RUN "))
-
-    for index, token in enumerate(tokens):
-        if token not in {"apt-get", "dnf"}:
+    index = 0
+    while index < len(lines):
+        if not lines[index].startswith("RUN "):
+            index += 1
             continue
-        try:
-            package_start = tokens.index("install", index + 1) + 1
-        except ValueError:
-            continue
-        package_tokens = tokens[package_start : tokens.index("&&", package_start)]
-        return [token for token in package_tokens if not token.startswith("-")]
 
-    raise AssertionError("Containerfile must use apt-get or dnf to install packages")
+        command_lines = []
+        while index < len(lines):
+            line = lines[index].rstrip()
+            command_lines.append(line.removesuffix("\\").strip())
+            index += 1
+            if not line.endswith("\\"):
+                break
+        commands.append(" ".join(command_lines).removeprefix("RUN "))
+    return commands
+
+
+def shell_command_segments(command: str) -> list[list[str]]:
+    """Split a RUN command into shell-command token groups."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+    lexer.whitespace_split = True
+    tokens = list(lexer)
+    segments = [[]]
+    for token in tokens:
+        if token in {"&&", "||", ";", "|"}:
+            segments.append([])
+        else:
+            segments[-1].append(token)
+    return [segment for segment in segments if segment]
+
+
+def containerfile_installed_packages(content: str) -> list[str]:
+    """Return packages installed by every supported manager in every RUN command."""
+    installed_packages = []
+    for run_command in containerfile_run_commands(content):
+        for command in shell_command_segments(run_command):
+            for index, manager in enumerate(command):
+                if manager not in {"apt-get", "dnf"}:
+                    continue
+                try:
+                    package_start = command.index("install", index + 1) + 1
+                except ValueError:
+                    continue
+                package_tokens = command[package_start:]
+                installed_packages.extend(
+                    token for token in package_tokens if not token.startswith("-")
+                )
+
+    if not installed_packages:
+        raise AssertionError(
+            "Containerfile must install packages with apt-get or dnf"
+        )
+    return installed_packages
 
 
 class MoleculeScenarioContractTests(unittest.TestCase):
@@ -245,13 +276,18 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             "Containerfile.debian13": (
                 "FROM docker.io/library/debian:13",
                 ["dbus", "python3", "systemd"],
+                "RUN apt-get update && apt-get install --yes --no-install-recommends tree\n",
             ),
             "Containerfile.rockylinux9": (
                 "FROM docker.io/rockylinux/rockylinux:9",
                 ["dbus-daemon", "python3", "systemd"],
+                "RUN dnf install --assumeyes tree\n",
             ),
         }
-        for name, (expected_base, expected_packages) in expected_containerfiles.items():
+        for (
+            name,
+            (expected_base, expected_packages, later_install),
+        ) in expected_containerfiles.items():
             with self.subTest(containerfile=name):
                 path = SCENARIO_DIRECTORY / name
                 self.assertTrue(path.is_file())
@@ -265,10 +301,7 @@ class MoleculeScenarioContractTests(unittest.TestCase):
                     self.assertEqual(
                         expected_packages,
                         containerfile_installed_packages(
-                            content.replace(
-                                "        systemd \\\n",
-                                "        systemd \\\n        tree \\\n",
-                            )
+                            f"{content}\n{later_install}",
                         ),
                     )
                 self.assertIn('CMD ["/usr/lib/systemd/systemd"]', content)
