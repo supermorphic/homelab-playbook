@@ -178,10 +178,12 @@ before advancing after an Ansible-controlled reboot. The complete baseline
 requires non-empty `security_baseline_authorized_keys` and
 `security_baseline_management_sources`; the bootstrap path requires an
 existing key-only `ansible` account with passwordless sudo and never falls back
-to root or a password. The playbooks do not configure notification delivery,
-and offline CI or container evidence does not prove live host availability,
-physical reboot, kernel enforcement, network reachability, or Semaphore
-scheduling.
+to root or a password. For mutating OS actions, the gateway rejects password
+prompts, password files, `--start-at-task`, tag selection, and `--step` so an
+invocation cannot skip a required safety check. The playbooks do not configure
+notification delivery, and offline CI or container evidence does not prove live
+host availability, physical reboot, kernel enforcement, network reachability,
+or Semaphore scheduling.
 
 ### Dependency bootstrap
 

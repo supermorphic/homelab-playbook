@@ -122,6 +122,10 @@ bounded package-manager activity, performs the distribution-supported full
 update, verifies effective state, and processes a multi-host selection
 sequentially.
 
+For mutating OS actions, the repository gateway rejects Ansible password
+prompts and password files. It also rejects `--start-at-task`, tag selection,
+and `--step`, because those controls could skip a required safety check.
+
 The default `os_reboot_enabled` value is `false`. If the full update reports a
 reboot requirement, the playbook explains the required input and leaves the
 host running. Re-run only after confirming the window and authorization:

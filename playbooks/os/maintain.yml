@@ -1,16 +1,19 @@
 ---
-- name: Validate maintenance connection and privilege prerequisites
+- name: Run scheduler-neutral full OS maintenance
   hosts: servers
   serial: 1
   any_errors_fatal: true
   gather_facts: false
   become: false
+  vars:
+    os_reboot_enabled: false
   pre_tasks:
     - name: Reject password-based maintenance credentials
       ansible.builtin.assert:
         that:
           - ansible_password is not defined
           - ansible_ssh_pass is not defined
+          - ansible_ssh_password is not defined
           - ansible_become_password is not defined
           - ansible_become_pass is not defined
         fail_msg: >-
@@ -18,20 +21,15 @@
           ansible account
       no_log: true
 
-    - name: Prove maintenance connection and privilege prerequisites
+    - name: Prove fresh maintenance connection and privilege prerequisites
       ansible.builtin.import_role:
         name: os_bootstrap
         tasks_from: connection-preflight.yml
 
-- name: Run scheduler-neutral full OS maintenance
-  hosts: servers
-  serial: 1
-  any_errors_fatal: true
-  gather_facts: true
-  become: true
-  vars:
-    os_reboot_enabled: false
-  pre_tasks:
+    - name: Gather privileged maintenance facts
+      ansible.builtin.setup:
+      become: true
+
     - name: Validate full-maintenance platform support
       ansible.builtin.assert:
         that:
@@ -57,16 +55,19 @@
       ansible.builtin.import_role:
         name: security_baseline
         tasks_from: maintenance-preflight.yml
+      become: true
 
     - name: Run the explicit maintenance full update
       ansible.builtin.import_role:
         name: system_maintenance
         tasks_from: full-update.yml
+      become: true
 
     - name: Inspect maintenance reboot-required state
       ansible.builtin.import_role:
         name: system_maintenance
         tasks_from: reboot-state.yml
+      become: true
 
     - name: Combine maintenance reboot requirements
       ansible.builtin.set_fact:
@@ -86,6 +87,7 @@
     - name: Reboot after maintenance when authorized
       ansible.builtin.reboot:
       register: os_maintenance_reboot
+      become: true
       when:
         - os_reboot_required | bool
         - os_reboot_enabled | bool
@@ -101,12 +103,14 @@
 
     - name: Gather facts after an Ansible-controlled reboot
       ansible.builtin.setup:
+      become: true
       when: os_reboot_performed | bool
 
   post_tasks:
     - name: Verify the complete OS baseline after maintenance
       ansible.builtin.import_role:
         name: os_baseline_verify
+      become: true
       vars:
         os_baseline_verify_expected_authorized_keys: >-
           {{ security_baseline_authorized_keys }}

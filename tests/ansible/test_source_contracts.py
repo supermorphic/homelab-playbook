@@ -419,6 +419,9 @@ def assert_scheduler_neutral_maintenance(play: dict[str, object]) -> None:
     actual_modules = [task_module(task) for task in play["pre_tasks"]]
     if actual_modules != [
         "ansible.builtin.assert",
+        "ansible.builtin.import_role",
+        "ansible.builtin.setup",
+        "ansible.builtin.assert",
         "ansible.builtin.assert",
         "ansible.builtin.import_role",
         "ansible.builtin.import_role",
@@ -444,15 +447,17 @@ class SourceContractTests(unittest.TestCase):
             self.assertTrue(all(play["any_errors_fatal"] is True for play in plays))
 
         provisioning = provision[1]
-        maintenance_preflight = maintain[0]
-        maintenance = maintain[1]
-        self.assertIs(maintenance_preflight["gather_facts"], False)
-        self.assertIs(maintenance_preflight["become"], False)
-        credential_guard = maintenance_preflight["pre_tasks"][0]
+        self.assertEqual(1, len(maintain))
+        maintenance = maintain[0]
+        self.assertIs(maintenance["gather_facts"], False)
+        self.assertIs(maintenance["become"], False)
+        maintenance_pre = maintenance["pre_tasks"]
+        credential_guard = maintenance_pre[0]
         self.assertEqual(
             [
                 "ansible_password is not defined",
                 "ansible_ssh_pass is not defined",
+                "ansible_ssh_password is not defined",
                 "ansible_become_password is not defined",
                 "ansible_become_pass is not defined",
             ],
@@ -461,8 +466,11 @@ class SourceContractTests(unittest.TestCase):
         self.assertIs(credential_guard["no_log"], True)
         self.assertEqual(
             {"name": "os_bootstrap", "tasks_from": "connection-preflight.yml"},
-            maintenance_preflight["pre_tasks"][1]["ansible.builtin.import_role"],
+            maintenance_pre[1]["ansible.builtin.import_role"],
         )
+        maintenance_initial_facts = maintenance_pre[2]
+        self.assertIsNone(maintenance_initial_facts["ansible.builtin.setup"])
+        self.assertIs(maintenance_initial_facts["become"], True)
         self.assertIs(provisioning["vars"]["os_reboot_enabled"], False)
         self.assertIs(maintenance["vars"]["os_reboot_enabled"], False)
 
@@ -537,10 +545,13 @@ class SourceContractTests(unittest.TestCase):
         )
         self.assertEqual(0, verifier)
 
-        maintenance_pre = maintenance["pre_tasks"]
         maintenance_post = maintenance["post_tasks"]
         assert_scheduler_neutral_maintenance(maintenance)
-        maintenance_platform_preflight = maintenance_pre[0]
+        maintenance_platform_preflight = next(
+            task
+            for task in maintenance_pre
+            if task["name"] == "Validate full-maintenance platform support"
+        )
         self.assertEqual(
             "Validate full-maintenance platform support",
             maintenance_platform_preflight["name"],
@@ -557,8 +568,22 @@ class SourceContractTests(unittest.TestCase):
                 maintenance_platform_preflight["ansible.builtin.assert"]["fail_msg"]
             ),
         )
-        maintenance_input_preflight = maintenance_pre[1]
+        maintenance_input_preflight = next(
+            task
+            for task in maintenance_pre
+            if task["name"] == "Validate complete-platform verification inputs"
+        )
         self.assertNotIn("when", maintenance_input_preflight)
+        maintenance_connection_preflight = unique_task_index(
+            maintenance_pre,
+            "ansible.builtin.import_role",
+            {"name": "os_bootstrap", "tasks_from": "connection-preflight.yml"},
+        )
+        maintenance_initial_setup = next(
+            index
+            for index, task in enumerate(maintenance_pre)
+            if task["name"] == "Gather privileged maintenance facts"
+        )
         maintenance_safety_preflight = unique_task_index(
             maintenance_pre,
             "ansible.builtin.import_role",
@@ -604,14 +629,19 @@ class SourceContractTests(unittest.TestCase):
         maintenance_reset = unique_task_index(
             maintenance_pre, "ansible.builtin.meta", "reset_connection"
         )
-        maintenance_setup = unique_task_index(
-            maintenance_pre, "ansible.builtin.setup", None
+        maintenance_setup = next(
+            index
+            for index, task in enumerate(maintenance_pre)
+            if task["name"]
+            == "Gather facts after an Ansible-controlled reboot"
         )
         for index in (maintenance_reset, maintenance_setup):
             self.assertEqual(
                 "os_reboot_performed | bool", maintenance_pre[index]["when"]
             )
         assert_strictly_ordered(
+            maintenance_connection_preflight,
+            maintenance_initial_setup,
             maintenance_safety_preflight,
             maintenance_update,
             maintenance_reboot_state,
@@ -622,6 +652,15 @@ class SourceContractTests(unittest.TestCase):
             maintenance_reset,
             maintenance_setup,
         )
+        for index in (
+            maintenance_initial_setup,
+            maintenance_safety_preflight,
+            maintenance_update,
+            maintenance_reboot_state,
+            maintenance_reboot,
+            maintenance_setup,
+        ):
+            self.assertIs(maintenance_pre[index]["become"], True)
         self.assertEqual(1, len(maintenance_post))
         maintenance_verifier = unique_task_index(
             maintenance_post,
@@ -630,6 +669,7 @@ class SourceContractTests(unittest.TestCase):
         )
         self.assertEqual(0, maintenance_verifier)
         self.assertNotIn("when", maintenance_post[maintenance_verifier])
+        self.assertIs(maintenance_post[maintenance_verifier]["become"], True)
 
     def test_os_playbook_contracts_reject_unsafe_composition_mutations(self) -> None:
         provision, maintenance_document = (
@@ -646,7 +686,7 @@ class SourceContractTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             assert_combined_reboot_fact(bad_combination)
 
-        for play in (provision[1], maintenance_document[1]):
+        for play in (provision[1], maintenance_document[0]):
             pre_tasks = play["pre_tasks"]
             reboot = unique_task_index(pre_tasks, "ansible.builtin.reboot", None)
             record = unique_fact_task_index(pre_tasks, "os_reboot_performed")
@@ -685,13 +725,13 @@ class SourceContractTests(unittest.TestCase):
             )
 
         for section in ("roles", "tasks"):
-            scheduled = deepcopy(maintenance_document[1])
+            scheduled = deepcopy(maintenance_document[0])
             scheduled[section] = []
             with self.subTest(section=section):
                 with self.assertRaises(AssertionError):
                     assert_scheduler_neutral_maintenance(scheduled)
 
-        scheduled_task = deepcopy(maintenance_document[1])
+        scheduled_task = deepcopy(maintenance_document[0])
         scheduled_task["pre_tasks"].append(
             {"ansible.builtin.cron": {"name": "maintenance", "minute": "0"}}
         )
@@ -1010,7 +1050,7 @@ class SourceContractTests(unittest.TestCase):
             load_yaml_documents(path)[0]
             for path in ("playbooks/os/provision.yml", "playbooks/os/maintain.yml")
         )
-        verifier_tasks = (provision[1]["post_tasks"][0], maintain[1]["post_tasks"][0])
+        verifier_tasks = (provision[1]["post_tasks"][0], maintain[0]["post_tasks"][0])
         for task in verifier_tasks:
             with self.subTest(playbook=task["name"]):
                 self.assertEqual(required_role_inputs, task["vars"])

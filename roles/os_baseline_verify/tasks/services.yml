@@ -69,7 +69,7 @@
       - os_baseline_verify_auditd_state.stdout | trim == 'active'
       - os_baseline_verify_firewalld_enablement.stdout | trim == 'enabled'
       - os_baseline_verify_auditd_enablement.stdout | trim == 'enabled'
-    fail_msg: auditd is not active
+    fail_msg: auditd or firewalld is not active and enabled for the next boot
   when: os_baseline_verify_runtime_controls | bool
 
 - name: Read failed systemd units

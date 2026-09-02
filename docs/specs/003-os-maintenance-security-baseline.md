@@ -258,7 +258,10 @@ The maintenance playbook:
 - remains directly runnable through `mise run playbook` from an operator
   workstation;
 - rejects SSH and become passwords and proves the `ansible` login and
-  passwordless `sudo -n` path before privileged fact gathering;
+  passwordless `sudo -n` path inside each one-host batch immediately before
+  privileged fact gathering;
+- rejects Ansible task-selection controls for mutating OS actions so the
+  invocation cannot skip connection, trust, or package-manager preflight;
 - verifies distribution repository trust and package-manager consistency
   without mutation before it starts package work;
 - validates the target, action, inventory, and package-manager state before
