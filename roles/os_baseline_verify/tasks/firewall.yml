@@ -2,7 +2,9 @@
 - name: Independently validate firewall policy inputs
   ansible.builtin.set_fact:
     os_baseline_verify_firewall_rules: >-
-      {{ {'management_sources': security_baseline_management_sources, 'services': security_baseline_firewall_services} | os_baseline_verify_firewall_rules }}
+      {{ {'management_sources': os_baseline_verify_expected_management_sources,
+          'services': os_baseline_verify_expected_firewall_services}
+         | os_baseline_verify_firewall_rules }}
   no_log: true
 
 - name: Discover management peer and interface

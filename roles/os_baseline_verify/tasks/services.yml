@@ -36,10 +36,10 @@
       - os_baseline_verify_journald_values.Storage | default('') == 'persistent'
       - >-
         os_baseline_verify_journald_values.SystemMaxUse | default('')
-        == security_baseline_journal_system_max_use
+        == os_baseline_verify_expected_journal_system_max_use
       - >-
         os_baseline_verify_journald_values.SystemKeepFree | default('')
-        == security_baseline_journal_system_keep_free
+        == os_baseline_verify_expected_journal_system_keep_free
     fail_msg: Effective journald configuration does not match the repository policy
 
 - name: Read auditd service state

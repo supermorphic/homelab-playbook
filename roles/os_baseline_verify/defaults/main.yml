@@ -1,3 +1,11 @@
 ---
 os_baseline_verify_runtime_controls: true
 os_baseline_verify_sshd_connection_context: {}
+os_baseline_verify_expected_authorized_keys: []
+os_baseline_verify_expected_management_sources: []
+os_baseline_verify_expected_firewall_services: >-
+  {{ security_baseline_firewall_services | default([]) }}
+os_baseline_verify_expected_journal_system_max_use: >-
+  {{ security_baseline_journal_system_max_use | default('512M') }}
+os_baseline_verify_expected_journal_system_keep_free: >-
+  {{ security_baseline_journal_system_keep_free | default('1G') }}

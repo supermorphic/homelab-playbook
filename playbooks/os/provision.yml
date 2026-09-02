@@ -97,3 +97,8 @@
     - name: Verify the complete OS baseline
       ansible.builtin.import_role:
         name: os_baseline_verify
+      vars:
+        os_baseline_verify_expected_authorized_keys: >-
+          {{ security_baseline_authorized_keys }}
+        os_baseline_verify_expected_management_sources: >-
+          {{ security_baseline_management_sources }}

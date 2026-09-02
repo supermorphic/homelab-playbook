@@ -360,6 +360,13 @@ The repository provides a reusable, read-only Ansible verification task set. It
 runs after complete provisioning and every Ansible-controlled reboot. Issue #4
 can schedule the same task set after native maintenance windows.
 
+The verifier owns its expected-policy interface. Provisioning and maintenance
+pass the required authorized-key and management-source inputs explicitly.
+Optional firewall-service and journal-size expectations use low-precedence
+verifier defaults that follow the security-baseline policy defaults and retain
+inventory overrides. The verifier does not depend on the security-baseline role
+having run earlier in the play.
+
 Verification checks:
 
 - the expected operating-system release;

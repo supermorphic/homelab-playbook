@@ -31,7 +31,8 @@
       - getent_shadow.ansible[0] is match('^[!*]')
       - >-
         os_baseline_verify_authorized_key_lines
-        == (security_baseline_authorized_keys | map('trim') | list | sort)
+        == (os_baseline_verify_expected_authorized_keys
+            | map('trim') | list | sort)
     fail_msg: The authoritative ansible account or authorized keys do not match policy
   no_log: true
 

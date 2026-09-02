@@ -668,6 +668,198 @@ class SourceContractTests(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     assert_observational_verifier_task({wrapper: [{"file": {"path": "/tmp/x"}}]})
 
+    def test_os_baseline_verifier_interface_is_self_contained_for_maintenance(
+        self,
+    ) -> None:
+        security_defaults = load_yaml_documents(
+            "roles/security_baseline/defaults/main.yml"
+        )[0]
+        policy_keys = {
+            "firewall_services": "security_baseline_firewall_services",
+            "journal_system_max_use": "security_baseline_journal_system_max_use",
+            "journal_system_keep_free": "security_baseline_journal_system_keep_free",
+        }
+        producer_overrides = {
+            "security_baseline_firewall_services": ["ssh", "https"],
+            "security_baseline_journal_system_max_use": "768M",
+            "security_baseline_journal_system_keep_free": "2G",
+        }
+        verifier_overrides = {
+            "os_baseline_verify_expected_firewall_services": ["ssh", "cockpit"],
+            "os_baseline_verify_expected_journal_system_max_use": "640M",
+            "os_baseline_verify_expected_journal_system_keep_free": "1536M",
+        }
+        documented_inputs = {
+            "security_baseline_authorized_keys": ["synthetic-controller-key"],
+            "security_baseline_management_sources": ["192.0.2.0/24"],
+        }
+        required_role_inputs = {
+            "os_baseline_verify_expected_authorized_keys": (
+                "{{ security_baseline_authorized_keys }}"
+            ),
+            "os_baseline_verify_expected_management_sources": (
+                "{{ security_baseline_management_sources }}"
+            ),
+        }
+        cases = (
+            (
+                "standalone-defaults",
+                {},
+                {
+                    f"os_baseline_verify_expected_{name}": security_defaults[producer]
+                    for name, producer in policy_keys.items()
+                },
+            ),
+            (
+                "producer-inventory-overrides",
+                producer_overrides,
+                {
+                    f"os_baseline_verify_expected_{name}": producer_overrides[producer]
+                    for name, producer in policy_keys.items()
+                },
+            ),
+            (
+                "verifier-inventory-overrides",
+                {**producer_overrides, **verifier_overrides},
+                verifier_overrides,
+            ),
+        )
+
+        for label, variables, expected in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                expected_variables = {
+                    f"expected_{name}": value for name, value in expected.items()
+                }
+                playbook = [
+                    {
+                        "name": "Probe the standalone verifier interface",
+                        "hosts": "localhost",
+                        "connection": "local",
+                        "gather_facts": False,
+                        "vars": {
+                            **documented_inputs,
+                            **variables,
+                            **expected_variables,
+                        },
+                        "tasks": [
+                            {
+                                "name": "Load only verifier role defaults",
+                                "ansible.builtin.import_role": {
+                                    "name": "os_baseline_verify",
+                                    "public": True,
+                                },
+                                "vars": required_role_inputs,
+                                "when": False,
+                            },
+                            {
+                                "name": "Verify resolved standalone policy",
+                                "ansible.builtin.assert": {
+                                    "that": [
+                                        f"{name} == expected_{name}"
+                                        for name in expected
+                                    ]
+                                },
+                            },
+                        ],
+                    }
+                ]
+                playbook_path = Path(directory) / "verifier-interface.yml"
+                playbook_path.write_text(
+                    yaml.safe_dump(playbook, sort_keys=False),
+                    encoding="utf-8",
+                )
+                result = subprocess.run(
+                    [
+                        "ansible-playbook",
+                        str(playbook_path),
+                        "--inventory",
+                        "localhost,",
+                    ],
+                    cwd=REPOSITORY_ROOT,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+        verifier_defaults = load_yaml_documents(
+            "roles/os_baseline_verify/defaults/main.yml"
+        )[0]
+        self.assertEqual(
+            [], verifier_defaults["os_baseline_verify_expected_authorized_keys"]
+        )
+        self.assertEqual(
+            [], verifier_defaults["os_baseline_verify_expected_management_sources"]
+        )
+
+        main_tasks = load_tasks("roles/os_baseline_verify/tasks/main.yml")
+        self.assertEqual(
+            [
+                "os_baseline_verify_expected_authorized_keys | length > 0",
+                "os_baseline_verify_expected_management_sources | length > 0",
+            ],
+            main_tasks[1]["ansible.builtin.assert"]["that"],
+        )
+        self.assertIs(main_tasks[1]["no_log"], True)
+
+        access_tasks = load_tasks("roles/os_baseline_verify/tasks/access.yml")
+        access_assert = next(
+            task
+            for task in access_tasks
+            if task["name"] == "Verify authoritative ansible access records"
+        )
+        self.assertIn(
+            "os_baseline_verify_authorized_key_lines "
+            "== (os_baseline_verify_expected_authorized_keys "
+            "| map('trim') | list | sort)",
+            [
+                normalize_expression(assertion)
+                for assertion in access_assert["ansible.builtin.assert"]["that"]
+            ],
+        )
+
+        firewall_tasks = load_tasks("roles/os_baseline_verify/tasks/firewall.yml")
+        firewall_inputs = firewall_tasks[0]["ansible.builtin.set_fact"]
+        self.assertEqual(
+            normalize_expression(
+                "{{ {'management_sources': "
+                "os_baseline_verify_expected_management_sources, "
+                "'services': os_baseline_verify_expected_firewall_services} "
+                "| os_baseline_verify_firewall_rules }}"
+            ),
+            normalize_expression(firewall_inputs["os_baseline_verify_firewall_rules"]),
+        )
+
+        service_tasks = load_tasks("roles/os_baseline_verify/tasks/services.yml")
+        journal_assert = next(
+            task
+            for task in service_tasks
+            if task["name"] == "Verify persistent bounded journald configuration"
+        )
+        journal_conditions = [
+            normalize_expression(assertion)
+            for assertion in journal_assert["ansible.builtin.assert"]["that"]
+        ]
+        self.assertIn(
+            "os_baseline_verify_journald_values.SystemMaxUse | default('') "
+            "== os_baseline_verify_expected_journal_system_max_use",
+            journal_conditions,
+        )
+        self.assertIn(
+            "os_baseline_verify_journald_values.SystemKeepFree | default('') "
+            "== os_baseline_verify_expected_journal_system_keep_free",
+            journal_conditions,
+        )
+
+        provision, maintain = (
+            load_yaml_documents(path)[0]
+            for path in ("playbooks/os/provision.yml", "playbooks/os/maintain.yml")
+        )
+        verifier_tasks = (provision[1]["post_tasks"][0], maintain[0]["post_tasks"][0])
+        for task in verifier_tasks:
+            with self.subTest(playbook=task["name"]):
+                self.assertEqual(required_role_inputs, task["vars"])
+
     def test_os_baseline_verifier_script_contract_rejects_missing_and_mutating_sources(self) -> None:
         with self.assertRaises(AssertionError):
             assert_observational_script(REPOSITORY_ROOT / "roles/os_baseline_verify/files/missing.py")
