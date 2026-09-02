@@ -343,7 +343,6 @@
     path: /etc/firewalld/firewalld.conf
     regexp: '^DefaultZone='
     line: DefaultZone=homelab
-  register: security_baseline_firewall_default_config
 
 - name: Validate permanent firewall configuration
   ansible.builtin.command:
