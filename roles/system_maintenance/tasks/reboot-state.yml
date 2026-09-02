@@ -1,3 +1,4 @@
 ---
 - name: Include reboot-state tasks for the operating system family
   ansible.builtin.include_tasks: 'reboot-state-{{ ansible_os_family }}.yml'
+  when: ansible_os_family in ['Debian', 'RedHat']

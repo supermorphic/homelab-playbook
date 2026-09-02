@@ -7,20 +7,16 @@ full-update scheduler.
 
 ## Supported platforms
 
-Debian 13 and Rocky Linux 9 are the complete-provisioning platforms. Arch Linux
-has explicit full-package-maintenance coverage only.
+Debian 13 and Rocky Linux 9 are the supported complete-baseline platforms.
 
 | Platform | Complete provisioning | Explicit full maintenance | Native security updater | Native time provider |
 | --- | --- | --- | --- | --- |
 | Debian 13 | Yes | Yes | `unattended-upgrades`, Debian Security origins | `systemd-timesyncd` |
 | Rocky Linux 9 | Yes | Yes | `dnf-automatic`, `upgrade_type = security` | chrony (`chronyd`) |
-| Arch Linux | No | Yes | No unattended updater | Outside the complete baseline |
 
 The baseline preserves each distribution's repository and DHCP-provided time
-sources. Issue #13 does not provide a time-source override. Complete
-provisioning rejects Arch Linux and other unsupported platforms before
-mutation. Arch maintenance does not run the complete access, firewall, MAC,
-time, logging, or verification baseline.
+sources. Issue #13 does not provide a time-source override. Complete-baseline
+operations reject unsupported platforms before mutation.
 
 ## Required inputs
 
@@ -118,11 +114,10 @@ reboot input does not change the independent native security-updater policy.
 mise run playbook -- os maintain <inventory> --limit <host>
 ```
 
-Maintenance is a mutating full operating-system update for Debian 13, Rocky
-Linux 9, or Arch Linux. It waits for bounded package-manager activity, performs
-the distribution-supported full update, and processes a multi-host selection
-sequentially. Debian and Rocky receive post-maintenance effective-state
-verification. Arch remains the explicit package-maintenance boundary.
+Maintenance is a mutating full operating-system update for Debian 13 and Rocky
+Linux 9. It waits for bounded package-manager activity, performs the
+distribution-supported full update, verifies effective state, and processes a
+multi-host selection sequentially.
 
 The default `os_reboot_enabled` value is `false`. If the full update reports a
 reboot requirement, the playbook explains the required input and leaves the
@@ -151,7 +146,7 @@ native reboot is enabled, it reboots at `04:30` when
 Rocky's `dnf-automatic` applies security updates and uses the native
 `when-needed` reboot behavior. These native security-update reboots are
 independent of `os_reboot_enabled` and do not use a repository reboot
-coordinator. Arch has no unattended security updater in this baseline.
+coordinator.
 
 Routine full updates have no host-local recurring systemd timer or cron job.
 The maintenance playbook is scheduler-neutral and remains directly runnable
@@ -198,11 +193,7 @@ mise run test:molecule -- system_maintenance/default
 mise run test:molecule -- system_maintenance/baseline
 ```
 
-`system_maintenance/default` covers explicit maintenance on Debian 13, Rocky
-Linux 9, and Arch Linux. `system_maintenance/baseline` covers complete Debian
-13 and Rocky Linux 9 composition. On a local ARM64 host, the default scenario
-runs Debian and Rocky natively and reports Arch as skipped. On a local AMD64
-host, it runs all three platforms natively. CI uses native AMD64 workers and
-runs five matrix jobs: three default-platform jobs and two baseline-platform
-jobs. The five CI jobs are `classify`, `fast`, `ansible`, `molecule`, and
-`merge-gate`; all CI validation remains offline and secret-free.
+`system_maintenance/baseline` covers complete Debian 13 and Rocky Linux 9
+composition. CI uses native AMD64 workers and runs five matrix jobs. The five
+CI jobs are `classify`, `fast`, `ansible`, `molecule`, and `merge-gate`; all CI
+validation remains offline and secret-free.

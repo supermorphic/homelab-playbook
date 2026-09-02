@@ -15,10 +15,9 @@
             (ansible_distribution == 'Debian' and
              ansible_distribution_major_version == '13') or
             (ansible_distribution == 'Rocky' and
-             ansible_distribution_major_version == '9') or
-            ansible_distribution == 'Archlinux'
+             ansible_distribution_major_version == '9')
         fail_msg: >-
-          os maintenance supports Debian 13, Rocky Linux 9, and Arch Linux only
+          os maintenance supports Debian 13 and Rocky Linux 9 only
 
     - name: Validate complete-platform verification inputs
       ansible.builtin.assert:
@@ -29,7 +28,6 @@
           complete-platform maintenance verification requires authorized
           controller keys and management sources
       no_log: true
-      when: ansible_os_family != 'Archlinux'
 
     - name: Run the explicit maintenance full update
       ansible.builtin.import_role:
@@ -85,4 +83,3 @@
           {{ security_baseline_authorized_keys }}
         os_baseline_verify_expected_management_sources: >-
           {{ security_baseline_management_sources }}
-      when: ansible_os_family != 'Archlinux'

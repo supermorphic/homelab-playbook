@@ -447,6 +447,25 @@ class SourceContractTests(unittest.TestCase):
         maintenance_pre = maintenance["pre_tasks"]
         maintenance_post = maintenance["post_tasks"]
         assert_scheduler_neutral_maintenance(maintenance)
+        maintenance_platform_preflight = maintenance_pre[0]
+        self.assertEqual(
+            "Validate full-maintenance platform support",
+            maintenance_platform_preflight["name"],
+        )
+        maintenance_platform_contract = maintenance_platform_preflight[
+            "ansible.builtin.assert"
+        ]["that"]
+        self.assertEqual(1, len(maintenance_platform_contract))
+        self.assertIn("ansible_distribution == 'Debian'", maintenance_platform_contract[0])
+        self.assertIn("ansible_distribution == 'Rocky'", maintenance_platform_contract[0])
+        self.assertEqual(
+            "os maintenance supports Debian 13 and Rocky Linux 9 only",
+            normalize_expression(
+                maintenance_platform_preflight["ansible.builtin.assert"]["fail_msg"]
+            ),
+        )
+        maintenance_input_preflight = maintenance_pre[1]
+        self.assertNotIn("when", maintenance_input_preflight)
         maintenance_update = unique_task_index(
             maintenance_pre,
             "ansible.builtin.import_role",
@@ -511,10 +530,7 @@ class SourceContractTests(unittest.TestCase):
             {"name": "os_baseline_verify"},
         )
         self.assertEqual(0, maintenance_verifier)
-        self.assertEqual(
-            "ansible_os_family != 'Archlinux'",
-            maintenance_post[maintenance_verifier]["when"],
-        )
+        self.assertNotIn("when", maintenance_post[maintenance_verifier])
 
     def test_os_playbook_contracts_reject_unsafe_composition_mutations(self) -> None:
         provision, maintenance = (
@@ -613,7 +629,7 @@ class SourceContractTests(unittest.TestCase):
                 output = result.stdout + result.stderr
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(
-                    "maintenance supports Debian 13, Rocky Linux 9, and Arch Linux only",
+                    "maintenance supports Debian 13 and Rocky Linux 9 only",
                     output,
                 )
 
@@ -1050,6 +1066,7 @@ class SourceContractTests(unittest.TestCase):
             [task["ansible.builtin.import_tasks"] for task in tasks[1:]],
             ["full-update.yml", "automatic-updates.yml", "reboot-state.yml"],
         )
+        task_directory = REPOSITORY_ROOT / "roles/system_maintenance/tasks"
         for os_family in ("Debian", "RedHat"):
             for task_file in (
                 f"setup-{os_family}.yml",
@@ -1057,13 +1074,26 @@ class SourceContractTests(unittest.TestCase):
                 f"reboot-state-{os_family}.yml",
             ):
                 self.assertTrue(
-                    (
-                        REPOSITORY_ROOT
-                        / "roles/system_maintenance/tasks"
-                        / task_file
-                    ).is_file(),
+                    (task_directory / task_file).is_file(),
                     f"missing system-maintenance tasks: {task_file}",
                 )
+        automatic_updates = load_tasks(
+            "roles/system_maintenance/tasks/automatic-updates.yml"
+        )[0]
+        self.assertEqual(
+            [
+                "system_maintenance_configure_automatic_updates | bool",
+                "ansible_os_family in ['Debian', 'RedHat']",
+            ],
+            automatic_updates["when"],
+        )
+        reboot_state = load_tasks(
+            "roles/system_maintenance/tasks/reboot-state.yml"
+        )[0]
+        self.assertEqual(
+            "ansible_os_family in ['Debian', 'RedHat']",
+            reboot_state["when"],
+        )
 
     def test_prepare_cifs_storage_dispatches_only_implemented_families(self) -> None:
         """Every accepted CIFS operating-system family must have setup tasks."""
@@ -1607,13 +1637,6 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual("security", dnf_config["commands"]["upgrade_type"])
         self.assertEqual("yes", dnf_config["commands"]["download_updates"])
         self.assertEqual("yes", dnf_config["commands"]["apply_updates"])
-
-        self.assertEqual(
-            [],
-            load_tasks(
-                "roles/system_maintenance/tasks/automatic-updates-Archlinux.yml"
-            ),
-        )
 
     def test_system_maintenance_idempotence_skips_only_live_upgrades(self) -> None:
         """Live upgrades must run during converge but not strict idempotence."""

@@ -19,32 +19,30 @@ and focused maintained mechanisms.
 
 1. Debian 13 and Rocky Linux 9 are the complete-provisioning platforms. Debian
    13 is the primary production platform.
-2. Arch Linux retains explicit package-maintenance coverage only. It is not a
-   complete-provisioning or unattended-update target.
-3. A target must already provide a key-only `ansible` account with working
+2. A target must already provide a key-only `ansible` account with working
    passwordless sudo. Automation never falls back to root login, a password
    prompt, or broader credentials.
-4. The repository owns security policy. Focused dependencies may implement a
+3. The repository owns security policy. Focused dependencies may implement a
    mechanism, but their defaults do not define the policy.
-5. `willshersystems.sshd` implements OpenSSH configuration. Repository roles
+4. `willshersystems.sshd` implements OpenSSH configuration. Repository roles
    own accounts, sudo, firewall, mandatory access control, time, logging, and
    package-maintenance policy.
-6. firewalld provides one firewall mechanism across Debian and Rocky. Time
+5. firewalld provides one firewall mechanism across Debian and Rocky. Time
    synchronization uses each platform's default client: `systemd-timesyncd` on
    Debian and chrony on Rocky.
-7. SELinux remains enforcing on Rocky. AppArmor remains enforcing on Debian.
-8. Native operating-system tools install security updates and perform required
+6. SELinux remains enforcing on Rocky. AppArmor remains enforcing on Debian.
+7. Native operating-system tools install security updates and perform required
    security-update reboots. The repository does not add a reboot coordinator.
-9. Routine full system updates run through an Ansible maintenance playbook.
+8. Routine full system updates run through an Ansible maintenance playbook.
    Issue #4 will schedule that playbook through Semaphore UI; no host-local
    recurring full-update timer or cron job is added here.
-10. Persistent journald, auditd, native updater records, and systemd unit state
+9. Persistent journald, auditd, native updater records, and systemd unit state
     are the durable failure signals. Verification remains an Ansible operation;
     the baseline does not add a host-local aggregate health daemon or result
     format.
-11. Complete provisioning and disruptive maintenance process one host at a
+10. Complete provisioning and disruptive maintenance process one host at a
     time.
-12. CI remains offline and secret-free. Container evidence does not prove
+11. CI remains offline and secret-free. Container evidence does not prove
     physical reboot, boot persistence, recovery access, network reachability,
     or kernel enforcement.
 
@@ -66,8 +64,7 @@ and focused maintained mechanisms.
   persistent journald, and auditd;
 - read-only effective-state verification reusable after provisioning, after an
   Ansible-controlled reboot, and from a future Semaphore schedule;
-- complete-composition Molecule coverage for Debian 13 and Rocky Linux 9; and
-- retained explicit Arch Linux maintenance coverage.
+- complete-composition Molecule coverage for Debian 13 and Rocky Linux 9.
 
 ### Excluded
 
@@ -91,20 +88,16 @@ and focused maintained mechanisms.
 
 ## Supported platform contract
 
-| Capability | Debian 13 | Rocky Linux 9 | Arch Linux |
-| --- | --- | --- | --- |
-| Complete provisioning | yes | yes | no |
-| Explicit full package update | yes | yes | yes |
-| Native automatic security updates | yes | yes | no |
-| Complete access and hardening policy | yes | yes | no |
-| Complete-composition Molecule coverage | yes | yes | no |
-| Maintenance-role Molecule coverage | yes | yes | yes |
+| Capability | Debian 13 | Rocky Linux 9 |
+| --- | --- | --- |
+| Complete provisioning | yes | yes |
+| Explicit full package update | yes | yes |
+| Native automatic security updates | yes | yes |
+| Complete access and hardening policy | yes | yes |
+| Complete-composition Molecule coverage | yes | yes |
+| Maintenance-role Molecule coverage | yes | yes |
 
-Complete-provisioning playbooks reject Arch and every other unsupported family
-before mutation. Arch tasks remain limited to explicit full upgrades and narrow
-package-maintenance behavior. Arch does not receive an unattended updater
-because its rolling-release maintenance model can require review and operator
-intervention.
+Complete-baseline playbooks reject every unsupported family before mutation.
 
 ## Provisioning lifecycle
 
@@ -332,9 +325,7 @@ claim that an unprivileged container proves host-kernel enforcement.
 Time synchronization uses the operating system's default client:
 `systemd-timesyncd` on Debian and chrony on Rocky. The baseline ensures that
 the selected package and service are present and enabled, but it does not
-replace distribution or DHCP-provided time sources. Arch remains outside
-complete provisioning; a later Arch security baseline should retain
-`systemd-timesyncd` unless it establishes a concrete need for another client.
+replace distribution or DHCP-provided time sources.
 
 The repository does not expose a time-source override in this initiative and
 does not make an internal time service a bootstrap dependency. A later design
@@ -433,9 +424,7 @@ post-update verification for direct workstation and future Semaphore use.
 
 ## Testing and evidence
 
-The existing `system_maintenance/default` scenario continues to cover explicit
-maintenance behavior on Debian 13, Rocky Linux 9, and Arch Linux. Complete
-provisioning receives a Debian and Rocky composition scenario using the same
+Issue #13 validates complete Debian and Rocky composition using the same
 rootless, unprivileged Podman worker model.
 
 Executable evidence includes:
@@ -536,8 +525,7 @@ Issue #13 is complete when:
     replacement coverage passes, while `willshersystems.sshd` and
     `ansible.posix` are exactly pinned;
 14. complete Debian and Rocky Molecule composition passes converge,
-    deterministic-task idempotence, and independent verification while the
-    Arch maintenance scenario remains supported;
+    deterministic-task idempotence, and independent verification;
 15. no test contacts inventory hosts, reads Vault material, performs a real
     reboot, or overstates container evidence; and
 16. repository-required change-directed validation passes before publication.

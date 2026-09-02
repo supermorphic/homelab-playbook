@@ -1,4 +1,6 @@
 ---
 - name: Include automatic security update tasks for the operating system family
   ansible.builtin.include_tasks: 'automatic-updates-{{ ansible_os_family }}.yml'
-  when: system_maintenance_configure_automatic_updates | bool
+  when:
+    - system_maintenance_configure_automatic_updates | bool
+    - ansible_os_family in ['Debian', 'RedHat']

@@ -160,14 +160,6 @@ class RunnerCliTests(unittest.TestCase):
                         "/usr/lib/systemd/systemd",
                         "Containerfile.rockylinux9",
                     ),
-                    (
-                        "archlinux",
-                        "docker.io/archlinux/archlinux:base",
-                        "localhost/homelab-playbook-system-maintenance-archlinux:local",
-                        "homelab-playbook-system-maintenance-archlinux",
-                        "/usr/lib/systemd/systemd",
-                        "Containerfile.archlinux",
-                    ),
                 ],
             },
             "system_maintenance/baseline": {
