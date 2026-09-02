@@ -268,6 +268,77 @@ def task_module(task: dict[str, object]) -> str:
     return actions[0]
 
 
+def assert_logging_task_ownership(tasks: list[dict[str, object]]) -> None:
+    """Allow only the journal and vendor-audit management owned by this role."""
+    actions = [(task["name"], task_module(task)) for task in tasks]
+    expected_actions = [
+        ("Validate bounded journal size inputs", "ansible.builtin.assert"),
+        ("Create persistent journal storage", "ansible.builtin.file"),
+        ("Create journald drop-in directory", "ansible.builtin.file"),
+        ("Render bounded persistent journal configuration", "ansible.builtin.template"),
+        ("Read effective journald configuration", "ansible.builtin.command"),
+        ("Validate bounded persistent journald configuration", "ansible.builtin.assert"),
+        ("Queue journald restart after validated configuration change", "ansible.builtin.debug"),
+        ("Install audit service with vendor rules", "block"),
+        ("Enable and start auditd with vendor rules", "ansible.builtin.systemd_service"),
+    ]
+    if actions != expected_actions:
+        raise AssertionError(f"logging task ownership is not exact: {actions}")
+
+    directories = {
+        task["ansible.builtin.file"]["path"]: task["ansible.builtin.file"]
+        for task in tasks
+        if "ansible.builtin.file" in task
+    }
+    expected_directories = {
+        "/var/log/journal": {
+            "path": "/var/log/journal",
+            "state": "directory",
+            "owner": "root",
+            "group": "systemd-journal",
+            "mode": "2755",
+        },
+        "/etc/systemd/journald.conf.d": {
+            "path": "/etc/systemd/journald.conf.d",
+            "state": "directory",
+            "owner": "root",
+            "group": "root",
+            "mode": "0755",
+        },
+    }
+    if directories != expected_directories:
+        raise AssertionError(f"journal directories are not exact: {directories}")
+
+    template = next(task for task in tasks if "ansible.builtin.template" in task)
+    expected_template = {
+        "src": "journald-homelab.conf.j2",
+        "dest": "/etc/systemd/journald.conf.d/90-homelab.conf",
+        "owner": "root",
+        "group": "root",
+        "mode": "0644",
+    }
+    if template["ansible.builtin.template"] != expected_template:
+        raise AssertionError("journald template destination is not exact")
+
+    audit = next(task for task in tasks if task["name"] == "Install audit service with vendor rules")
+    expected_audit_packages = {"Debian": "auditd", "RedHat": "audit"}
+    if audit.get("vars") != {"security_baseline_audit_packages": expected_audit_packages}:
+        raise AssertionError("audit package mapping is not exact")
+    if [task_module(task) for task in audit.get("block", [])] != [
+        "ansible.builtin.assert",
+        "ansible.builtin.package",
+    ]:
+        raise AssertionError("audit setup may only validate and install the vendor package")
+
+    service = next(task for task in tasks if "ansible.builtin.systemd_service" in task)
+    if service["ansible.builtin.systemd_service"] != {
+        "name": "auditd",
+        "enabled": True,
+        "state": "started",
+    } or service.get("when") != "security_baseline_apply_audit_runtime | bool":
+        raise AssertionError("audit service management is not exact")
+
+
 def unique_task_index(
     tasks: list[dict[str, object]], module: str, payload: object,
 ) -> int:
@@ -1394,6 +1465,24 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn("Storage=persistent", template)
         self.assertIn("SystemMaxUse=", template)
         self.assertIn("SystemKeepFree=", template)
+
+    def test_logging_task_ownership_excludes_repository_audit_rules(self) -> None:
+        tasks = load_tasks("roles/security_baseline/tasks/logging.yml")
+
+        assert_logging_task_ownership(tasks)
+        with self.assertRaises(AssertionError):
+            assert_logging_task_ownership(
+                [
+                    *tasks,
+                    {
+                        "name": "Write repository audit rules",
+                        "ansible.builtin.copy": {
+                            "content": "-w /etc/passwd -p wa\n",
+                            "dest": "/etc/audit/audit.rules",
+                        },
+                    },
+                ]
+            )
 
     def test_time_provider_uses_platform_defaults(self) -> None:
         """A provider change must not edit operator-owned time sources."""

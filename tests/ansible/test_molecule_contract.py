@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import unittest
 from pathlib import Path
 
@@ -34,6 +35,34 @@ def load_baseline_yaml(name: str):
     if not path.is_file():
         raise AssertionError(f"required baseline scenario file is missing: {path}")
     return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def containerfile_installed_packages(content: str) -> list[str]:
+    """Return the package operands from the Containerfile install command."""
+    lines = content.splitlines()
+    try:
+        start = next(index for index, line in enumerate(lines) if line.startswith("RUN "))
+    except StopIteration as error:
+        raise AssertionError("Containerfile must have one package-install RUN command") from error
+
+    command_lines = []
+    for line in lines[start:]:
+        command_lines.append(line.removesuffix("\\").strip())
+        if not line.endswith("\\"):
+            break
+    tokens = shlex.split(" ".join(command_lines).removeprefix("RUN "))
+
+    for index, token in enumerate(tokens):
+        if token not in {"apt-get", "dnf"}:
+            continue
+        try:
+            package_start = tokens.index("install", index + 1) + 1
+        except ValueError:
+            continue
+        package_tokens = tokens[package_start : tokens.index("&&", package_start)]
+        return [token for token in package_tokens if not token.startswith("-")]
+
+    raise AssertionError("Containerfile must use apt-get or dnf to install packages")
 
 
 class MoleculeScenarioContractTests(unittest.TestCase):
@@ -212,18 +241,36 @@ class MoleculeScenarioContractTests(unittest.TestCase):
         self.assertIn("'epel-release' not in ansible_facts.packages", rocky_policy)
 
     def test_containerfiles_use_maintained_bases(self) -> None:
-        expected_bases = {
-            "Containerfile.debian13": "FROM docker.io/library/debian:13",
+        expected_containerfiles = {
+            "Containerfile.debian13": (
+                "FROM docker.io/library/debian:13",
+                ["dbus", "python3", "systemd"],
+            ),
             "Containerfile.rockylinux9": (
-                "FROM docker.io/rockylinux/rockylinux:9"
+                "FROM docker.io/rockylinux/rockylinux:9",
+                ["dbus-daemon", "python3", "systemd"],
             ),
         }
-        for name, expected_base in expected_bases.items():
+        for name, (expected_base, expected_packages) in expected_containerfiles.items():
             with self.subTest(containerfile=name):
                 path = SCENARIO_DIRECTORY / name
                 self.assertTrue(path.is_file())
                 content = path.read_text(encoding="utf-8")
                 self.assertEqual(expected_base, content.splitlines()[0])
+                self.assertEqual(
+                    expected_packages,
+                    containerfile_installed_packages(content),
+                )
+                with self.assertRaises(AssertionError):
+                    self.assertEqual(
+                        expected_packages,
+                        containerfile_installed_packages(
+                            content.replace(
+                                "        systemd \\\n",
+                                "        systemd \\\n        tree \\\n",
+                            )
+                        ),
+                    )
                 self.assertIn('CMD ["/usr/lib/systemd/systemd"]', content)
                 self.assertIn("STOPSIGNAL SIGRTMIN+3", content)
 
