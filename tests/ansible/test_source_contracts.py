@@ -731,6 +731,33 @@ class SourceContractTests(unittest.TestCase):
 
     def test_os_provision_rejects_arch_before_configuration_roles(self) -> None:
         """Complete provisioning must not apply unsupported hardening to Arch."""
+        plays = load_yaml_documents("playbooks/os/provision.yml")[0]
+        self.assertEqual(["os_bootstrap"], plays[0]["roles"])
+
+        configuration_tasks = plays[1]["pre_tasks"]
+        platform_preflight = next(
+            task
+            for task in configuration_tasks
+            if task["name"] == "Validate complete provisioning platform support"
+        )
+        platform_preflight_index = configuration_tasks.index(platform_preflight)
+        imported_role_indices = [
+            index
+            for index, task in enumerate(configuration_tasks)
+            if "ansible.builtin.import_role" in task
+        ]
+        self.assertEqual(
+            ["ansible_os_family in ['Debian', 'RedHat']"],
+            platform_preflight["ansible.builtin.assert"]["that"],
+        )
+        self.assertTrue(imported_role_indices)
+        self.assertTrue(
+            all(
+                platform_preflight_index < role_index
+                for role_index in imported_role_indices
+            )
+        )
+
         result = subprocess.run(
             [
                 "ansible-playbook",
@@ -755,7 +782,6 @@ class SourceContractTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("does not support Archlinux", output)
-        self.assertNotIn("Install common packages on Arch Linux", output)
 
     def test_frozen_k3s_manifest_templates_resolve_to_files(self) -> None:
         """Every configured local K3s manifest template must exist."""
