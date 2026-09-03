@@ -26,6 +26,13 @@ COMMANDS = {
             "--",
             "system_maintenance/default",
         ],
+        [
+            "mise",
+            "run",
+            "test:molecule",
+            "--",
+            "system_maintenance/baseline",
+        ],
     ],
     "full": [
         ["mise", "run", "validate:fast"],
@@ -36,6 +43,13 @@ COMMANDS = {
             "test:molecule",
             "--",
             "system_maintenance/default",
+        ],
+        [
+            "mise",
+            "run",
+            "test:molecule",
+            "--",
+            "system_maintenance/baseline",
         ],
     ],
 }

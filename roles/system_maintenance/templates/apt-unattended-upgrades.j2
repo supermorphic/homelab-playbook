@@ -1,0 +1,7 @@
+Unattended-Upgrade::Origins-Pattern {
+        "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+};
+Unattended-Upgrade::Automatic-Reboot "{{ system_maintenance_native_reboot_enabled | bool | lower }}";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
+Unattended-Upgrade::Automatic-Reboot-Time "{{ system_maintenance_security_reboot_time }}";
+Unattended-Upgrade::Remove-Unused-Dependencies "false";

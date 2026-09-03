@@ -1,0 +1,106 @@
+---
+- name: Run scheduler-neutral full OS maintenance
+  hosts: servers
+  serial: 1
+  any_errors_fatal: true
+  gather_facts: false
+  become: false
+  pre_tasks:
+    - name: Reject password-based maintenance credentials
+      ansible.builtin.assert:
+        that:
+          - ansible_password is not defined
+          - ansible_ssh_pass is not defined
+          - ansible_ssh_password is not defined
+          - ansible_become_password is not defined
+          - ansible_become_pass is not defined
+        fail_msg: >-
+          os maintenance requires key-only SSH and passwordless sudo for the
+          ansible account
+      no_log: true
+
+    - name: Prove fresh maintenance connection and privilege prerequisites
+      ansible.builtin.import_role:
+        name: os_bootstrap
+        tasks_from: connection-preflight.yml
+
+    - name: Gather privileged maintenance facts
+      ansible.builtin.setup:
+      become: true
+
+    - name: Validate full-maintenance platform support
+      ansible.builtin.assert:
+        that:
+          - >-
+            (ansible_distribution == 'Debian' and
+             ansible_distribution_major_version == '13') or
+            (ansible_distribution == 'Rocky' and
+             ansible_distribution_major_version == '9')
+        fail_msg: >-
+          os maintenance supports Debian 13 and Rocky Linux 9 only
+
+    - name: Validate complete-platform verification inputs
+      ansible.builtin.assert:
+        that:
+          - security_baseline_authorized_keys | length > 0
+          - security_baseline_management_sources | length > 0
+        fail_msg: >-
+          complete-platform maintenance verification requires authorized
+          controller keys and management sources
+      no_log: true
+
+    - name: Verify repository trust and package-manager consistency
+      ansible.builtin.import_role:
+        name: security_baseline
+        tasks_from: maintenance-preflight.yml
+      become: true
+
+    - name: Run the explicit maintenance full update
+      ansible.builtin.import_role:
+        name: system_maintenance
+        tasks_from: full-update.yml
+      become: true
+
+    - name: Inspect maintenance reboot-required state
+      ansible.builtin.import_role:
+        name: system_maintenance
+        tasks_from: reboot-state.yml
+      become: true
+
+    - name: Combine maintenance reboot requirements
+      ansible.builtin.set_fact:
+        os_reboot_required: >-
+          {{ (system_maintenance_reboot_required | default(false) | bool)
+             or (security_baseline_reboot_required | default(false) | bool) }}
+
+    - name: Reboot after maintenance when required
+      ansible.builtin.reboot:
+        boot_time_command: "{{ os_reboot_boot_time_command | default(omit) }}"
+      register: os_maintenance_reboot
+      become: true
+      when: os_reboot_required | bool
+
+    - name: Record whether Ansible controlled the maintenance reboot
+      ansible.builtin.set_fact:
+        os_reboot_performed: >-
+          {{ os_maintenance_reboot.changed | default(false) | bool }}
+
+    - name: Reset the connection after an Ansible-controlled reboot
+      ansible.builtin.meta: reset_connection
+      when: os_reboot_performed | bool
+
+    - name: Gather facts after an Ansible-controlled reboot
+      ansible.builtin.setup:
+      become: true
+      when: os_reboot_performed | bool
+
+  post_tasks:
+    - name: Verify the complete OS baseline after maintenance
+      ansible.builtin.import_role:
+        name: os_baseline_verify
+      become: true
+      vars:
+        os_baseline_verify_expected_authorized_keys: >-
+          {{ security_baseline_authorized_keys }}
+        os_baseline_verify_expected_management_sources: >-
+          {{ security_baseline_management_sources }}

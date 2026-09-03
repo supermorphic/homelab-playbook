@@ -106,11 +106,6 @@ container ownership, bounded cleanup, and no ordinary confirmation. The
 containers are local, unprivileged, disposable test state; a confirmation token
 would add friction without a proportionate safety benefit.
 
-The default platform set follows the Podman host architecture. ARM64 runs
-Debian and Rocky concurrently and reports Arch as skipped. AMD64 runs Debian,
-Rocky, and Arch concurrently. GitHub uses exact matrix selection on native
-AMD64 so every pull request still validates all three platforms.
-
 `mise run ci:changed` and `mise run ci` orchestrate validation and this
 controlled test when their selected depth includes Molecule. Their effects are
 the combined effects of the commands they run.
@@ -138,6 +133,11 @@ action determines the effect. Production or staging execution requires explicit
 operator direction for the exact playbook, action, inventory, and extra
 arguments. Observational actions remain read-only; mutating actions follow the
 authority and precondition rules in `AGENTS.md`.
+
+For example, `os inspect` follows the live-observation profile, while `os
+provision` and `os maintain` follow the existing-state-reconciliation profile.
+The [OS playbook guide](../../playbooks/os/README.md) documents their exact
+interface and safeguards.
 
 ### Dependency bootstrap
 

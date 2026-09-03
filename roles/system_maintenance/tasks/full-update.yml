@@ -1,0 +1,3 @@
+---
+- name: Include full update tasks for the operating system family
+  ansible.builtin.include_tasks: 'setup-{{ ansible_os_family }}.yml'

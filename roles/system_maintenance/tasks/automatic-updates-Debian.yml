@@ -1,0 +1,45 @@
+---
+- name: Install the native APT security updater
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+    lock_timeout: "{{ system_maintenance_package_lock_timeout }}"
+
+- name: Configure periodic APT security updates
+  ansible.builtin.template:
+    src: apt-auto-upgrades.j2
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Configure unattended security upgrades
+  ansible.builtin.template:
+    src: apt-unattended-upgrades.j2
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Create the APT security update timer drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/apt-daily-upgrade.timer.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Bound the APT security update timer
+  ansible.builtin.template:
+    src: security-update-timer.conf.j2
+    dest: /etc/systemd/system/apt-daily-upgrade.timer.d/override.conf
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Enable the APT security update timer
+  ansible.builtin.systemd_service:
+    name: apt-daily-upgrade.timer
+    enabled: true
+    state: started
+    daemon_reload: true

@@ -1,0 +1,15 @@
+---
+- name: Inspect the Rocky reboot-required state
+  ansible.builtin.command:
+    argv:
+      - dnf
+      - needs-restarting
+      - -r
+  register: system_maintenance_needs_restart
+  changed_when: false
+  failed_when: system_maintenance_needs_restart.rc not in [0, 1]
+
+- name: Record Rocky reboot-required state
+  ansible.builtin.set_fact:
+    system_maintenance_reboot_required: >-
+      {{ system_maintenance_needs_restart.rc == 1 }}

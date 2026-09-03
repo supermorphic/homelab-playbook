@@ -4,8 +4,7 @@
     update_cache: true
     upgrade: dist
     force_apt_get: true
-  register: system_maintenance_apt_upgrade
-  changed_when: system_maintenance_apt_upgrade.changed
+    lock_timeout: "{{ system_maintenance_package_lock_timeout }}"
   tags:
     - molecule-idempotence-notest
 
@@ -13,43 +12,10 @@
   ansible.builtin.apt:
     autoremove: true
     force_apt_get: true
+    lock_timeout: "{{ system_maintenance_package_lock_timeout }}"
 
 - name: Autoclean cached packages
   ansible.builtin.apt:
     autoclean: true
     force_apt_get: true
-
-- name: Install packages via apt
-  ansible.builtin.apt:
-    name:
-      - qemu-guest-agent
-      - xterm
-      - vim
-      - tree
-      - debianutils
-      - git
-      - python3
-      - python3-pip
-      - python3-venv
-      - python3-netaddr
-      - apache2-utils
-      - iputils-ping
-      - openssh-server
-    state: present
-    update_cache: false
-    force_apt_get: true
-
-- name: Check if reboot is required
-  ansible.builtin.stat:
-    path: /var/run/reboot-required
-  register: system_maintenance_reboot_required_file
-
-- name: Reboot if required
-  ansible.builtin.reboot:
-    msg: "Reboot triggered due to package update"
-    connect_timeout: 5
-    reboot_timeout: 600
-    test_command: whoami
-  when:
-    - system_maintenance_reboot_required_file.stat.exists
-    - system_maintenance_reboot_enabled | bool
+    lock_timeout: "{{ system_maintenance_package_lock_timeout }}"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import tempfile
 import tomllib
 import unittest
@@ -55,6 +56,35 @@ class RepositoryDependencyContractTests(unittest.TestCase):
 
         self.assertIn(("containers.podman", "1.20.2"), collections)
 
+    def test_os_baseline_dependencies_are_exactly_pinned(self) -> None:
+        roles = dependencies.required_roles(REPO_ROOT / "requirements.yml")
+        collections = dependencies.required_collections(
+            REPO_ROOT / "requirements.yml"
+        )
+
+        self.assertIn(("willshersystems.sshd", "v0.34.0"), roles)
+        self.assertIn(("ansible.posix", "2.2.2"), collections)
+        self.assertNotIn("robertdebock.bootstrap", dict(roles))
+        self.assertNotIn("geerlingguy.security", dict(roles))
+
+    def test_sshd_dependency_uses_canonical_git_source(self) -> None:
+        requirements = (REPO_ROOT / "requirements.yml").read_text(encoding="utf-8")
+        entry_match = re.search(
+            r"(?ms)^  - name: willshersystems\.sshd\n(?P<entry>.*?)(?=^  - name:|^collections:)",
+            requirements,
+        )
+
+        self.assertIsNotNone(entry_match)
+        entry = entry_match.group("entry")
+        src_match = re.search(r"^    src: (.+)$", entry, re.MULTILINE)
+        scm_match = re.search(r"^    scm: (.+)$", entry, re.MULTILINE)
+        self.assertIsNotNone(src_match)
+        self.assertIsNotNone(scm_match)
+        self.assertEqual(
+            "https://github.com/willshersystems/ansible-sshd.git",
+            src_match.group(1),
+        )
+        self.assertEqual("git", scm_match.group(1))
 
 class DependencyVerificationTests(unittest.TestCase):
     def setUp(self) -> None:

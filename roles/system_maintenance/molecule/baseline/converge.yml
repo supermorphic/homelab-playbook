@@ -1,0 +1,69 @@
+---
+- name: Generate disposable Molecule controller keys
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    system_maintenance_molecule_key_directory: >-
+      {{ molecule_ephemeral_directory }}/controller-key
+    system_maintenance_molecule_private_key: >-
+      {{ system_maintenance_molecule_key_directory }}/id_ed25519
+  tasks:
+    - name: Create the private ephemeral key directory
+      ansible.builtin.file:
+        path: "{{ system_maintenance_molecule_key_directory }}"
+        state: directory
+        mode: "0700"
+      no_log: true
+
+    - name: Generate the disposable Ed25519 controller key
+      ansible.builtin.command:
+        argv:
+          - ssh-keygen
+          - -q
+          - -t
+          - ed25519
+          - -N
+          - ""
+          - -f
+          - "{{ system_maintenance_molecule_private_key }}"
+        creates: "{{ system_maintenance_molecule_private_key }}"
+      no_log: true
+
+    - name: Read the disposable controller public key
+      ansible.builtin.slurp:
+        src: "{{ system_maintenance_molecule_private_key }}.pub"
+      register: system_maintenance_molecule_public_key_file
+      no_log: true
+
+    - name: Record the disposable controller public key
+      ansible.builtin.set_fact:
+        system_maintenance_molecule_public_key: >-
+          {{ system_maintenance_molecule_public_key_file.content
+             | b64decode | trim }}
+      no_log: true
+
+- name: Converge the production complete provisioning lifecycle
+  ansible.builtin.import_playbook: ../../../../playbooks/os/provision.yml
+  vars:
+    os_baseline_verify_runtime_controls: false
+    os_reboot_boot_time_command: /usr/bin/stat -c %y /proc/1
+    security_baseline_apply_audit_runtime: false
+    security_baseline_apply_firewall_runtime: false
+    security_baseline_apply_kernel_controls: false
+    security_baseline_apply_time_runtime: false
+    security_baseline_authorized_keys:
+      - "{{ hostvars['localhost'].system_maintenance_molecule_public_key }}"
+    security_baseline_management_sources:
+      - 10.0.0.0/8
+    security_baseline_sshd_connection_context:
+      host: 127.0.0.1
+      peer: 127.0.0.1
+      local_address: 127.0.0.1
+      local_port: 22
+    os_baseline_verify_sshd_connection_context:
+      host: 127.0.0.1
+      peer: 127.0.0.1
+      local_address: 127.0.0.1
+      local_port: 22
+    system_maintenance_native_reboot_enabled: false

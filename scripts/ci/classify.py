@@ -92,10 +92,19 @@ def classify_path(path: str) -> tuple[str, str]:
     ):
         return "full", "validation implementation changes require full validation"
 
-    if _has_prefix(path, ("roles/system_maintenance/",)):
+    if _has_prefix(
+        path,
+        (
+            "playbooks/os/",
+            "roles/os_baseline_verify/",
+            "roles/os_bootstrap/",
+            "roles/security_baseline/",
+            "roles/system_maintenance/",
+        ),
+    ):
         return (
             "molecule",
-            "system_maintenance changes require container validation",
+            "OS baseline composition changes require container validation",
         )
     if _has_prefix(path, ("inventory/", "playbooks/", "roles/", "overrides/")):
         return "ansible", "Ansible source changes require Ansible validation"

@@ -1,0 +1,42 @@
+---
+- name: Read global firewall zone bindings
+  ansible.builtin.command:
+    argv: >-
+      {{ [security_baseline_firewall_global_command]
+         + security_baseline_firewall_global_scope
+         + [security_baseline_firewall_global_binding_option] }}
+  register: security_baseline_firewall_global_bindings
+  changed_when: false
+  no_log: true
+
+- name: Read global direct firewall surfaces
+  ansible.builtin.command:
+    argv: >-
+      {{ [security_baseline_firewall_global_command]
+         + security_baseline_firewall_global_scope
+         + ['--direct', item] }}
+  loop:
+    - --get-all-chains
+    - --get-all-rules
+    - --get-all-passthroughs
+  register: security_baseline_firewall_global_direct
+  changed_when: false
+  no_log: true
+
+- name: Read global firewalld policy objects
+  ansible.builtin.command:
+    argv: >-
+      {{ [security_baseline_firewall_global_command]
+         + security_baseline_firewall_global_scope
+         + ['--list-all-policies'] }}
+  register: security_baseline_firewall_global_policies
+  changed_when: false
+  no_log: true
+
+- name: Assemble global firewall surface state
+  ansible.builtin.set_fact:
+    security_baseline_firewall_global_snapshot:
+      bindings: "{{ security_baseline_firewall_global_bindings.stdout }}"
+      direct: "{{ security_baseline_firewall_global_direct.results }}"
+      policies: "{{ security_baseline_firewall_global_policies.stdout }}"
+  no_log: true

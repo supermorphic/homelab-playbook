@@ -63,7 +63,45 @@ inventory_path="$repo_root/inventory/$inventory"
 [[ -f "$inventory_path" || -d "$inventory_path" ]] || error "inventory is unavailable: $inventory"
 
 shift 3
+
+guarded_os_action=false
+if [[ "$playbook" == 'os' && "$action" != 'inspect' ]]; then
+  guarded_os_action=true
+  for argument in "$@"; do
+    case "$argument" in
+      -k|-K|--ask-pass|--ask-become-pass|--step|\
+      --connection-password-file|--conn-pass-file|\
+      --become-password-file|--become-pass-file|\
+      --start-at-task|-t|--tags|--skip-tags|\
+      --connection-password-file=*|--conn-pass-file=*|\
+      --become-password-file=*|--become-pass-file=*|\
+      --start-at-task=*|-t?*|--tags=*|--skip-tags=*)
+        error "password credentials and task-selection controls are not allowed for mutating OS actions"
+        ;;
+    esac
+  done
+fi
+
 uv run --frozen --no-sync python scripts/dependencies.py verify
+
+if [[ "$guarded_os_action" == true ]]; then
+  effective_config="$(
+    uv run --frozen --no-sync ansible-config dump --only-changed
+  )"
+  while IFS= read -r config_line; do
+    case "$config_line" in
+      DEFAULT_ASK_PASS*' = True'|\
+      DEFAULT_BECOME_ASK_PASS*' = True'|\
+      CONNECTION_PASSWORD_FILE*|\
+      BECOME_PASSWORD_FILE*|\
+      TAGS_RUN*|\
+      TAGS_SKIP*)
+        error "effective Ansible configuration enables password credentials or task selection for a mutating OS action"
+        ;;
+    esac
+  done <<<"$effective_config"
+fi
+
 exec uv run --frozen --no-sync ansible-playbook \
   -i "$inventory_path" \
   "$playbook_path" \

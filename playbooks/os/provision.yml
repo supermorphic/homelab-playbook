@@ -1,15 +1,19 @@
 ---
-- name: Prepare systems for Ansible management
+- name: Bootstrap complete OS provisioning prerequisites
   hosts: servers
-  become: true
+  serial: 1
+  any_errors_fatal: true
   gather_facts: false
+  become: false
   roles:
-    - robertdebock.bootstrap
+    - os_bootstrap
 
-- name: Configure OS and apply baseline hardening
+- name: Provision the complete OS maintenance and security baseline
   hosts: servers
-  become: true
+  serial: 1
+  any_errors_fatal: true
   gather_facts: true
+  become: true
   pre_tasks:
     - name: Validate complete provisioning platform support
       ansible.builtin.assert:
@@ -18,7 +22,80 @@
         fail_msg: >-
           os provision does not support {{ ansible_os_family }} because its
           complete security baseline supports only Debian and RedHat
-  roles:
-    - system_maintenance
-    - role: geerlingguy.security
-      when: ansible_os_family in ['Debian', 'RedHat']
+
+    - name: Validate complete provisioning security baseline inputs
+      ansible.builtin.assert:
+        that:
+          - ansible_user | default('') == 'ansible'
+          - security_baseline_authorized_keys | length > 0
+          - security_baseline_management_sources | length > 0
+        fail_msg: >-
+          complete provisioning requires an ansible connection user,
+          authorized controller keys, and management sources
+      no_log: true
+
+    - name: Configure repository trust and time policy before updates
+      ansible.builtin.import_role:
+        name: security_baseline
+        tasks_from: pre-update.yml
+
+    - name: Run the explicit provisioning full update
+      ansible.builtin.import_role:
+        name: system_maintenance
+        tasks_from: full-update.yml
+
+    - name: Configure host security policy after updates
+      ansible.builtin.import_role:
+        name: security_baseline
+        tasks_from: post-update.yml
+
+    - name: Configure native automatic security updates
+      ansible.builtin.import_role:
+        name: system_maintenance
+        tasks_from: automatic-updates.yml
+
+    - name: Inspect provisioning reboot-required state
+      ansible.builtin.import_role:
+        name: system_maintenance
+        tasks_from: reboot-state.yml
+
+    - name: Combine provisioning reboot requirements
+      ansible.builtin.set_fact:
+        os_reboot_required: >-
+          {{ (system_maintenance_reboot_required | default(false) | bool)
+             or (security_baseline_reboot_required | default(false) | bool) }}
+
+    - name: Reboot after complete provisioning when required
+      ansible.builtin.reboot:
+        boot_time_command: "{{ os_reboot_boot_time_command | default(omit) }}"
+      register: os_provision_reboot
+      when: os_reboot_required | bool
+
+    - name: Record whether Ansible controlled the provisioning reboot
+      ansible.builtin.set_fact:
+        os_reboot_performed: >-
+          {{ os_provision_reboot.changed | default(false) | bool }}
+
+    - name: Reset the connection after an Ansible-controlled reboot
+      ansible.builtin.meta: reset_connection
+      when: os_reboot_performed | bool
+
+    - name: Gather facts after an Ansible-controlled reboot
+      ansible.builtin.setup:
+      when: os_reboot_performed | bool
+
+    - name: Complete mandatory access control after an Ansible-controlled reboot
+      ansible.builtin.import_role:
+        name: security_baseline
+        tasks_from: mac.yml
+      when: os_reboot_performed | bool
+
+  post_tasks:
+    - name: Verify the complete OS baseline
+      ansible.builtin.import_role:
+        name: os_baseline_verify
+      vars:
+        os_baseline_verify_expected_authorized_keys: >-
+          {{ security_baseline_authorized_keys }}
+        os_baseline_verify_expected_management_sources: >-
+          {{ security_baseline_management_sources }}

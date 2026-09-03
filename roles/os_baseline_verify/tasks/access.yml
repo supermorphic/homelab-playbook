@@ -1,0 +1,105 @@
+---
+- name: Read authoritative ansible account record
+  ansible.builtin.getent:
+    database: passwd
+    key: ansible
+  no_log: true
+
+- name: Read authoritative ansible shadow record
+  ansible.builtin.getent:
+    database: shadow
+    key: ansible
+  no_log: true
+
+- name: Read authoritative ansible authorized keys
+  ansible.builtin.slurp:
+    src: /home/ansible/.ssh/authorized_keys
+  register: os_baseline_verify_authorized_keys
+  no_log: true
+
+- name: Verify authoritative ansible access records
+  vars:
+    os_baseline_verify_authorized_key_lines: >-
+      {{ os_baseline_verify_authorized_keys.content
+         | b64decode | split('\n') | map('trim')
+         | reject('equalto', '') | list | sort }}
+  ansible.builtin.assert:
+    that:
+      - "'ansible' in getent_passwd"
+      - "'ansible' in getent_shadow"
+      - getent_passwd.ansible[5] == '/bin/bash'
+      - getent_shadow.ansible[0] is match('^[!*]')
+      - >-
+        os_baseline_verify_authorized_key_lines
+        == (os_baseline_verify_expected_authorized_keys
+            | map('trim') | list | sort)
+    fail_msg: The authoritative ansible account or authorized keys do not match policy
+  no_log: true
+
+- name: Verify ansible non-interactive sudo access
+  become: true
+  become_user: ansible
+  ansible.builtin.command:
+    argv: [sudo, -n, "true"]
+  changed_when: false
+
+- name: Discover administrative SSH connection context
+  ansible.builtin.script:
+    cmd: discover_management_interface.py
+    executable: /usr/bin/python3
+  register: os_baseline_verify_sshd_connection_raw
+  changed_when: false
+  no_log: true
+  when: os_baseline_verify_sshd_connection_context | length == 0
+
+- name: Record administrative SSH connection context
+  ansible.builtin.set_fact:
+    os_baseline_verify_sshd_connection: >-
+      {{ os_baseline_verify_sshd_connection_context
+         if os_baseline_verify_sshd_connection_context | length > 0
+         else os_baseline_verify_sshd_connection_raw.stdout | from_json }}
+  no_log: true
+
+- name: Validate administrative SSH connection context
+  ansible.builtin.assert:
+    that:
+      - os_baseline_verify_sshd_connection.host == os_baseline_verify_sshd_connection.peer
+      - os_baseline_verify_sshd_connection.peer is match('^[0-9a-fA-F:.]+$')
+      - os_baseline_verify_sshd_connection.local_address is match('^[0-9a-fA-F:.]+$')
+      - os_baseline_verify_sshd_connection.local_port | int == 22
+    fail_msg: Administrative SSH connection must use the standard port 22
+  no_log: true
+
+- name: Read effective SSH policy for the administrative connection
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/sshd
+      - -T
+      - -C
+      - >-
+        {{ 'user=ansible,host=' ~ os_baseline_verify_sshd_connection.host
+           ~ ',addr=' ~ os_baseline_verify_sshd_connection.peer
+           ~ ',laddr=' ~ os_baseline_verify_sshd_connection.local_address
+           ~ ',lport=' ~ (os_baseline_verify_sshd_connection.local_port | string) }}
+  register: os_baseline_verify_sshd_effective
+  changed_when: false
+
+- name: Verify effective SSH policy
+  ansible.builtin.assert:
+    that:
+      - "'allowusers ansible' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'port 22' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'usedns no' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'pubkeyauthentication yes' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'passwordauthentication no' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'kbdinteractiveauthentication no' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'permitemptypasswords no' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'permitrootlogin no' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'allowagentforwarding no' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'allowtcpforwarding no' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'x11forwarding no' in os_baseline_verify_sshd_effective.stdout_lines"
+      - "'permittunnel no' in os_baseline_verify_sshd_effective.stdout_lines"
+      - >-
+        os_baseline_verify_sshd_effective.stdout_lines
+        | select('match', '^subsystem sftp(?: |$)') | list | length > 0
+    fail_msg: Effective SSH policy does not match the repository-owned policy

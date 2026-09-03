@@ -1,0 +1,87 @@
+---
+- name: Check persistent journal storage directory
+  ansible.builtin.stat:
+    path: /var/log/journal
+  register: os_baseline_verify_journal_directory
+
+- name: Gather auditd package facts
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Read auditd configuration
+  ansible.builtin.slurp:
+    src: /etc/audit/auditd.conf
+  register: os_baseline_verify_auditd_configuration
+
+- name: Verify auditd package and configuration evidence
+  ansible.builtin.assert:
+    that:
+      - "'audit' in ansible_facts.packages or 'auditd' in ansible_facts.packages"
+      - os_baseline_verify_auditd_configuration.content | b64decode | length > 0
+    fail_msg: auditd package or configuration is absent
+
+- name: Read effective journald configuration
+  ansible.builtin.command:
+    argv: [/usr/bin/systemd-analyze, cat-config, systemd/journald.conf]
+  register: os_baseline_verify_journald_configuration
+  changed_when: false
+
+- name: Verify persistent bounded journald configuration
+  vars:
+    os_baseline_verify_journald_values: >-
+      {{ os_baseline_verify_journald_configuration.stdout | os_baseline_verify_journald_values }}
+  ansible.builtin.assert:
+    that:
+      - os_baseline_verify_journal_directory.stat.isdir | default(false)
+      - os_baseline_verify_journald_values.Storage | default('') == 'persistent'
+      - >-
+        os_baseline_verify_journald_values.SystemMaxUse | default('')
+        == os_baseline_verify_expected_journal_system_max_use
+      - >-
+        os_baseline_verify_journald_values.SystemKeepFree | default('')
+        == os_baseline_verify_expected_journal_system_keep_free
+    fail_msg: Effective journald configuration does not match the repository policy
+
+- name: Read auditd service state
+  ansible.builtin.command:
+    argv: [/usr/bin/systemctl, is-active, auditd]
+  register: os_baseline_verify_auditd_state
+  changed_when: false
+  when: os_baseline_verify_runtime_controls | bool
+
+- name: Read firewalld service enablement
+  ansible.builtin.command:
+    argv: [/usr/bin/systemctl, is-enabled, firewalld.service]
+  register: os_baseline_verify_firewalld_enablement
+  changed_when: false
+  when: os_baseline_verify_runtime_controls | bool
+
+- name: Read auditd service enablement
+  ansible.builtin.command:
+    argv: [/usr/bin/systemctl, is-enabled, auditd.service]
+  register: os_baseline_verify_auditd_enablement
+  changed_when: false
+  when: os_baseline_verify_runtime_controls | bool
+
+- name: Verify auditd service state
+  ansible.builtin.assert:
+    that:
+      - os_baseline_verify_auditd_state.stdout | trim == 'active'
+      - os_baseline_verify_firewalld_enablement.stdout | trim == 'enabled'
+      - os_baseline_verify_auditd_enablement.stdout | trim == 'enabled'
+    fail_msg: auditd or firewalld is not active and enabled for the next boot
+  when: os_baseline_verify_runtime_controls | bool
+
+- name: Read failed systemd units
+  ansible.builtin.command:
+    argv: [/usr/bin/systemctl, --failed, --no-legend, --plain]
+  register: os_baseline_verify_failed_units
+  changed_when: false
+  when: os_baseline_verify_runtime_controls | bool
+
+- name: Verify no systemd units are failed
+  ansible.builtin.assert:
+    that:
+      - os_baseline_verify_failed_units.stdout | trim == ''
+    fail_msg: systemd has failed units
+  when: os_baseline_verify_runtime_controls | bool

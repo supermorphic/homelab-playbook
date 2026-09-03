@@ -10,7 +10,7 @@
     - name: Read PID 1 process name
       ansible.builtin.command:
         argv:
-          - cat
+          - /usr/bin/cat
           - /proc/1/comm
       register: system_maintenance_molecule_verify_pid
       changed_when: false
@@ -18,7 +18,7 @@
     - name: Read systemd manager state
       ansible.builtin.command:
         argv:
-          - systemctl
+          - /usr/bin/systemctl
           - is-system-running
       register: system_maintenance_molecule_verify_systemd
       changed_when: false
@@ -26,47 +26,75 @@
         system_maintenance_molecule_verify_systemd.stdout | trim not in
         ['running', 'degraded']
 
-    - name: Assert common maintenance results
+    - name: Assert the maintenance container is ready
       ansible.builtin.assert:
         that:
           - system_maintenance_molecule_verify_pid.stdout | trim == 'systemd'
           - >-
             system_maintenance_molecule_verify_systemd.stdout | trim in
             ['running', 'degraded']
-          - "'tree' in ansible_facts.packages"
 
-    - name: Assert Debian maintenance results
+    - name: Read Debian automatic-update configuration
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/apt-config
+          - dump
+      register: system_maintenance_molecule_debian_configuration
+      changed_when: false
+      when: inventory_hostname == 'debian13'
+
+    - name: Read Debian security-update timer state
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/systemctl
+          - is-enabled
+          - apt-daily-upgrade.timer
+      register: system_maintenance_molecule_debian_timer
+      changed_when: false
+      when: inventory_hostname == 'debian13'
+
+    - name: Assert Debian native security maintenance
       ansible.builtin.assert:
         that:
           - ansible_os_family == 'Debian'
-          - "'apache2-utils' in ansible_facts.packages"
-          - "'openssh-server' in ansible_facts.packages"
+          - "'unattended-upgrades' in ansible_facts.packages"
+          - system_maintenance_molecule_debian_timer.stdout | trim == 'enabled'
+          - >-
+            'origin=Debian,codename=${distro_codename}-security,label=Debian-Security'
+            in system_maintenance_molecule_debian_configuration.stdout
+          - >-
+            'Unattended-Upgrade::Automatic-Reboot "false";'
+            in system_maintenance_molecule_debian_configuration.stdout
       when: inventory_hostname == 'debian13'
 
-    - name: Read Rocky Linux DNF configuration
+    - name: Read Rocky automatic-update configuration
       ansible.builtin.slurp:
-        src: /etc/dnf/dnf.conf
-      register: system_maintenance_molecule_rocky_dnf_configuration
+        src: /etc/dnf/automatic.conf
+      register: system_maintenance_molecule_rocky_configuration
       when: inventory_hostname == 'rockylinux9'
 
-    - name: Read Rocky Linux EPEL configuration
-      ansible.builtin.slurp:
-        src: /etc/yum.repos.d/epel.repo
-      register: system_maintenance_molecule_rocky_epel_configuration
+    - name: Read Rocky security-update timer state
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/systemctl
+          - is-enabled
+          - dnf-automatic.timer
+      register: system_maintenance_molecule_rocky_timer
+      changed_when: false
       when: inventory_hostname == 'rockylinux9'
 
-    - name: Assert Rocky Linux maintenance results
+    - name: Assert Rocky native security maintenance
       ansible.builtin.assert:
         that:
           - ansible_os_family == 'RedHat'
-          - "'epel-release' in ansible_facts.packages"
-          - "'httpd-tools' in ansible_facts.packages"
+          - "'dnf-automatic' in ansible_facts.packages"
+          - system_maintenance_molecule_rocky_timer.stdout | trim == 'enabled'
           - >-
-            system_maintenance_molecule_rocky_dnf_configuration.content |
-            b64decode is
-            regex('(?m)^installonly_limit=2$')
+            system_maintenance_molecule_rocky_configuration.content |
+            b64decode is regex('(?m)^upgrade_type = security$')
           - >-
-            system_maintenance_molecule_rocky_epel_configuration.content |
-            b64decode is
-            regex('(?ms)^\[epel\].*?^enabled=0$')
+            system_maintenance_molecule_rocky_configuration.content |
+            b64decode is regex('(?m)^reboot = never$')
+          - >-
+            'epel-release' not in ansible_facts.packages
       when: inventory_hostname == 'rockylinux9'

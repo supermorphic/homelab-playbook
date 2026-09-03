@@ -1,0 +1,24 @@
+FROM docker.io/rockylinux/rockylinux:9
+
+ENV container=podman
+
+RUN dnf install --assumeyes \
+        ca-certificates \
+        dbus-daemon \
+        openssh-server \
+        passwd \
+        python3 \
+        sudo \
+        systemd \
+    && useradd --create-home --shell /bin/bash ansible \
+    && passwd --lock ansible \
+    && chmod 0400 /etc/shadow \
+    && install --directory --mode=0750 /etc/sudoers.d \
+    && printf 'ansible ALL=(ALL:ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/90-installer-ansible \
+    && chmod 0440 /etc/sudoers.d/90-installer-ansible \
+    && rm -f /usr/bin/python3 \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/usr/lib/systemd/systemd"]

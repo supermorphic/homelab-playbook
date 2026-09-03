@@ -1,0 +1,25 @@
+FROM docker.io/library/debian:13
+
+ENV container=podman
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+        ca-certificates \
+        dbus \
+        openssh-server \
+        passwd \
+        sudo \
+        systemd \
+    && sed -i \
+        's#/usr/share/keyrings/debian-archive-keyring\.pgp#/usr/share/keyrings/debian-archive-keyring.gpg#g' \
+        /etc/apt/sources.list.d/debian.sources \
+    && useradd --create-home --shell /bin/bash ansible \
+    && passwd --lock ansible \
+    && install --directory --mode=0750 /etc/sudoers.d \
+    && printf 'ansible ALL=(ALL:ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/90-installer-ansible \
+    && chmod 0440 /etc/sudoers.d/90-installer-ansible \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/usr/lib/systemd/systemd"]

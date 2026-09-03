@@ -1,0 +1,55 @@
+---
+- name: Validate connection and privilege prerequisites
+  ansible.builtin.import_tasks: connection-preflight.yml
+
+- name: Install Python only when it is absent
+  ansible.builtin.raw: |
+    set -eu
+    if command -v python3 >/dev/null 2>&1; then
+      exit 0
+    fi
+    . /etc/os-release
+    case "${ID}" in
+      debian)
+        sudo -n apt-get update
+        sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install --yes python3
+        ;;
+      rocky)
+        if rpm -q python3 >/dev/null 2>&1; then
+          sudo -n dnf reinstall --assumeyes python3
+        else
+          sudo -n dnf install --assumeyes python3
+        fi
+        ;;
+      *) exit 64 ;;
+    esac
+    printf 'HOMELAB_PYTHON_INSTALLED\n'
+  args:
+    executable: /bin/sh
+  register: os_bootstrap_python
+  changed_when: "'HOMELAB_PYTHON_INSTALLED' in os_bootstrap_python.stdout"
+
+- name: Reset the connection after Python bootstrap
+  ansible.builtin.meta: reset_connection
+
+- name: Gather facts after Python bootstrap
+  ansible.builtin.setup:
+
+- name: Validate facts and passwordless sudo after bootstrap
+  become: false
+  block:
+    - name: Assert the complete provisioning platform
+      ansible.builtin.assert:
+        that:
+          - >-
+            (ansible_distribution == 'Debian' and
+             ansible_distribution_major_version == '13') or
+            (ansible_distribution == 'Rocky' and
+             ansible_distribution_major_version == '9')
+        fail_msg: >-
+          complete provisioning supports Debian 13 and Rocky Linux 9 only
+
+    - name: Recheck non-interactive sudo
+      ansible.builtin.command:
+        argv: [sudo, -n, "true"]
+      changed_when: false

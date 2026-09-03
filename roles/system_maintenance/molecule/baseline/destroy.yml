@@ -1,0 +1,3 @@
+---
+- name: Reuse the registered Podman destruction lifecycle
+  ansible.builtin.import_playbook: ../default/destroy.yml

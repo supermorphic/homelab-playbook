@@ -1,0 +1,12 @@
+---
+- name: Configure administrative access and SSH policy
+  ansible.builtin.import_tasks: access.yml
+
+- name: Configure host firewall policy
+  ansible.builtin.import_tasks: firewall.yml
+
+- name: Configure platform mandatory access control
+  ansible.builtin.import_tasks: mac.yml
+
+- name: Configure persistent local security logging
+  ansible.builtin.import_tasks: logging.yml
