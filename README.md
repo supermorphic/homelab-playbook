@@ -89,8 +89,8 @@ validation. Pull-request validation is offline and secret-free.
 ### Molecule tests
 
 `mise run test:molecule -- system_maintenance/default` runs the repository's
-rootless Podman scenario. ARM64 hosts run Debian and Rocky Linux locally;
-GitHub's native AMD64 matrix also runs Arch Linux.
+rootless Podman scenario for Debian 13 and Rocky Linux 9. The same platform set
+runs locally and in GitHub's native AMD64 matrix.
 
 ## GitHub main protection
 

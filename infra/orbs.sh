@@ -23,7 +23,7 @@ Options:
 Examples:
   $(basename "$0")                     Recreate all orbs from manifest
   $(basename "$0") rocky9-1            Recreate only 'rocky9-1'
-  $(basename "$0") debian12-1 arch-1   Recreate specific orbs
+  $(basename "$0") debian12 debian13   Recreate specific orbs
   $(basename "$0") --delete            Delete all orbs from manifest
   $(basename "$0") --delete rocky9-1   Delete only 'rocky9-1'
 EOF
