@@ -57,10 +57,6 @@ class MoleculeScenarioContractTests(unittest.TestCase):
                 "localhost/homelab-playbook-system-maintenance-rockylinux9:local",
                 "homelab-playbook-system-maintenance-rockylinux9",
             ),
-            "archlinux": (
-                "localhost/homelab-playbook-system-maintenance-archlinux:local",
-                "homelab-playbook-system-maintenance-archlinux",
-            ),
         }
         platforms = {
             platform["name"]: platform for platform in configuration["platforms"]
@@ -188,9 +184,6 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             "Containerfile.rockylinux9": (
                 "FROM docker.io/rockylinux/rockylinux:9"
             ),
-            "Containerfile.archlinux": (
-                "FROM docker.io/archlinux/archlinux:base"
-            ),
         }
         for name, expected_base in expected_bases.items():
             with self.subTest(containerfile=name):
@@ -201,13 +194,6 @@ class MoleculeScenarioContractTests(unittest.TestCase):
                 self.assertNotIn("tree", content.lower())
                 self.assertIn('CMD ["/usr/lib/systemd/systemd"]', content)
                 self.assertIn("STOPSIGNAL SIGRTMIN+3", content)
-
-        arch_content = (
-            SCENARIO_DIRECTORY / "Containerfile.archlinux"
-        ).read_text(encoding="utf-8")
-        self.assertIn("--disable-sandbox-syscalls", arch_content)
-        self.assertNotIn("--disable-sandbox ", arch_content)
-
 
 if __name__ == "__main__":
     unittest.main()

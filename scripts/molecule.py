@@ -50,13 +50,6 @@ PLATFORMS = (
         container="homelab-playbook-system-maintenance-rockylinux9",
         containerfile=Path("Containerfile.rockylinux9"),
     ),
-    Platform(
-        name="archlinux",
-        base_image="docker.io/archlinux/archlinux:base",
-        image="localhost/homelab-playbook-system-maintenance-archlinux:local",
-        container="homelab-playbook-system-maintenance-archlinux",
-        containerfile=Path("Containerfile.archlinux"),
-    ),
 )
 
 
@@ -283,9 +276,8 @@ def preflight(repo_root: Path, runner: CommandRunner) -> HostPlan:
         raise PreflightError("Podman must provide cgroup v2")
 
     requested_architectures = {
-        "debian13": host_architecture,
-        "rockylinux9": host_architecture,
-        "archlinux": "amd64",
+        platform_definition.name: host_architecture
+        for platform_definition in PLATFORMS
     }
     return HostPlan(
         podman_version=version_result.stdout.strip(),
@@ -476,8 +468,6 @@ def run_platform(
             [
                 "podman",
                 "pull",
-                "--policy=always",
-                "--retry=3",
                 "--platform",
                 f"linux/{requested_architecture}",
                 platform_definition.base_image,
@@ -611,12 +601,6 @@ def select_platforms(
 ) -> tuple[Platform, ...]:
     selected_name = environment.get("HOMELAB_MOLECULE_PLATFORM")
     if not selected_name:
-        if host_architecture == "arm64":
-            return tuple(
-                platform_definition
-                for platform_definition in PLATFORMS
-                if platform_definition.name != "archlinux"
-            )
         return PLATFORMS
     selected = tuple(
         platform_definition
@@ -652,7 +636,6 @@ def _terminal_summary(
     host_plan: HostPlan,
     results: Sequence[PlatformResult],
     invocation_seconds: float,
-    environment: Mapping[str, str],
 ) -> str:
     lines = [f"Podman: {host_plan.podman_version}"]
     for result in results:
@@ -673,14 +656,6 @@ def _terminal_summary(
             f"cleanup={result.cleanup_seconds:.2f}s "
             f"total={result.platform_seconds:.2f}s "
             f"result={result.status} message={result.message}"
-        )
-    if (
-        not environment.get("HOMELAB_MOLECULE_PLATFORM")
-        and host_plan.host_architecture == "arm64"
-        and not any(result.platform == "archlinux" for result in results)
-    ):
-        lines.append(
-            "archlinux: skipped on arm64; GitHub CI runs it on native amd64"
         )
     lines.append(f"Invocation total: {invocation_seconds:.2f}s")
     return "\n".join(lines)
@@ -736,7 +711,7 @@ def emit_summary(
     invocation_seconds: float,
     environment: Mapping[str, str],
 ) -> None:
-    print(_terminal_summary(host_plan, results, invocation_seconds, environment))
+    print(_terminal_summary(host_plan, results, invocation_seconds))
 
     summary_value = environment.get("GITHUB_STEP_SUMMARY")
     if not summary_value:
@@ -764,13 +739,14 @@ def run(arguments: Sequence[str] | None, runner: CommandRunner) -> int:
     parse_selector(arguments)
     repo_root = Path(__file__).resolve().parents[1]
     invocation_started = time.monotonic()
+    selected_name = os.environ.get("HOMELAB_MOLECULE_PLATFORM")
+    if selected_name and not any(
+        platform_definition.name == selected_name
+        for platform_definition in PLATFORMS
+    ):
+        print(f"error: unknown Molecule platform: {selected_name}", file=sys.stderr)
+        return 2
     try:
-        selected_name = os.environ.get("HOMELAB_MOLECULE_PLATFORM")
-        if selected_name and not any(
-            platform_definition.name == selected_name
-            for platform_definition in PLATFORMS
-        ):
-            raise PreflightError(f"unknown Molecule platform: {selected_name}")
         host_plan = preflight(repo_root, runner)
         platform_definitions = select_platforms(
             os.environ,

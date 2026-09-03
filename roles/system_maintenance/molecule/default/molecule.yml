@@ -35,20 +35,6 @@ platforms:
       io.supermorphic.homelab-playbook.repository: homelab-playbook
       io.supermorphic.homelab-playbook.scenario: system_maintenance/default
       io.supermorphic.homelab-playbook.platform: rockylinux9
-  - name: archlinux
-    groups:
-      - molecule
-    image: localhost/homelab-playbook-system-maintenance-archlinux:local
-    container_name: homelab-playbook-system-maintenance-archlinux
-    container_command: /usr/lib/systemd/systemd
-    container_privileged: false
-    container_systemd: always
-    pull: never
-    labels:
-      io.supermorphic.homelab-playbook.repository: homelab-playbook
-      io.supermorphic.homelab-playbook.scenario: system_maintenance/default
-      io.supermorphic.homelab-playbook.platform: archlinux
-
 provisioner:
   name: ansible
   log: true

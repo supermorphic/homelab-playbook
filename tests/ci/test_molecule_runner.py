@@ -174,7 +174,7 @@ class PreflightTests(unittest.TestCase):
             ),
         )
 
-    def test_preflight_uses_native_debian_and_rocky_but_emulates_arch_on_arm(
+    def test_preflight_uses_native_debian_and_rocky_on_arm(
         self,
     ) -> None:
         fake = self.successful_runner(architecture="aarch64")
@@ -187,7 +187,6 @@ class PreflightTests(unittest.TestCase):
             {
                 "debian13": "arm64",
                 "rockylinux9": "arm64",
-                "archlinux": "amd64",
             },
             plan.requested_architectures,
         )
@@ -205,7 +204,6 @@ class PreflightTests(unittest.TestCase):
                     {
                         "debian13": "amd64",
                         "rockylinux9": "amd64",
-                        "archlinux": "amd64",
                     },
                     plan.requested_architectures,
                 )
@@ -558,7 +556,7 @@ class PlatformWorkerTests(unittest.TestCase):
             clock,
         )
 
-    def test_worker_pulls_builds_and_tests_one_platform_with_exact_policy(
+    def test_worker_pulls_builds_and_tests_one_platform_with_portable_options(
         self,
     ) -> None:
         fake = FakeCommandRunner(
@@ -608,8 +606,6 @@ class PlatformWorkerTests(unittest.TestCase):
                     [
                         "podman",
                         "pull",
-                        "--policy=always",
-                        "--retry=3",
                         "--platform",
                         "linux/arm64",
                         "docker.io/library/debian:13",
@@ -795,13 +791,6 @@ class ParallelExecutionTests(unittest.TestCase):
                     "homelab-playbook-system-maintenance-rockylinux9",
                     "Containerfile.rockylinux9",
                 ),
-                (
-                    "archlinux",
-                    "docker.io/archlinux/archlinux:base",
-                    "localhost/homelab-playbook-system-maintenance-archlinux:local",
-                    "homelab-playbook-system-maintenance-archlinux",
-                    "Containerfile.archlinux",
-                ),
             ],
             [
                 (
@@ -815,41 +804,32 @@ class ParallelExecutionTests(unittest.TestCase):
             ],
         )
 
-    def test_arm64_default_selection_skips_archlinux(self) -> None:
-        function = getattr(runner_module, "select_platforms", None)
-        if function is None:
-            self.fail("runner must provide select_platforms")
-
-        selected = function({}, "arm64")
-
-        self.assertEqual(
-            ["debian13", "rockylinux9"],
-            [platform.name for platform in selected],
-        )
-
-    def test_amd64_default_selection_runs_all_platforms(self) -> None:
-        function = getattr(runner_module, "select_platforms", None)
-        if function is None:
-            self.fail("runner must provide select_platforms")
-
-        selected = function({}, "amd64")
-
-        self.assertEqual(
-            ["debian13", "rockylinux9", "archlinux"],
-            [platform.name for platform in selected],
-        )
+    def test_default_selection_runs_both_platforms_on_supported_architectures(
+        self,
+    ) -> None:
+        for architecture in ("arm64", "amd64"):
+            with self.subTest(architecture=architecture):
+                selected = runner_module.select_platforms({}, architecture)
+                self.assertEqual(
+                    ["debian13", "rockylinux9"],
+                    [platform.name for platform in selected],
+                )
 
     def test_explicit_platform_selection_overrides_host_default(self) -> None:
         function = getattr(runner_module, "select_platforms", None)
         if function is None:
             self.fail("runner must provide select_platforms")
 
-        selected = function(
-            {"HOMELAB_MOLECULE_PLATFORM": "archlinux"},
-            "arm64",
-        )
+        for platform_name in ("debian13", "rockylinux9"):
+            with self.subTest(platform_name=platform_name):
+                selected = function(
+                    {"HOMELAB_MOLECULE_PLATFORM": platform_name},
+                    "arm64",
+                )
 
-        self.assertEqual(["archlinux"], [platform.name for platform in selected])
+                self.assertEqual(
+                    [platform_name], [platform.name for platform in selected]
+                )
 
     def test_unknown_workflow_platform_fails_before_any_command(self) -> None:
         fake = FakeCommandRunner()
@@ -857,14 +837,14 @@ class ParallelExecutionTests(unittest.TestCase):
 
         with mock.patch.dict(
             "os.environ",
-            {"HOMELAB_MOLECULE_PLATFORM": "unknown"},
+            {"HOMELAB_MOLECULE_PLATFORM": "archlinux"},
             clear=True,
         ):
             with redirect_stderr(stderr):
                 result = runner_module.run(["system_maintenance/default"], fake)
 
-        self.assertEqual(1, result)
-        self.assertIn("unknown Molecule platform", stderr.getvalue())
+        self.assertEqual(2, result)
+        self.assertIn("unknown Molecule platform: archlinux", stderr.getvalue())
         self.assertEqual([], fake.operations)
 
     def test_all_workers_start_before_any_worker_can_finish(self) -> None:
@@ -879,7 +859,7 @@ class ParallelExecutionTests(unittest.TestCase):
         def worker(platform):
             with started_lock:
                 started.add(platform.name)
-                if len(started) == 3:
+                if len(started) == 2:
                     all_started.set()
             if not all_started.wait(timeout=2):
                 raise AssertionError("platform workers did not overlap")
@@ -888,7 +868,7 @@ class ParallelExecutionTests(unittest.TestCase):
         results = function(platforms, worker)
 
         self.assertEqual(
-            {"debian13", "rockylinux9", "archlinux"},
+            {"debian13", "rockylinux9"},
             {result.platform for result in results},
         )
 
@@ -908,10 +888,10 @@ class ParallelExecutionTests(unittest.TestCase):
         results = function(self.registered_platforms(), worker)
 
         self.assertEqual(
-            {"debian13", "rockylinux9", "archlinux"},
+            {"debian13", "rockylinux9"},
             completed,
         )
-        self.assertEqual(3, len(results))
+        self.assertEqual(2, len(results))
         failed_result = next(
             result for result in results if result.platform == "debian13"
         )
@@ -919,14 +899,14 @@ class ParallelExecutionTests(unittest.TestCase):
 
 
 class OutputTests(unittest.TestCase):
-    def result(self, platform: str = "archlinux"):
+    def result(self, platform: str = "debian13"):
         return runner_module.PlatformResult(
             platform=platform,
             status="pass",
             message="all Molecule phases passed",
             image_id="sha256:base-image-id",
             repository_digest=(
-                "docker.io/archlinux/archlinux@sha256:observed-digest"
+                "docker.io/library/debian@sha256:observed-digest"
             ),
             pull_seconds=1.25,
             build_seconds=2.5,
@@ -942,7 +922,6 @@ class OutputTests(unittest.TestCase):
             requested_architectures={
                 "debian13": "arm64",
                 "rockylinux9": "arm64",
-                "archlinux": "amd64",
             },
         )
 
@@ -1000,13 +979,13 @@ class OutputTests(unittest.TestCase):
         terminal_summary = output.getvalue()
         for fragment in (
             "podman version 5.6.2",
-            "archlinux",
+            "debian13",
             "host=arm64",
-            "requested=amd64",
-            "emulated",
-            "docker.io/archlinux/archlinux:base",
+            "requested=arm64",
+            "native",
+            "docker.io/library/debian:13",
             "sha256:base-image-id",
-            "docker.io/archlinux/archlinux@sha256:observed-digest",
+            "docker.io/library/debian@sha256:observed-digest",
             "pull=1.25s",
             "build=2.50s",
             "molecule=3.75s",
@@ -1018,25 +997,9 @@ class OutputTests(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, terminal_summary)
         self.assertIn("### Molecule platform summary", github_summary)
-        self.assertIn("| archlinux | arm64 | amd64 | emulated |", github_summary)
+        self.assertIn("| debian13 | arm64 | arm64 | native |", github_summary)
         self.assertIn("Build: 2.50 seconds", github_summary)
         self.assertIn("Invocation total: 12.50 seconds", github_summary)
-
-    def test_arm64_default_summary_reports_archlinux_skip(self) -> None:
-        output = io.StringIO()
-
-        with redirect_stdout(output):
-            runner_module.emit_summary(
-                self.host_plan(),
-                [self.result("debian13"), self.result("rockylinux9")],
-                12.5,
-                {},
-            )
-
-        self.assertIn(
-            "archlinux: skipped on arm64; GitHub CI runs it on native amd64",
-            output.getvalue(),
-        )
 
     def test_summary_never_follows_a_github_summary_symlink(self) -> None:
         function = getattr(runner_module, "emit_summary", None)

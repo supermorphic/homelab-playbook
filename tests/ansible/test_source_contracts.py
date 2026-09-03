@@ -106,7 +106,7 @@ class SourceContractTests(unittest.TestCase):
             )
 
     def test_system_maintenance_dispatches_supported_operating_systems(self) -> None:
-        """Arch, Debian, and RedHat hosts must resolve to maintained task files."""
+        """Debian and RedHat hosts must resolve to maintained task files."""
         tasks = load_tasks("roles/system_maintenance/tasks/main.yml")
         first_task = tasks[0]
         second_task = tasks[1]
@@ -116,7 +116,7 @@ class SourceContractTests(unittest.TestCase):
             first_task["ansible.builtin.assert"],
             {
                 "that": [
-                    "ansible_os_family in ['Archlinux', 'Debian', 'RedHat']"
+                    "ansible_os_family in ['Debian', 'RedHat']"
                 ],
                 "fail_msg": (
                     "system-maintenance does not support operating-system family "
@@ -129,7 +129,7 @@ class SourceContractTests(unittest.TestCase):
             "setup-{{ ansible_os_family }}.yml",
         )
         self.assertNotIn("when", second_task)
-        for os_family in ("Archlinux", "Debian", "RedHat"):
+        for os_family in ("Debian", "RedHat"):
             self.assertTrue(
                 (
                     REPOSITORY_ROOT
@@ -137,6 +137,30 @@ class SourceContractTests(unittest.TestCase):
                     / f"setup-{os_family}.yml"
                 ).is_file(),
                 f"missing system-maintenance tasks for {os_family}",
+            )
+
+    def test_prepare_cifs_storage_dispatches_only_implemented_families(self) -> None:
+        """Every accepted CIFS operating-system family must have setup tasks."""
+        tasks = load_tasks("roles/prepare_cifs_storage/tasks/main.yml")
+        dispatch_task = tasks[0]
+        supported_families = ("Debian",)
+
+        self.assertEqual(
+            "setup-{{ ansible_os_family }}.yml",
+            dispatch_task["ansible.builtin.include_tasks"],
+        )
+        self.assertEqual(
+            "ansible_os_family in ['Debian']",
+            dispatch_task["when"],
+        )
+        for os_family in supported_families:
+            self.assertTrue(
+                (
+                    REPOSITORY_ROOT
+                    / "roles/prepare_cifs_storage/tasks"
+                    / f"setup-{os_family}.yml"
+                ).is_file(),
+                f"missing prepare-cifs-storage tasks for {os_family}",
             )
 
     def test_redhat_maintenance_sets_kernel_retention_before_upgrade(self) -> None:
@@ -174,63 +198,6 @@ class SourceContractTests(unittest.TestCase):
                 for task in tasks
             )
         )
-
-    def test_arch_maintenance_generates_the_configured_english_locale(self) -> None:
-        """Arch locale setup must use its native locale.gen source."""
-        tasks = load_tasks("roles/system_maintenance/tasks/setup-Archlinux.yml")
-
-        self.assertFalse(
-            any("community.general.locale_gen" in task for task in tasks)
-        )
-
-        inspect_task = next(
-            task for task in tasks if task["name"] == "Inspect generated locales"
-        )
-        self.assertEqual(
-            inspect_task["ansible.builtin.command"],
-            {"argv": ["locale", "-a"]},
-        )
-        self.assertEqual(
-            inspect_task["register"],
-            "system_maintenance_arch_available_locales",
-        )
-        self.assertIs(inspect_task["changed_when"], False)
-
-        definition_task = next(
-            task
-            for task in tasks
-            if task["name"] == "Enable the English locale definition"
-        )
-        self.assertEqual(
-            definition_task["ansible.builtin.lineinfile"],
-            {
-                "path": "/etc/locale.gen",
-                "regexp": r"^#?\s*en_US\.UTF-8\s+UTF-8$",
-                "line": "en_US.UTF-8 UTF-8",
-                "mode": "0644",
-            },
-        )
-        self.assertEqual(
-            definition_task["register"],
-            "system_maintenance_arch_locale_definition",
-        )
-
-        generate_task = next(
-            task for task in tasks if task["name"] == "Generate the English locale"
-        )
-        self.assertEqual(
-            generate_task["ansible.builtin.command"],
-            {"argv": ["locale-gen"]},
-        )
-        self.assertEqual(
-            generate_task["when"],
-            (
-                "system_maintenance_arch_locale_definition.changed or "
-                "'en_US.utf8' not in "
-                "system_maintenance_arch_available_locales.stdout_lines"
-            ),
-        )
-        self.assertIs(generate_task["changed_when"], True)
 
     def test_system_maintenance_reboots_are_enabled_by_default_and_controllable(
         self,
@@ -271,7 +238,6 @@ class SourceContractTests(unittest.TestCase):
         imported_task_files = [
             "setup-Debian.yml",
             "setup-RedHat.yml",
-            "setup-Archlinux.yml",
         ]
         playbook = [
             {
@@ -327,7 +293,6 @@ class SourceContractTests(unittest.TestCase):
         live_upgrade_tasks = [
             "Update package cache and upgrade all packages",
             "Fully update installed packages",
-            "Upgrade all packages (full system upgrade)",
         ]
         for task_name in live_upgrade_tasks:
             with self.subTest(task_name=task_name):
@@ -337,7 +302,6 @@ class SourceContractTests(unittest.TestCase):
         stable_tasks = [
             "Autoremove unused packages",
             "Retain the two most recent kernels",
-            "Enable the English locale definition",
         ]
         for task_name in stable_tasks:
             with self.subTest(task_name=task_name):
