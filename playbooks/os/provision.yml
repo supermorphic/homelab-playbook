@@ -14,8 +14,6 @@
   any_errors_fatal: true
   gather_facts: true
   become: true
-  vars:
-    os_reboot_enabled: false
   pre_tasks:
     - name: Validate complete provisioning platform support
       ansible.builtin.assert:
@@ -67,12 +65,11 @@
           {{ (system_maintenance_reboot_required | default(false) | bool)
              or (security_baseline_reboot_required | default(false) | bool) }}
 
-    - name: Reboot after complete provisioning when authorized
+    - name: Reboot after complete provisioning when required
       ansible.builtin.reboot:
+        boot_time_command: "{{ os_reboot_boot_time_command | default(omit) }}"
       register: os_provision_reboot
-      when:
-        - os_reboot_required | bool
-        - os_reboot_enabled | bool
+      when: os_reboot_required | bool
 
     - name: Record whether Ansible controlled the provisioning reboot
       ansible.builtin.set_fact:

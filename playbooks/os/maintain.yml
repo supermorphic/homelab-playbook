@@ -5,8 +5,6 @@
   any_errors_fatal: true
   gather_facts: false
   become: false
-  vars:
-    os_reboot_enabled: false
   pre_tasks:
     - name: Reject password-based maintenance credentials
       ansible.builtin.assert:
@@ -75,22 +73,12 @@
           {{ (system_maintenance_reboot_required | default(false) | bool)
              or (security_baseline_reboot_required | default(false) | bool) }}
 
-    - name: Report a reboot that requires operator authorization
-      ansible.builtin.debug:
-        msg: >-
-          A reboot is required. Re-run with -e os_reboot_enabled=true to
-          authorize the reboot.
-      when:
-        - os_reboot_required | bool
-        - not (os_reboot_enabled | bool)
-
-    - name: Reboot after maintenance when authorized
+    - name: Reboot after maintenance when required
       ansible.builtin.reboot:
+        boot_time_command: "{{ os_reboot_boot_time_command | default(omit) }}"
       register: os_maintenance_reboot
       become: true
-      when:
-        - os_reboot_required | bool
-        - os_reboot_enabled | bool
+      when: os_reboot_required | bool
 
     - name: Record whether Ansible controlled the maintenance reboot
       ansible.builtin.set_fact:

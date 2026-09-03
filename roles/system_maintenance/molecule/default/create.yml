@@ -74,6 +74,8 @@
         privileged: "{{ system_maintenance_molecule_platform.container_privileged }}"
         systemd: "{{ system_maintenance_molecule_platform.container_systemd }}"
         pull: "{{ system_maintenance_molecule_platform.pull }}"
+        restart_policy: >-
+          {{ system_maintenance_molecule_platform.restart_policy | default('no') }}
         label: "{{ system_maintenance_molecule_platform.labels }}"
 
     - name: Wait for systemd to become PID 1

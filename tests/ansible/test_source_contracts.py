@@ -427,7 +427,6 @@ def assert_scheduler_neutral_maintenance(play: dict[str, object]) -> None:
         "ansible.builtin.import_role",
         "ansible.builtin.import_role",
         "ansible.builtin.set_fact",
-        "ansible.builtin.debug",
         "ansible.builtin.reboot",
         "ansible.builtin.set_fact",
         "ansible.builtin.meta",
@@ -471,9 +470,6 @@ class SourceContractTests(unittest.TestCase):
         maintenance_initial_facts = maintenance_pre[2]
         self.assertIsNone(maintenance_initial_facts["ansible.builtin.setup"])
         self.assertIs(maintenance_initial_facts["become"], True)
-        self.assertIs(provisioning["vars"]["os_reboot_enabled"], False)
-        self.assertIs(maintenance["vars"]["os_reboot_enabled"], False)
-
         provisioning_pre = provisioning["pre_tasks"]
         provisioning_post = provisioning["post_tasks"]
         pre_update = unique_task_index(
@@ -503,9 +499,21 @@ class SourceContractTests(unittest.TestCase):
         )
         combine = unique_fact_task_index(provisioning_pre, "os_reboot_required")
         assert_combined_reboot_fact(provisioning_pre[combine])
-        reboot = unique_task_index(provisioning_pre, "ansible.builtin.reboot", None)
+        reboot = unique_task_index(
+            provisioning_pre,
+            "ansible.builtin.reboot",
+            {
+                "boot_time_command": (
+                    "{{ os_reboot_boot_time_command | default(omit) }}"
+                )
+            },
+        )
         self.assertEqual(
-            ["os_reboot_required | bool", "os_reboot_enabled | bool"],
+            "{{ os_reboot_boot_time_command | default(omit) }}",
+            provisioning_pre[reboot]["ansible.builtin.reboot"]["boot_time_command"],
+        )
+        self.assertEqual(
+            "os_reboot_required | bool",
             provisioning_pre[reboot]["when"],
         )
         record = unique_fact_task_index(provisioning_pre, "os_reboot_performed")
@@ -603,20 +611,23 @@ class SourceContractTests(unittest.TestCase):
             maintenance_pre, "os_reboot_required"
         )
         assert_combined_reboot_fact(maintenance_pre[maintenance_combine])
-        report = unique_module_index(maintenance_pre, "ansible.builtin.debug")
-        self.assertEqual(
-            "A reboot is required. Re-run with -e os_reboot_enabled=true to authorize the reboot.",
-            normalize_expression(maintenance_pre[report]["ansible.builtin.debug"]["msg"]),
-        )
-        self.assertEqual(
-            ["os_reboot_required | bool", "not (os_reboot_enabled | bool)"],
-            maintenance_pre[report]["when"],
-        )
         maintenance_reboot = unique_task_index(
-            maintenance_pre, "ansible.builtin.reboot", None
+            maintenance_pre,
+            "ansible.builtin.reboot",
+            {
+                "boot_time_command": (
+                    "{{ os_reboot_boot_time_command | default(omit) }}"
+                )
+            },
         )
         self.assertEqual(
-            ["os_reboot_required | bool", "os_reboot_enabled | bool"],
+            "{{ os_reboot_boot_time_command | default(omit) }}",
+            maintenance_pre[maintenance_reboot]["ansible.builtin.reboot"][
+                "boot_time_command"
+            ],
+        )
+        self.assertEqual(
+            "os_reboot_required | bool",
             maintenance_pre[maintenance_reboot]["when"],
         )
         maintenance_record = unique_fact_task_index(
@@ -646,7 +657,6 @@ class SourceContractTests(unittest.TestCase):
             maintenance_update,
             maintenance_reboot_state,
             maintenance_combine,
-            report,
             maintenance_reboot,
             maintenance_record,
             maintenance_reset,
@@ -688,7 +698,15 @@ class SourceContractTests(unittest.TestCase):
 
         for play in (provision[1], maintenance_document[0]):
             pre_tasks = play["pre_tasks"]
-            reboot = unique_task_index(pre_tasks, "ansible.builtin.reboot", None)
+            reboot = unique_task_index(
+                pre_tasks,
+                "ansible.builtin.reboot",
+                {
+                    "boot_time_command": (
+                        "{{ os_reboot_boot_time_command | default(omit) }}"
+                    )
+                },
+            )
             record = unique_fact_task_index(pre_tasks, "os_reboot_performed")
             missing_register = deepcopy(pre_tasks[reboot])
             del missing_register["register"]

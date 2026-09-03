@@ -93,20 +93,10 @@ mise run playbook -- os provision <inventory> --limit <host>
 Provisioning is a mutating, complete-baseline operation for Debian 13 or Rocky
 Linux 9. It runs one host at a time, performs the full update and baseline
 reconciliation, configures native security updates, and verifies effective
-state. Its `os_reboot_enabled` default is `false`, so an operating-system or
-MAC transition that needs a reboot is reported without an Ansible-controlled
-reboot.
-
-When the maintenance window and operator authorization allow the playbook to
-reboot, pass the explicit input:
-
-```bash
-mise run playbook -- os provision <inventory> --limit <host> -e os_reboot_enabled=true
-```
-
-An authorized Ansible-controlled reboot is followed by connection reset,
-fact gathering, and verification before the batch advances. A provisioning
-reboot input does not change the independent native security-updater policy.
+state. When an operating-system or MAC transition requires a reboot, the
+playbook reboots without a suppression input. It then resets the connection,
+gathers facts, and verifies the host before the batch advances. This behavior
+does not change the independent native security-updater policy.
 
 ### Maintain
 
@@ -126,17 +116,8 @@ For mutating OS actions, the repository gateway rejects Ansible password
 prompts and password files. It also rejects `--start-at-task`, tag selection,
 and `--step`, because those controls could skip a required safety check.
 
-The default `os_reboot_enabled` value is `false`. If the full update reports a
-reboot requirement, the playbook explains the required input and leaves the
-host running. Re-run only after confirming the window and authorization:
-
-```bash
-mise run playbook -- os maintain <inventory> --limit <host> -e os_reboot_enabled=true
-```
-
-This input authorizes an Ansible-controlled reboot after the explicit full
-update. It does not authorize a native security updater or make a failed host
-healthy. The playbook reconnects and verifies before it advances to the next
+If the full update reports a reboot requirement, the playbook reboots without
+a suppression input. It reconnects and verifies before it advances to the next
 host. Never use a live production or staging command as CI evidence.
 
 ## Update and reboot boundaries
@@ -152,8 +133,8 @@ native reboot is enabled, it reboots at `04:30` when
 `/var/run/reboot-required` exists, including when a user remains logged in.
 Rocky's `dnf-automatic` applies security updates and uses the native
 `when-needed` reboot behavior. These native security-update reboots are
-independent of `os_reboot_enabled` and do not use a repository reboot
-coordinator.
+independent of the explicit playbook reboot path and do not use a repository
+reboot coordinator.
 
 Routine full updates have no host-local recurring systemd timer or cron job.
 The maintenance playbook is scheduler-neutral and remains directly runnable

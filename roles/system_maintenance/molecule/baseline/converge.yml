@@ -46,8 +46,8 @@
 - name: Converge the production complete provisioning lifecycle
   ansible.builtin.import_playbook: ../../../../playbooks/os/provision.yml
   vars:
-    os_reboot_enabled: false
     os_baseline_verify_runtime_controls: false
+    os_reboot_boot_time_command: /usr/bin/stat -c %y /proc/1
     security_baseline_apply_audit_runtime: false
     security_baseline_apply_firewall_runtime: false
     security_baseline_apply_kernel_controls: false

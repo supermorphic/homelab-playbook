@@ -187,6 +187,16 @@ class MoleculeScenarioContractTests(unittest.TestCase):
         self.assertTrue(
             all("docker" not in module.lower() for module in destroy_modules)
         )
+        create_tasks = load_yaml("create.yml")[0]["tasks"]
+        start = next(
+            task["containers.podman.podman_container"]
+            for task in create_tasks
+            if "containers.podman.podman_container" in task
+        )
+        self.assertEqual(
+            "{{ system_maintenance_molecule_platform.restart_policy | default('no') }}",
+            start.get("restart_policy"),
+        )
 
     def test_controller_playbooks_select_the_worker_platform_from_environment(
         self,
@@ -230,7 +240,9 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             instance["address"],
         )
 
-    def test_converge_suppresses_only_reboot_and_verify_is_independent(self) -> None:
+    def test_default_converge_disables_native_reboot_and_keeps_verify_independent(
+        self,
+    ) -> None:
         converge = load_yaml("converge.yml")[0]
         verify = load_yaml("verify.yml")[0]
 
@@ -332,6 +344,7 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             self.assertEqual("ansible", platform["user"])
             self.assertIs(platform["container_privileged"], False)
             self.assertEqual("always", platform["container_systemd"])
+            self.assertEqual("always", platform.get("restart_policy"))
             self.assertEqual("never", platform["pull"])
             self.assertTrue(
                 {"cap_add", "capabilities", "devices", "volumes"}.isdisjoint(
@@ -438,6 +451,10 @@ class MoleculeScenarioContractTests(unittest.TestCase):
         )
         variables = imported_playbook["vars"]
         self.assertEqual(["10.0.0.0/8"], variables["security_baseline_management_sources"])
+        self.assertEqual(
+            "/usr/bin/stat -c %y /proc/1",
+            variables["os_reboot_boot_time_command"],
+        )
         for name in (
             "security_baseline_apply_firewall_runtime",
             "security_baseline_apply_kernel_controls",
@@ -445,7 +462,6 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             "security_baseline_apply_audit_runtime",
             "os_baseline_verify_runtime_controls",
             "system_maintenance_native_reboot_enabled",
-            "os_reboot_enabled",
         ):
             with self.subTest(variable=name):
                 self.assertIs(variables[name], False)

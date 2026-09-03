@@ -121,8 +121,7 @@ Complete provisioning uses one host-sized batch and the following order:
    control, journald, and audit policy.
 9. Configure the native security-only updater and its maintenance window.
 10. Validate every access-affecting candidate before activation.
-11. Reboot at playbook level when the provisioning transaction requires it and
-    the invocation authorizes reboot execution.
+11. Reboot at playbook level when the provisioning transaction requires it.
 12. Reconnect and run the reusable read-only verification task set.
 
 The initial raw stage has no root-login alternative. If the account, key,
@@ -270,8 +269,8 @@ The maintenance playbook:
   lock does not clear;
 - processes one host at a time;
 - uses the distribution's supported full-upgrade operation;
-- reboots only when the operating system reports that a reboot is required and
-  reboot execution is enabled for that invocation; and
+- reboots when the operating system reports that a reboot is required, without
+  a suppression input; and
 - reconnects and runs effective-state verification before advancing.
 
 Issue #4 will create the recurring Semaphore schedule and task template. It
@@ -321,11 +320,10 @@ speculative application profiles.
 
 A transition from SELinux disabled state can require boot configuration,
 filesystem relabeling, and reboot. Provisioning detects that state and performs
-only a controlled, explicit transition whose reboot remains subject to the
-playbook reboot control. It never changes directly from disabled to an
-unverified enforcing runtime state. Later application roles own any labels or
-profiles required by their resources and must not disable platform enforcement
-to resolve a denial.
+the required reboot as part of the controlled transition. It never changes
+directly from disabled to an unverified enforcing runtime state. Later
+application roles own any labels or profiles required by their resources and
+must not disable platform enforcement to resolve a denial.
 
 Container tests assert packages, configuration, and task decisions but do not
 claim that an unprivileged container proves host-kernel enforcement.

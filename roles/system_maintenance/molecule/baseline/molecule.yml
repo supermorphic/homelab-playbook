@@ -17,6 +17,7 @@ platforms:
     container_command: /usr/lib/systemd/systemd
     container_privileged: false
     container_systemd: always
+    restart_policy: always
     pull: never
     user: ansible
     labels:
@@ -31,6 +32,7 @@ platforms:
     container_command: /usr/lib/systemd/systemd
     container_privileged: false
     container_systemd: always
+    restart_policy: always
     pull: never
     user: ansible
     labels:

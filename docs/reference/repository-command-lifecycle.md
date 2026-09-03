@@ -157,21 +157,13 @@ attestation. `os provision` is a mutating complete-baseline operation and
 accepts only Debian 13 and Rocky Linux 9. `os maintain` is a mutating full
 package update for the same two platforms.
 
-Both mutating playbooks default `os_reboot_enabled` to `false`. When the
-explicit full update or provisioning transition reports that a reboot is
-required, the operator must authorize it in the exact invocation:
-
-```text
-mise run playbook -- os provision <inventory> --limit <host> -e os_reboot_enabled=true
-mise run playbook -- os maintain <inventory> --limit <host> -e os_reboot_enabled=true
-```
-
-This input controls an Ansible-controlled reboot only. Debian
-`unattended-upgrades` and Rocky `dnf-automatic` retain their independent
-native security-update reboot behavior. No host-local recurring full-update
-timer or cron job exists; Issue #4 will schedule `os maintain` through
-Semaphore. The policy for a full update and self-reboot of the NUC that hosts
-Semaphore is also deferred to Issue #4.
+When an explicit full update or provisioning transition reports that a reboot
+is required, the playbook reboots the host. There is no input that suppresses
+the required reboot. Debian `unattended-upgrades` and Rocky `dnf-automatic`
+retain their independent native security-update reboot behavior. No host-local
+recurring full-update timer or cron job exists; Issue #4 will schedule `os
+maintain` through Semaphore. The policy for a full update and self-reboot of
+the NUC that hosts Semaphore is also deferred to Issue #4.
 
 Each mutating playbook uses a one-host serial batch and reconnects and verifies
 before advancing after an Ansible-controlled reboot. The complete baseline
