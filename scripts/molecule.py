@@ -821,13 +821,14 @@ def run(arguments: Sequence[str] | None, runner: CommandRunner) -> int:
     scenario = SCENARIOS[selector]
     repo_root = Path(__file__).resolve().parents[1]
     invocation_started = time.monotonic()
+    selected_name = os.environ.get("HOMELAB_MOLECULE_PLATFORM")
+    if selected_name and not any(
+        platform_definition.name == selected_name
+        for platform_definition in scenario.platforms
+    ):
+        print(f"error: unknown Molecule platform: {selected_name}", file=sys.stderr)
+        return 2
     try:
-        selected_name = os.environ.get("HOMELAB_MOLECULE_PLATFORM")
-        if selected_name and not any(
-            platform_definition.name == selected_name
-            for platform_definition in scenario.platforms
-        ):
-            raise PreflightError(f"unknown Molecule platform: {selected_name}")
         host_plan = preflight(repo_root, runner)
         platform_definitions = select_platforms(
             os.environ,
