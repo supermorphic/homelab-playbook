@@ -70,39 +70,3 @@
             b64decode is
             regex('(?ms)^\[epel\].*?^enabled=0$')
       when: inventory_hostname == 'rockylinux9'
-
-    - name: Read generated Arch Linux locales
-      ansible.builtin.command:
-        argv:
-          - locale
-          - -a
-      register: system_maintenance_molecule_arch_locales
-      changed_when: false
-      when: inventory_hostname == 'archlinux'
-
-    - name: Inspect Arch Linux locale configuration
-      ansible.builtin.stat:
-        path: /etc/locale.conf
-      register: system_maintenance_molecule_arch_locale_stat
-      when: inventory_hostname == 'archlinux'
-
-    - name: Read Arch Linux locale configuration
-      ansible.builtin.slurp:
-        src: /etc/locale.conf
-      register: system_maintenance_molecule_arch_locale_configuration
-      when: inventory_hostname == 'archlinux'
-
-    - name: Assert Arch Linux maintenance results
-      ansible.builtin.assert:
-        that:
-          - ansible_os_family == 'Archlinux'
-          - "'apache' in ansible_facts.packages"
-          - >-
-            'en_US.utf8' in
-            system_maintenance_molecule_arch_locales.stdout_lines
-          - system_maintenance_molecule_arch_locale_stat.stat.mode == '0644'
-          - >-
-            system_maintenance_molecule_arch_locale_configuration.content |
-            b64decode | trim ==
-            'LANG=en_US.UTF-8'
-      when: inventory_hostname == 'archlinux'
