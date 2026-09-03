@@ -139,6 +139,30 @@ class SourceContractTests(unittest.TestCase):
                 f"missing system-maintenance tasks for {os_family}",
             )
 
+    def test_prepare_cifs_storage_dispatches_only_implemented_families(self) -> None:
+        """Every accepted CIFS operating-system family must have setup tasks."""
+        tasks = load_tasks("roles/prepare_cifs_storage/tasks/main.yml")
+        dispatch_task = tasks[0]
+        supported_families = ("Debian",)
+
+        self.assertEqual(
+            "setup-{{ ansible_os_family }}.yml",
+            dispatch_task["ansible.builtin.include_tasks"],
+        )
+        self.assertEqual(
+            "ansible_os_family in ['Debian']",
+            dispatch_task["when"],
+        )
+        for os_family in supported_families:
+            self.assertTrue(
+                (
+                    REPOSITORY_ROOT
+                    / "roles/prepare_cifs_storage/tasks"
+                    / f"setup-{os_family}.yml"
+                ).is_file(),
+                f"missing prepare-cifs-storage tasks for {os_family}",
+            )
+
     def test_redhat_maintenance_sets_kernel_retention_before_upgrade(self) -> None:
         """RedHat updates must retain two kernels through supported DNF policy."""
         tasks = load_tasks("roles/system_maintenance/tasks/setup-RedHat.yml")

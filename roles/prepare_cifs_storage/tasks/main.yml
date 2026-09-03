@@ -1,4 +1,4 @@
 ---
 - name: Include setup tasks for specific OS families
   ansible.builtin.include_tasks: setup-{{ ansible_os_family }}.yml
-  when: ansible_os_family in ['Debian', 'RedHat']
+  when: ansible_os_family in ['Debian']
