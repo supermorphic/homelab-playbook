@@ -65,6 +65,29 @@ Rotate controller keys with an add-verify-remove sequence:
 The authorized-key list is authoritative and non-empty. A failed scoped key
 or privilege check does not trigger a fallback credential.
 
+## Operating lifecycle
+
+Use the OS operations according to the host's lifecycle:
+
+| When | Operation | Result |
+| --- | --- | --- |
+| Before a change, when an OS snapshot is useful | `os inspect` | Reports allowlisted OS facts without privilege escalation or mutation. |
+| After a fresh OS installation satisfies the access prerequisites | `os provision` | Performs a full update, reconciles and verifies the complete baseline, configures native security updates, and reboots when required. |
+| Every day after provisioning | Native Debian or Rocky security updater | Applies security-only updates in its configured window and performs a required native security-update reboot. |
+| Periodically after provisioning | `os maintain` | Performs a later full package update, reboots when required, and verifies the complete baseline without reapplying baseline configuration. |
+| After incomplete provisioning or when baseline policy, authoritative inputs, or suspected drift must be reconciled | `os provision` | Repeats the complete provisioning reconciliation and verification path. |
+
+A successful `os provision` run already includes the initial full package
+update and complete verification. Do not immediately follow it with `os
+maintain`. If provisioning stops before completion, correct the reported cause
+and rerun `os provision`; do not use `os maintain` to finish a partially
+configured baseline.
+
+Provisioning is rerunnable, but it is not the routine full-update scheduler.
+Rerun it deliberately when baseline state must be reconciled. Use `os maintain`
+for subsequent periodic full package updates, and allow the native updater to
+handle daily security updates between those runs.
+
 ## Operator actions
 
 Use the canonical repository gateway. Replace `<inventory>` with `production`,
@@ -182,7 +205,7 @@ mise run test:molecule -- system_maintenance/baseline
 ```
 
 `system_maintenance/baseline` covers complete Debian 13 and Rocky Linux 9
-composition. The Molecule matrix has five platform/scenario executions: three
-for the inherited default scenario and two for the complete baseline scenario.
-The top-level workflow jobs are `classify`, `fast`, `ansible`, `molecule`, and
-`merge-gate`; all CI validation remains offline and secret-free.
+composition. Both scenarios cover Debian 13 and Rocky Linux 9, and CI registers
+the four exact selector-and-platform combinations. The top-level workflow jobs
+are `classify`, `fast`, `ansible`, `molecule`, and `merge-gate`; all CI
+validation remains offline and secret-free.

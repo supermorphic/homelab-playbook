@@ -43,7 +43,8 @@ Execute against production or staging only with explicit operator direction.
 
 The [OS baseline guide](playbooks/os/README.md) documents the supported
 platforms, required operator inputs, reboot behavior, native update policy,
-and evidence limits. The three operator actions are:
+evidence limits, and complete operating lifecycle. The three operator actions
+are:
 
 ```bash
 mise run playbook -- os inspect <inventory> --limit <host>
@@ -51,16 +52,26 @@ mise run playbook -- os provision <inventory> --limit <host>
 mise run playbook -- os maintain <inventory> --limit <host>
 ```
 
-`inspect` is read-only. `provision` supports complete Debian 13 and Rocky
-Linux 9 provisioning. `maintain` performs an explicit full update on the same
-two platforms. Provisioning and maintenance reboot when the operating system
-reports that a reboot is required. They do not provide a suppression input.
+Use them over the life of a host as follows:
 
-Routine full updates have no host-local timer or cron job. Issue #4 will use
-Semaphore as the scheduler for the maintenance playbook. Native Debian and
-Rocky security updaters remain independent and may perform their own required
-reboots. The NUC/Semaphore full-update and self-reboot policy is deferred to
-Issue #4.
+1. Optionally run `inspect` to collect a read-only OS snapshot.
+2. After a fresh OS installation satisfies the access prerequisites, run
+   `provision`. It performs the initial full update, applies and verifies the
+   complete baseline, and configures native automatic security updates.
+3. Do not run `maintain` immediately after successful provisioning; the full
+   update and verification have already completed.
+4. Let the native Debian or Rocky updater apply daily security updates and
+   perform its required security-update reboots.
+5. Run `maintain` periodically for later full package updates. Issue #4 will
+   schedule this operation through Semaphore; no host-local full-update timer
+   or cron job exists.
+6. Rerun `provision` after an incomplete provisioning attempt or when baseline
+   policy, authoritative inputs, or suspected baseline drift must be
+   reconciled. `maintain` does not apply baseline configuration.
+
+Provisioning and maintenance reboot when the operating system reports that a
+reboot is required. They do not provide a suppression input. The
+NUC/Semaphore full-update and self-reboot policy remains deferred to Issue #4.
 
 ## Inventories
 
@@ -116,11 +127,10 @@ rootless Podman scenario for Debian 13 and Rocky Linux 9. The same platform set
 runs locally and in GitHub's native AMD64 matrix.
 
 `mise run test:molecule -- system_maintenance/baseline` runs complete Debian
-and Rocky composition. Local ARM64 skips Arch because that platform is only in
-the default maintenance scenario; CI runs the two baseline platforms and the
-three default platforms as five native AMD64 matrix jobs. Container results do
-not prove physical reboot, host-kernel enforcement, real network reachability,
-or Semaphore scheduling and notification delivery.
+and Rocky composition. CI runs both platforms for both scenarios as four exact
+selector-and-platform matrix jobs. Container results do not prove physical
+reboot, host-kernel enforcement, real network reachability, or Semaphore
+scheduling and notification delivery.
 
 ## GitHub main protection
 

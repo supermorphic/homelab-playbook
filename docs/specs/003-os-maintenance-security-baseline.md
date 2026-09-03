@@ -129,6 +129,15 @@ The initial raw stage has no root-login alternative. If the account, key,
 installer or console action required. It does not attempt to create its own
 authority.
 
+Complete provisioning is the initial operating-system lifecycle transition and
+a rerunnable baseline reconciliation. A successful run already performs the
+initial full package update, any required reboot, and complete verification; it
+is not followed immediately by the maintenance playbook. If provisioning stops
+before completion, the operator corrects the reported cause and reruns complete
+provisioning rather than using maintenance to finish a partially configured
+baseline. The operator also reruns provisioning deliberately when baseline
+policy, authoritative inputs, or suspected drift must be reconciled.
+
 ## Administrative access
 
 ### Account and keys
@@ -272,6 +281,11 @@ The maintenance playbook:
 - reboots when the operating system reports that a reboot is required, without
   a suppression input; and
 - reconnects and runs effective-state verification before advancing.
+
+Maintenance is the periodic full-update path after successful provisioning. It
+does not reconcile baseline configuration and is not a completion stage for a
+failed provisioning run. Native security-only updates continue independently
+between scheduled maintenance runs.
 
 Issue #4 will create the recurring Semaphore schedule and task template. It
 will also decide how the Semaphore host itself receives a full update without
