@@ -429,6 +429,7 @@ class MoleculeScenarioContractTests(unittest.TestCase):
         self.assertIn("python3", rocky)
         self.assertIn("rm -f /usr/bin/python3", rocky)
         self.assertNotIn("/usr/libexec/platform-python", rocky.split("rm -f", 1)[1])
+        self.assertIn("chmod 0400 /etc/shadow", rocky)
 
     def test_baseline_generates_disposable_keys_and_imports_production_provisioning(
         self,

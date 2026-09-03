@@ -12,6 +12,7 @@ RUN dnf install --assumeyes \
         systemd \
     && useradd --create-home --shell /bin/bash ansible \
     && passwd --lock ansible \
+    && chmod 0400 /etc/shadow \
     && install --directory --mode=0750 /etc/sudoers.d \
     && printf 'ansible ALL=(ALL:ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/90-installer-ansible \
     && chmod 0440 /etc/sudoers.d/90-installer-ansible \
