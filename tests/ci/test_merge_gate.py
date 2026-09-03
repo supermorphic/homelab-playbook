@@ -491,7 +491,7 @@ class WorkflowContractTests(unittest.TestCase):
 
         self.assertTrue(workflow_observability_errors(mutated_workflow))
 
-    def test_molecule_runs_an_exact_bounded_three_platform_matrix(self) -> None:
+    def test_molecule_runs_an_exact_bounded_two_platform_matrix(self) -> None:
         self.assertIn("needs: classify", self.molecule)
         self.assertEqual(
             ["needs.classify.outputs.run_molecule == 'true'"],
@@ -503,12 +503,11 @@ class WorkflowContractTests(unittest.TestCase):
             [
                 "    strategy:",
                 "      fail-fast: false",
-                "      max-parallel: 3",
+                "      max-parallel: 2",
                 "      matrix:",
                 "        platform:",
                 "          - debian13",
                 "          - rockylinux9",
-                "          - archlinux",
             ]
         )
         self.assertIn(expected_strategy, self.molecule)
