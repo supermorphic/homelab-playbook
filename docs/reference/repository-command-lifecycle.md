@@ -106,11 +106,6 @@ container ownership, bounded cleanup, and no ordinary confirmation. The
 containers are local, unprivileged, disposable test state; a confirmation token
 would add friction without a proportionate safety benefit.
 
-The default platform set follows the Podman host architecture. ARM64 runs
-Debian and Rocky concurrently and reports Arch as skipped. AMD64 runs Debian,
-Rocky, and Arch concurrently. GitHub uses exact matrix selection on native
-AMD64 so every pull request still validates all three platforms.
-
 `mise run ci:changed` and `mise run ci` orchestrate validation and this
 controlled test when their selected depth includes Molecule. Their effects are
 the combined effects of the commands they run.
@@ -139,43 +134,10 @@ operator direction for the exact playbook, action, inventory, and extra
 arguments. Observational actions remain read-only; mutating actions follow the
 authority and precondition rules in `AGENTS.md`.
 
-#### OS baseline actions
-
-The OS playbooks use the following exact public shapes. `<inventory>` is one of
-the registered inventory selectors and `<host>` is an operator-provided host
-selector passed to Ansible:
-
-```text
-mise run playbook -- os inspect <inventory> --limit <host>
-mise run playbook -- os provision <inventory> --limit <host>
-mise run playbook -- os maintain <inventory> --limit <host>
-```
-
-`os inspect` is observational. It gathers and reports an allowlisted set of OS
-facts without privilege escalation; the output is a snapshot, not a health
-attestation. `os provision` is a mutating complete-baseline operation and
-accepts only Debian 13 and Rocky Linux 9. `os maintain` is a mutating full
-package update for the same two platforms.
-
-When an explicit full update or provisioning transition reports that a reboot
-is required, the playbook reboots the host. There is no input that suppresses
-the required reboot. Debian `unattended-upgrades` and Rocky `dnf-automatic`
-retain their independent native security-update reboot behavior. No host-local
-recurring full-update timer or cron job exists; Issue #4 will schedule `os
-maintain` through Semaphore. The policy for a full update and self-reboot of
-the NUC that hosts Semaphore is also deferred to Issue #4.
-
-Each mutating playbook uses a one-host serial batch and reconnects and verifies
-before advancing after an Ansible-controlled reboot. The complete baseline
-requires non-empty `security_baseline_authorized_keys` and
-`security_baseline_management_sources`; the bootstrap path requires an
-existing key-only `ansible` account with passwordless sudo and never falls back
-to root or a password. For mutating OS actions, the gateway rejects password
-prompts, password files, `--start-at-task`, tag selection, and `--step` so an
-invocation cannot skip a required safety check. The playbooks do not configure
-notification delivery, and offline CI or container evidence does not prove live
-host availability, physical reboot, kernel enforcement, network reachability,
-or Semaphore scheduling.
+For example, `os inspect` follows the live-observation profile, while `os
+provision` and `os maintain` follow the existing-state-reconciliation profile.
+The [OS playbook guide](../../playbooks/os/README.md) documents their exact
+interface and safeguards.
 
 ### Dependency bootstrap
 
