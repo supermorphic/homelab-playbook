@@ -556,7 +556,7 @@ class PlatformWorkerTests(unittest.TestCase):
             clock,
         )
 
-    def test_worker_pulls_builds_and_tests_one_platform_with_exact_policy(
+    def test_worker_pulls_builds_and_tests_one_platform_with_portable_options(
         self,
     ) -> None:
         fake = FakeCommandRunner(
@@ -606,8 +606,6 @@ class PlatformWorkerTests(unittest.TestCase):
                     [
                         "podman",
                         "pull",
-                        "--policy=always",
-                        "--retry=3",
                         "--platform",
                         "linux/arm64",
                         "docker.io/library/debian:13",

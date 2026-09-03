@@ -468,8 +468,6 @@ def run_platform(
             [
                 "podman",
                 "pull",
-                "--policy=always",
-                "--retry=3",
                 "--platform",
                 f"linux/{requested_architecture}",
                 platform_definition.base_image,
