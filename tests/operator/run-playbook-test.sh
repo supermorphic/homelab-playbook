@@ -172,7 +172,8 @@ done
 : >"$uv_log"
 (cd "$test_root/outside" && \
   PATH="$fake_bin:$PATH" FAKE_UV_LOG="$uv_log" \
-  "$repo_root/scripts/playbook.sh" os maintain production --limit server1 --check -vv)
+  "$repo_root/scripts/playbook.sh" \
+  os provision production --limit nuc4 --ask-vault-pass)
 printf '%s\n' \
   run \
   --frozen \
@@ -194,11 +195,10 @@ printf '%s\n' \
   ansible-playbook \
   -i \
   "$repo_root/inventory/production" \
-  "$repo_root/playbooks/os/maintain.yml" \
+  "$repo_root/playbooks/os/provision.yml" \
   --limit \
-  server1 \
-  --check \
-  -vv \
+  nuc4 \
+  --ask-vault-pass \
   --- >"$test_root/expected-uv.log"
 assert_file_equals "$test_root/expected-uv.log" "$uv_log"
 

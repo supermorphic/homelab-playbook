@@ -1,6 +1,6 @@
 ---
 - name: Confirm installer-provided access before Python bootstrap
-  hosts: servers
+  hosts: os_managed
   gather_facts: false
   become: false
   tasks:

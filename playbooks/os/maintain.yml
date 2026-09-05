@@ -1,6 +1,6 @@
 ---
 - name: Run scheduler-neutral full OS maintenance
-  hosts: servers
+  hosts: os_managed
   serial: 1
   any_errors_fatal: true
   gather_facts: false
@@ -44,9 +44,12 @@
         that:
           - security_baseline_authorized_keys | length > 0
           - security_baseline_management_sources | length > 0
+          - host_identity_hostname | default('') | length > 0
+          - host_identity_timezone | default('') | length > 0
         fail_msg: >-
           complete-platform maintenance verification requires authorized
-          controller keys and management sources
+          controller keys, management sources, a managed hostname, and a
+          managed timezone
       no_log: true
 
     - name: Verify repository trust and package-manager consistency
@@ -100,6 +103,8 @@
         name: os_baseline_verify
       become: true
       vars:
+        os_baseline_verify_expected_hostname: "{{ host_identity_hostname }}"
+        os_baseline_verify_expected_timezone: "{{ host_identity_timezone }}"
         os_baseline_verify_expected_authorized_keys: >-
           {{ security_baseline_authorized_keys }}
         os_baseline_verify_expected_management_sources: >-

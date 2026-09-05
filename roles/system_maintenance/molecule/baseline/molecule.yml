@@ -10,8 +10,9 @@ driver:
 
 platforms:
   - name: debian13
+    hostname: molecule-debian13
     groups:
-      - servers
+      - os_managed
     image: localhost/homelab-playbook-system-maintenance-baseline-debian13:local
     container_name: homelab-playbook-system-maintenance-baseline-debian13
     container_command: /usr/lib/systemd/systemd
@@ -25,8 +26,9 @@ platforms:
       io.supermorphic.homelab-playbook.scenario: system_maintenance/baseline
       io.supermorphic.homelab-playbook.platform: debian13
   - name: rockylinux9
+    hostname: molecule-rockylinux9
     groups:
-      - servers
+      - os_managed
     image: localhost/homelab-playbook-system-maintenance-baseline-rockylinux9:local
     container_name: homelab-playbook-system-maintenance-baseline-rockylinux9
     container_command: /usr/lib/systemd/systemd

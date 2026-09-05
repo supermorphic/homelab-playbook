@@ -482,6 +482,7 @@ class SourceContractTests(unittest.TestCase):
             for path in ("playbooks/os/provision.yml", "playbooks/os/maintain.yml")
         )
         for plays in (provision, maintain):
+            self.assertTrue(all(play["hosts"] == "os_managed" for play in plays))
             self.assertTrue(all(play["serial"] == 1 for play in plays))
             self.assertTrue(all(play["any_errors_fatal"] is True for play in plays))
 
@@ -512,6 +513,27 @@ class SourceContractTests(unittest.TestCase):
         self.assertIs(maintenance_initial_facts["become"], True)
         provisioning_pre = provisioning["pre_tasks"]
         provisioning_post = provisioning["post_tasks"]
+        provisioning_input_preflight = next(
+            task
+            for task in provisioning_pre
+            if task["name"]
+            == "Validate complete provisioning security baseline inputs"
+        )
+        self.assertEqual(
+            [
+                "ansible_user | default('') == 'ansible'",
+                "security_baseline_authorized_keys | length > 0",
+                "security_baseline_management_sources | length > 0",
+                "host_identity_hostname | default('') | length > 0",
+                "host_identity_timezone | default('') | length > 0",
+            ],
+            provisioning_input_preflight["ansible.builtin.assert"]["that"],
+        )
+        identity = unique_task_index(
+            provisioning_pre,
+            "ansible.builtin.import_role",
+            {"name": "host_identity"},
+        )
         pre_update = unique_task_index(
             provisioning_pre,
             "ansible.builtin.import_role",
@@ -573,6 +595,7 @@ class SourceContractTests(unittest.TestCase):
         for index in (reset, setup, post_boot):
             self.assertEqual("os_reboot_performed | bool", provisioning_pre[index]["when"])
         assert_strictly_ordered(
+            identity,
             pre_update,
             full_update,
             security_post_update,
@@ -592,6 +615,23 @@ class SourceContractTests(unittest.TestCase):
             {"name": "os_baseline_verify"},
         )
         self.assertEqual(0, verifier)
+        self.assertEqual(
+            {
+                "os_baseline_verify_expected_authorized_keys": (
+                    "{{ security_baseline_authorized_keys }}"
+                ),
+                "os_baseline_verify_expected_management_sources": (
+                    "{{ security_baseline_management_sources }}"
+                ),
+                "os_baseline_verify_expected_hostname": (
+                    "{{ host_identity_hostname }}"
+                ),
+                "os_baseline_verify_expected_timezone": (
+                    "{{ host_identity_timezone }}"
+                ),
+            },
+            provisioning_post[verifier]["vars"],
+        )
 
         maintenance_post = maintenance["post_tasks"]
         assert_scheduler_neutral_maintenance(maintenance)
@@ -622,6 +662,22 @@ class SourceContractTests(unittest.TestCase):
             if task["name"] == "Validate complete-platform verification inputs"
         )
         self.assertNotIn("when", maintenance_input_preflight)
+        self.assertEqual(
+            [
+                "security_baseline_authorized_keys | length > 0",
+                "security_baseline_management_sources | length > 0",
+                "host_identity_hostname | default('') | length > 0",
+                "host_identity_timezone | default('') | length > 0",
+            ],
+            maintenance_input_preflight["ansible.builtin.assert"]["that"],
+        )
+        self.assertFalse(
+            any(
+                task.get("ansible.builtin.import_role")
+                == {"name": "host_identity"}
+                for task in maintenance_pre
+            )
+        )
         maintenance_connection_preflight = unique_task_index(
             maintenance_pre,
             "ansible.builtin.import_role",
@@ -720,6 +776,23 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual(0, maintenance_verifier)
         self.assertNotIn("when", maintenance_post[maintenance_verifier])
         self.assertIs(maintenance_post[maintenance_verifier]["become"], True)
+        self.assertEqual(
+            {
+                "os_baseline_verify_expected_authorized_keys": (
+                    "{{ security_baseline_authorized_keys }}"
+                ),
+                "os_baseline_verify_expected_management_sources": (
+                    "{{ security_baseline_management_sources }}"
+                ),
+                "os_baseline_verify_expected_hostname": (
+                    "{{ host_identity_hostname }}"
+                ),
+                "os_baseline_verify_expected_timezone": (
+                    "{{ host_identity_timezone }}"
+                ),
+            },
+            maintenance_post[maintenance_verifier]["vars"],
+        )
 
     def test_os_playbook_contracts_reject_unsafe_composition_mutations(self) -> None:
         provision, maintenance_document = (
@@ -809,11 +882,11 @@ class SourceContractTests(unittest.TestCase):
                         "ansible-playbook",
                         "playbooks/os/maintain.yml",
                         "--inventory",
-                        "servers,",
+                        "os_managed,",
                         "--connection",
                         "local",
                         "--limit",
-                        "servers",
+                        "os_managed",
                         "--check",
                         "--start-at-task",
                         "Validate full-maintenance platform support",
@@ -959,6 +1032,12 @@ class SourceContractTests(unittest.TestCase):
             ),
         }
         lifecycle_role_inputs = {
+            "os_baseline_verify_expected_hostname": (
+                "{{ host_identity_hostname }}"
+            ),
+            "os_baseline_verify_expected_timezone": (
+                "{{ host_identity_timezone }}"
+            ),
             "os_baseline_verify_expected_authorized_keys": (
                 "{{ security_baseline_authorized_keys }}"
             ),
@@ -1266,11 +1345,11 @@ class SourceContractTests(unittest.TestCase):
                 "ansible-playbook",
                 "playbooks/os/provision.yml",
                 "--inventory",
-                "servers,",
+                "os_managed,",
                 "--connection",
                 "local",
                 "--limit",
-                "servers",
+                "os_managed",
                 "--start-at-task",
                 "Validate complete provisioning platform support",
                 "--extra-vars",
@@ -2173,7 +2252,7 @@ class SourceContractTests(unittest.TestCase):
             "ansible_virtualization_type",
         ]
 
-        self.assertEqual(play["hosts"], "servers")
+        self.assertEqual(play["hosts"], "os_managed")
         self.assertIs(play["become"], False)
         self.assertIs(play["gather_facts"], False)
         self.assertEqual(len(tasks), 2)

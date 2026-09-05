@@ -145,6 +145,7 @@ class MoleculeScenarioContractTests(unittest.TestCase):
                 self.assertEqual(image, platform["image"])
                 self.assertEqual(container_name, platform["container_name"])
                 self.assertEqual(["molecule"], platform["groups"])
+                self.assertNotIn("hostname", platform)
                 self.assertEqual(
                     "/usr/lib/systemd/systemd",
                     platform["container_command"],
@@ -196,6 +197,10 @@ class MoleculeScenarioContractTests(unittest.TestCase):
         self.assertEqual(
             "{{ system_maintenance_molecule_platform.restart_policy | default('no') }}",
             start.get("restart_policy"),
+        )
+        self.assertEqual(
+            "{{ system_maintenance_molecule_platform.hostname | default(omit) }}",
+            start.get("hostname"),
         )
 
     def test_controller_playbooks_select_the_worker_platform_from_environment(
@@ -335,12 +340,19 @@ class MoleculeScenarioContractTests(unittest.TestCase):
                 self.assertTrue((BASELINE_SCENARIO_DIRECTORY / name).is_file())
 
         configuration = load_baseline_yaml("molecule.yml")
+        expected_hostnames = {
+            "debian13": "molecule-debian13",
+            "rockylinux9": "molecule-rockylinux9",
+        }
         self.assertEqual(
-            ["debian13", "rockylinux9"],
-            [platform["name"] for platform in configuration["platforms"]],
+            expected_hostnames,
+            {
+                platform["name"]: platform["hostname"]
+                for platform in configuration["platforms"]
+            },
         )
         for platform in configuration["platforms"]:
-            self.assertEqual(["servers"], platform["groups"])
+            self.assertEqual(["os_managed"], platform["groups"])
             self.assertEqual("ansible", platform["user"])
             self.assertIs(platform["container_privileged"], False)
             self.assertEqual("always", platform["container_systemd"])
@@ -384,6 +396,9 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             "roles/os_bootstrap/tasks/connection-preflight.yml"
         )[0]
         prepare_tasks = load_baseline_yaml("prepare.yml")[0]["tasks"]
+        self.assertEqual(
+            "os_managed", load_baseline_yaml("prepare.yml")[0]["hosts"]
+        )
         raw_tasks = [
             task
             for task in [
@@ -451,6 +466,11 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             imported_playbook["ansible.builtin.import_playbook"],
         )
         variables = imported_playbook["vars"]
+        self.assertEqual(
+            "molecule-{{ inventory_hostname }}",
+            variables["host_identity_hostname"],
+        )
+        self.assertEqual("UTC", variables["host_identity_timezone"])
         self.assertEqual(["10.0.0.0/8"], variables["security_baseline_management_sources"])
         self.assertEqual(
             "/usr/bin/stat -c %y /proc/1",
@@ -469,7 +489,7 @@ class MoleculeScenarioContractTests(unittest.TestCase):
 
     def test_baseline_verify_is_independent_and_states_evidence_limits(self) -> None:
         verify = load_baseline_yaml("verify.yml")[0]
-        self.assertEqual("servers", verify["hosts"])
+        self.assertEqual("os_managed", verify["hosts"])
         self.assertIs(verify["gather_facts"], True)
         self.assertIs(verify["become"], True)
         self.assertNotIn("roles", verify)
@@ -479,6 +499,64 @@ class MoleculeScenarioContractTests(unittest.TestCase):
                 or "ansible.builtin.import_role" in task
                 for task in verify["tasks"]
             )
+        )
+        identity_reads = [
+            task
+            for task in verify["tasks"]
+            if task.get("name")
+            in {
+                "Read static hostname",
+                "Read current hostname",
+                "Read effective system timezone",
+            }
+        ]
+        self.assertEqual(
+            [
+                (
+                    ["/usr/bin/hostnamectl", "--static"],
+                    "system_maintenance_molecule_baseline_static_hostname",
+                    False,
+                ),
+                (
+                    ["/usr/bin/hostnamectl", "--transient"],
+                    "system_maintenance_molecule_baseline_current_hostname",
+                    False,
+                ),
+                (
+                    [
+                        "/usr/bin/timedatectl",
+                        "show",
+                        "--property=Timezone",
+                        "--value",
+                    ],
+                    "system_maintenance_molecule_baseline_timezone",
+                    False,
+                ),
+            ],
+            [
+                (
+                    task["ansible.builtin.command"]["argv"],
+                    task["register"],
+                    task["changed_when"],
+                )
+                for task in identity_reads
+            ],
+        )
+        identity_assertion = next(
+            task
+            for task in verify["tasks"]
+            if task.get("name") == "Verify effective host identity"
+        )
+        self.assertEqual(
+            [
+                "system_maintenance_molecule_baseline_static_hostname.stdout | trim == 'molecule-' ~ inventory_hostname",
+                "system_maintenance_molecule_baseline_current_hostname.stdout | trim == 'molecule-' ~ inventory_hostname",
+                "system_maintenance_molecule_baseline_timezone.stdout | trim == 'UTC'",
+            ],
+            [
+                " ".join(expression.split())
+                for expression in identity_assertion["ansible.builtin.assert"]["that"]
+            ],
         )
         evidence_limit = next(
             task
