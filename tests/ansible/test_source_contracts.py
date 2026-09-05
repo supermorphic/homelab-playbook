@@ -436,6 +436,43 @@ def assert_scheduler_neutral_maintenance(play: dict[str, object]) -> None:
 
 
 class SourceContractTests(unittest.TestCase):
+    def test_host_identity_validates_all_inputs_before_mutation(self) -> None:
+        tasks = load_tasks("roles/host_identity/tasks/main.yml")
+        self.assertEqual(
+            [
+                "ansible.builtin.assert",
+                "ansible.builtin.stat",
+                "ansible.builtin.assert",
+                "ansible.builtin.hostname",
+                "community.general.timezone",
+            ],
+            [task_module(task) for task in tasks],
+        )
+        self.assertTrue(all(task.get("no_log") is True for task in tasks[:3]))
+        self.assertEqual(
+            "/usr/share/zoneinfo/{{ host_identity_timezone }}",
+            tasks[1]["ansible.builtin.stat"]["path"],
+        )
+        self.assertEqual(
+            {"name": "{{ host_identity_hostname }}"},
+            tasks[3]["ansible.builtin.hostname"],
+        )
+        self.assertEqual(
+            {"name": "{{ host_identity_timezone }}"},
+            tasks[4]["community.general.timezone"],
+        )
+        timezone_shape = tasks[0]["ansible.builtin.assert"]["that"][-1]
+        self.assertIn("split('/')", timezone_shape)
+        self.assertIn("select('in', ['', '.', '..'])", timezone_shape)
+        self.assertIn("length == 0", timezone_shape)
+
+        requirements = load_yaml_documents("requirements.yml")[0]
+        community_general = next(
+            collection for collection in requirements["collections"]
+            if collection["name"] == "community.general"
+        )
+        self.assertEqual("13.3.0", community_general["version"])
+
     def test_os_playbooks_are_sequential_and_reboot_at_playbook_level(self) -> None:
         provision, maintain = (
             load_yaml_documents(path)[0]

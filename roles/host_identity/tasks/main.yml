@@ -1,0 +1,53 @@
+---
+- name: Validate host identity input shape
+  ansible.builtin.assert:
+    that:
+      - (host_identity_hostname | default('')) is string
+      - host_identity_hostname | default('') | length > 0
+      - >-
+        host_identity_hostname | default('') ==
+        host_identity_hostname | default('') | trim
+      - >-
+        host_identity_hostname | default('') is match(
+          '^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$'
+        )
+      - (host_identity_timezone | default('')) is string
+      - host_identity_timezone | default('') | length > 0
+      - >-
+        host_identity_timezone | default('') ==
+        host_identity_timezone | default('') | trim
+      - >-
+        host_identity_timezone | default('') == 'UTC' or
+        host_identity_timezone | default('') is match(
+          '^[A-Za-z0-9][A-Za-z0-9._+-]*/[A-Za-z0-9][A-Za-z0-9._+/-]*$'
+        )
+      - >-
+        host_identity_timezone | default('') | split('/') |
+        select('in', ['', '.', '..']) | list | length == 0
+    fail_msg: Host identity requires a valid static hostname and IANA timezone
+  no_log: true
+
+- name: Inspect the requested timezone database entry
+  ansible.builtin.stat:
+    path: "/usr/share/zoneinfo/{{ host_identity_timezone }}"
+    follow: true
+    get_checksum: false
+    get_mime: false
+  register: host_identity_timezone_entry
+  no_log: true
+
+- name: Require an installed timezone database entry
+  ansible.builtin.assert:
+    that:
+      - host_identity_timezone_entry.stat.exists
+      - host_identity_timezone_entry.stat.isreg
+    fail_msg: The requested IANA timezone is not installed on this host
+  no_log: true
+
+- name: Configure static and effective hostname
+  ansible.builtin.hostname:
+    name: "{{ host_identity_hostname }}"
+
+- name: Configure effective system timezone
+  community.general.timezone:
+    name: "{{ host_identity_timezone }}"
