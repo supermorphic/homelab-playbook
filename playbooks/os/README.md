@@ -65,6 +65,181 @@ Rotate controller keys with an add-verify-remove sequence:
 The authorized-key list is authoritative and non-empty. A failed scoped key
 or privilege check does not trigger a fallback credential.
 
+## Managed-host onboarding
+
+Use this procedure to establish the initial manual authority and onboard
+`nuc4`. Do not execute a live command unless the operator has authorized that
+exact action, inventory, host limit, and arguments.
+
+### 1. Establish manual authority
+
+Before Ansible runs, use the Debian installer, the physical console, or an
+already authorized administrator to ensure that:
+
+- Debian 13 is installed and boots normally;
+- official Debian package repositories are usable;
+- the `ansible` account has a home directory and an interactive shell;
+- the operator public key is installed for the `ansible` account;
+- the account can run `sudo -n` successfully;
+- the `ansible` account password is locked;
+- Debian rescue or installation media remains available; and
+- access to the NUC boot menu is confirmed.
+
+Retain the media and boot-menu path so that an operator can repair the system
+through trusted console or rescue access if SSH is lost. Do not retain a root
+SSH login or unlock the `ansible` password as a fallback.
+
+### 2. Configure workstation SSH
+
+Create a dedicated Ed25519 key when the operator needs a new key:
+
+```bash
+ssh-keygen \
+  -t ed25519 \
+  -f ~/.ssh/id_ed25519_homelab_ansible \
+  -C "homelab ansible operator"
+```
+
+Protect the private key according to workstation policy. The repository does
+not store the private key or define passphrase caching. Configure the named
+connection in `~/.ssh/config`:
+
+```sshconfig
+Host nuc4
+    HostName nuc4
+    User ansible
+    IdentityFile ~/.ssh/id_ed25519_homelab_ansible
+    IdentitiesOnly yes
+```
+
+`HostName` can instead be the operator's resolvable private hostname or
+address. Never commit a live address to this repository. Use the named SSH
+configuration for each command; do not add command-line authentication
+overrides.
+
+Install the public key through the installer-created or otherwise authorized
+initial access path:
+
+```bash
+ssh-copy-id -i ~/.ssh/id_ed25519_homelab_ansible.pub nuc4
+```
+
+### 3. Configure and verify initial access
+
+Open the named connection, create the passwordless-sudo drop-in, validate the
+complete sudoers configuration, and prove non-interactive sudo:
+
+```bash
+ssh nuc4
+sudo visudo -f /etc/sudoers.d/ansible
+sudo visudo -c
+sudo -n true
+```
+
+The drop-in contains exactly:
+
+```sudoers
+ansible ALL=(ALL:ALL) NOPASSWD: ALL
+```
+
+Lock the account password, inspect its status, and leave the session:
+
+```bash
+sudo passwd --lock ansible
+sudo passwd --status ansible
+exit
+```
+
+The status output must identify the `ansible` password as locked. Then confirm
+the login identity and non-interactive root path:
+
+```bash
+ssh nuc4 'id -un'
+ssh nuc4 'sudo -n id -u'
+```
+
+The first command must print `ansible`. The second must print `0`.
+
+### 4. Create the protected inventory input
+
+The complete desired SSH public-key set is required because the existing security baseline authoritatively manages the `ansible` account's `authorized_keys`.
+The complete private management-source set is also required because the
+baseline authoritatively limits inbound SSH through the firewall. Include all
+approved keys and sources; partial sets can remove valid access during
+provisioning.
+
+Create the encrypted sibling of the public `os_managed` variables. Enter the
+Vault password interactively:
+
+```bash
+mise exec -- ansible-vault create inventory/production/group_vars/os_managed/vault.yml
+```
+
+Enter only operator-approved values in place of these marked placeholders:
+
+```yaml
+---
+host_identity_timezone: "<deployment-local IANA timezone>"
+security_baseline_authorized_keys:
+  - "<complete desired SSH public key>"
+security_baseline_management_sources:
+  - "<private management CIDR>"
+```
+
+Treat this Vault as opaque. Do not decrypt, print, parse, or inspect its
+protected values during repository development or validation. Do not use a
+Vault password file or automated password retrieval for these local commands.
+
+### 5. Inspect and provision
+
+After the manual access checks pass, an authorized operator can collect a
+read-only snapshot:
+
+```bash
+mise run playbook -- os inspect production --limit nuc4 --ask-vault-pass
+```
+
+Inspection does not establish that the baseline is healthy. After review and
+fresh explicit authorization for the exact live mutation, provision the host:
+
+```bash
+mise run playbook -- os provision production --limit nuc4 --ask-vault-pass
+```
+
+Provisioning performs the initial full update, reconciles host identity and the
+security baseline, configures native security updates, reboots when required,
+and verifies the resulting state.
+
+### 6. Maintain, rerun, and recover
+
+Use maintenance only for later periodic full package updates:
+
+```bash
+mise run playbook -- os maintain production --limit nuc4 --ask-vault-pass
+```
+
+Maintenance verifies hostname and timezone identity, but it does not reconcile
+identity drift or reapply baseline configuration. If maintenance reports
+identity drift, rerun `os provision` after authorization. If onboarding stops
+at any point, correct the reported cause and rerun `os provision`; do not use
+`os maintain` to finish an incomplete onboarding. When the normal SSH path is
+not usable, repair access through the retained console or rescue path before
+rerunning provisioning.
+
+### 7. Confirm live state
+
+After an authorized successful provisioning run, observe the effective state:
+
+```bash
+ssh nuc4 'hostnamectl --static'
+ssh nuc4 'timedatectl show --property=Timezone --value'
+ssh nuc4 'sudo -n id -u'
+```
+
+The commands must report `nuc4`, the operator-approved deployment-local IANA
+timezone, and `0`, respectively. These are live operator observations. They
+complement the playbook verifier but are not pull-request CI evidence.
+
 ## Operating lifecycle
 
 Use the OS operations according to the host's lifecycle:

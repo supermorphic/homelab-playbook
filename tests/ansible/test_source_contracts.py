@@ -2231,6 +2231,71 @@ class SourceContractTests(unittest.TestCase):
             ],
         )
 
+    def test_os_guide_documents_managed_host_onboarding(self) -> None:
+        """The OS guide must preserve the complete managed-host procedure."""
+        guide = (REPOSITORY_ROOT / "playbooks/os/README.md").read_text(
+            encoding="utf-8"
+        )
+        required_commands = (
+            "ssh-keygen \\\n  -t ed25519 \\\n  -f ~/.ssh/id_ed25519_homelab_ansible \\\n  -C \"homelab ansible operator\"",
+            "ssh-copy-id -i ~/.ssh/id_ed25519_homelab_ansible.pub nuc4",
+            "ssh nuc4 'id -un'",
+            "ssh nuc4 'sudo -n id -u'",
+            (
+                "mise exec -- ansible-vault create "
+                "inventory/production/group_vars/os_managed/vault.yml"
+            ),
+            (
+                "mise run playbook -- os inspect production --limit nuc4 "
+                "--ask-vault-pass"
+            ),
+            (
+                "mise run playbook -- os provision production --limit nuc4 "
+                "--ask-vault-pass"
+            ),
+            (
+                "mise run playbook -- os maintain production --limit nuc4 "
+                "--ask-vault-pass"
+            ),
+            "ssh nuc4 'hostnamectl --static'",
+            "ssh nuc4 'timedatectl show --property=Timezone --value'",
+        )
+        for command in required_commands:
+            with self.subTest(command=command):
+                self.assertIn(command, guide)
+
+        self.assertIn(
+            "The complete desired SSH public-key set is required because the "
+            "existing security baseline authoritatively manages the `ansible` "
+            "account's `authorized_keys`.",
+            guide,
+        )
+
+        forbidden_fragments = (
+            "-a 64",
+            "--vault-password-file",
+            "--vault-id",
+            "ANSIBLE_VAULT_PASSWORD_FILE",
+            "vault_password_file",
+            "security find-generic-password",
+            "op read",
+            "pass show",
+        )
+        for fragment in forbidden_fragments:
+            with self.subTest(fragment=fragment):
+                self.assertNotIn(fragment, guide)
+
+        self.assertNotRegex(
+            guide,
+            r"-o\s*(?:PreferredAuthentications|PasswordAuthentication|"
+            r"KbdInteractiveAuthentication)\b",
+        )
+        self.assertNotRegex(
+            guide,
+            r"\b(?:Africa|America|Antarctica|Arctic|Asia|Atlantic|Australia|"
+            r"Europe|Indian|Pacific)/[A-Za-z0-9_+.-]+(?:/[A-Za-z0-9_+.-]+)?\b",
+        )
+
     def test_os_inspect_reports_only_allowlisted_facts(self) -> None:
         """Host inspection must remain read-only and omit identifying facts."""
         playbook_path = REPOSITORY_ROOT / "playbooks/os/inspect.yml"

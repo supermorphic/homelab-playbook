@@ -52,6 +52,16 @@ mise run playbook -- os provision <inventory> --limit <host>
 mise run playbook -- os maintain <inventory> --limit <host>
 ```
 
+The active production inventory contains `nuc4` in `os_managed`. Its encrypted
+group input is required when Ansible loads the production OS inventory, so use
+interactive Vault password entry for all three production operations:
+
+```bash
+mise run playbook -- os inspect production --limit nuc4 --ask-vault-pass
+mise run playbook -- os provision production --limit nuc4 --ask-vault-pass
+mise run playbook -- os maintain production --limit nuc4 --ask-vault-pass
+```
+
 Use them over the life of a host as follows:
 
 1. Optionally run `inspect` to collect a read-only OS snapshot.
@@ -77,7 +87,7 @@ NUC/Semaphore full-update and self-reboot policy remains deferred to Issue #4.
 
 Select one of these inventory arguments:
 
-- `production` contains the active off-cluster hosts.
+- `production` contains the active `nuc4` host in `os_managed`.
 - `staging` contains no hosts; it retains non-active Semaphore deployment and
   backup inputs for future work.
 - `frozen/k3s` retains the non-active K3s inventory.
@@ -89,21 +99,25 @@ Each inventory directory stores its static host and group topology in
 
 ## Secrets
 
-Ansible Vault encrypts secret variables. Operators own the Vault password or
-password-retrieval mechanism outside the repository, such as in a password
-manager. Do not commit key material or embed it in Mise configuration, helper
-scripts, or pull-request CI. Do not decrypt, print, or inspect production Vault
-values during development or validation.
+Ansible Vault encrypts secret variables. Operators own Vault passwords outside
+the repository, such as in a password manager. Supply the active production OS
+Vault password interactively with `--ask-vault-pass`. Do not commit key
+material or embed it in Mise configuration, helper scripts, or pull-request CI.
+Do not decrypt, print, or inspect production Vault values during development or
+validation.
 
 Public group variables live in `vars.yml`; version pins in `versions.yml` are
 public as well. Encrypted variables live only in sibling `vault.yml` files. The
-active boundary is `inventory/production/group_vars/pihole/`. Retained
-Semaphore inputs are under `inventory/staging/group_vars/semaphore/`, and
-retained K3s variables are under `inventory/frozen/k3s/group_vars/`. Inventory
-parsing and Ansible semantic validation use the public files and never receive
-encrypted `vault.yml` input. Broad redacted Gitleaks scans inspect repository
-bytes and history, including encrypted file bytes, without decryption or
-plaintext output.
+active boundary is `inventory/production/group_vars/os_managed/`.
+`inventory/production/host_vars/nuc4/vars.yml` contains public hostname
+metadata. The sibling `os_managed/vault.yml` contains protected identity and
+access inputs. Validation treats it as opaque and never decrypts, parses, or
+inspects its protected values. Retained Semaphore inputs are under
+`inventory/staging/group_vars/semaphore/`, and retained K3s variables are under
+`inventory/frozen/k3s/group_vars/`. Inventory parsing and Ansible semantic
+validation use the public files and never receive encrypted `vault.yml` input.
+Broad redacted Gitleaks scans inspect repository bytes and history, including
+encrypted file bytes, without decryption or plaintext output.
 
 ## Validation
 
