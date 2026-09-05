@@ -5,9 +5,12 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path, PurePosixPath
+
+import yaml
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -109,6 +112,54 @@ class AnsibleSourceContracts(unittest.TestCase):
 
         self.assertTrue(ENCRYPTED_EXCLUSIONS.issubset(candidates))
         self.assertTrue(ENCRYPTED_EXCLUSIONS.isdisjoint(selected_sources))
+
+    def test_yaml_lint_inventory_exclusions_match_registered_vaults(self) -> None:
+        configuration = yaml.safe_load(
+            (REPOSITORY_ROOT / ".yamllint").read_text(encoding="utf-8")
+        )
+        inventory_exclusions = {
+            pattern
+            for pattern in configuration["ignore"].splitlines()
+            if pattern.startswith("inventory/")
+        }
+
+        self.assertSetEqual(ENCRYPTED_EXCLUSIONS, inventory_exclusions)
+
+    def test_yaml_lint_skips_registered_vaults_but_checks_public_sources(self) -> None:
+        cases = [(path, 0) for path in sorted(ENCRYPTED_EXCLUSIONS)]
+        cases.append(("inventory/production/group_vars/os_managed/vars.yml", 1))
+        cases.append(("inventory/production/group_vars/example/vault.yml", 1))
+        for relative_path, expected_status in cases:
+            with self.subTest(path=relative_path):
+                with tempfile.TemporaryDirectory() as temporary_name:
+                    repository_root = Path(temporary_name)
+                    synthetic_source = repository_root / relative_path
+                    synthetic_source.parent.mkdir(parents=True)
+                    synthetic_source.write_text(
+                        "$ANSIBLE_VAULT;1.1;AES256\n616263646566\n", encoding="utf-8"
+                    )
+
+                    result = subprocess.run(
+                        [
+                            sys.executable,
+                            "-m",
+                            "yamllint",
+                            "--strict",
+                            "--config-file",
+                            os.fspath(REPOSITORY_ROOT / ".yamllint"),
+                            relative_path,
+                        ],
+                        cwd=repository_root,
+                        check=False,
+                        capture_output=True,
+                    )
+
+                    self.assertEqual(expected_status, result.returncode)
+                    if expected_status == 0:
+                        self.assertEqual(b"", result.stdout)
+                        self.assertEqual(b"", result.stderr)
+                    else:
+                        self.assertIn(b"error", result.stdout)
 
     def test_near_miss_inventory_vault_source_is_selected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
