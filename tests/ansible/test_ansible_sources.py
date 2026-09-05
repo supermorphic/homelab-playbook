@@ -15,7 +15,7 @@ SOURCE_BUILDER = REPOSITORY_ROOT / "scripts/ci/ansible-sources.sh"
 ANSIBLE_VALIDATION = REPOSITORY_ROOT / "scripts/ci/validate-ansible.sh"
 ENCRYPTED_EXCLUSIONS = {
     "inventory/frozen/k3s/group_vars/k3s_cluster/vault.yml",
-    "inventory/production/group_vars/pihole/vault.yml",
+    "inventory/production/group_vars/os_managed/vault.yml",
     "inventory/staging/group_vars/semaphore/vault.yml",
 }
 
@@ -134,6 +134,162 @@ class AnsibleSourceContracts(unittest.TestCase):
 
             self.assertEqual(0, result.returncode, result.stderr.decode())
             self.assertEqual(f"{relative_path}\0".encode(), result.stdout)
+
+    def create_registered_vault_fixture(
+        self, repository_root: Path, relative_path: str, contents: str
+    ) -> tuple[Path, Path]:
+        self.initialize_repository(repository_root)
+        source_builder = self.isolated_source_builder(repository_root)
+        vault_source = repository_root / relative_path
+        vault_source.parent.mkdir(parents=True)
+        vault_source.write_text(contents, encoding="utf-8")
+        # A public source keeps the non-empty manifest contract independent.
+        (repository_root / "requirements.yml").write_text("---\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", "scripts/ci/ansible-sources.sh", "requirements.yml", relative_path],
+            cwd=repository_root,
+            check=True,
+        )
+        return source_builder, vault_source
+
+    def test_registered_vault_headers_are_excluded_without_content_output(self) -> None:
+        for relative_path in sorted(ENCRYPTED_EXCLUSIONS):
+            for header in (
+                "$ANSIBLE_VAULT;1.1;AES256",
+                "$ANSIBLE_VAULT;1.2;AES256;fixture_1.test-id",
+            ):
+                with self.subTest(path=relative_path, header=header):
+                    with tempfile.TemporaryDirectory() as temporary_name:
+                        repository_root = Path(temporary_name)
+                        source_builder, _ = self.create_registered_vault_fixture(
+                            repository_root, relative_path, f"{header}\n616263646566\n"
+                        )
+
+                        result = subprocess.run(
+                            ["bash", str(source_builder)],
+                            cwd=repository_root,
+                            check=False,
+                            capture_output=True,
+                        )
+
+                        self.assertEqual(0, result.returncode, result.stderr.decode())
+                        self.assertEqual(b"requirements.yml\0", result.stdout)
+                        self.assertEqual(b"", result.stderr)
+
+    def test_registered_plaintext_is_rejected_without_content_output(self) -> None:
+        for relative_path in sorted(ENCRYPTED_EXCLUSIONS):
+            with self.subTest(path=relative_path):
+                with tempfile.TemporaryDirectory() as temporary_name:
+                    repository_root = Path(temporary_name)
+                    source_builder, _ = self.create_registered_vault_fixture(
+                        repository_root, relative_path, "---\nhost_identity_timezone: UTC\n"
+                    )
+
+                    result = subprocess.run(
+                        ["bash", str(source_builder)],
+                        cwd=repository_root,
+                        check=False,
+                        capture_output=True,
+                    )
+
+                    self.assertNotEqual(0, result.returncode)
+                    self.assertEqual(b"", result.stdout)
+                    self.assertEqual(
+                        f"registered Ansible Vault source has an invalid header: {relative_path}\n".encode(),
+                        result.stderr,
+                    )
+
+    def test_registered_vault_requires_a_supported_complete_header(self) -> None:
+        relative_path = "inventory/production/group_vars/os_managed/vault.yml"
+        cases = (
+            ("", "no header"),
+            ("$ANSIBLE_VAULT;1.1;AES256", "no header"),
+            ("$ANSIBLE_VAULT;1.3;AES256\n616263\n", "an invalid header"),
+            ("$ANSIBLE_VAULT;1.2;AES256;\n616263\n", "an invalid header"),
+            ("$ANSIBLE_VAULT;1.2;AES256;bad id\n616263\n", "an invalid header"),
+        )
+        for contents, reason in cases:
+            with self.subTest(contents=contents):
+                with tempfile.TemporaryDirectory() as temporary_name:
+                    repository_root = Path(temporary_name)
+                    source_builder, _ = self.create_registered_vault_fixture(
+                        repository_root, relative_path, contents
+                    )
+
+                    result = subprocess.run(
+                        ["bash", str(source_builder)],
+                        cwd=repository_root,
+                        check=False,
+                        capture_output=True,
+                    )
+
+                    self.assertNotEqual(0, result.returncode)
+                    self.assertEqual(b"", result.stdout)
+                    self.assertEqual(
+                        f"registered Ansible Vault source has {reason}: {relative_path}\n".encode(),
+                        result.stderr,
+                    )
+
+    def test_registered_vault_must_remain_a_regular_file(self) -> None:
+        relative_path = "inventory/production/group_vars/os_managed/vault.yml"
+        for replacement in ("missing", "directory"):
+            with self.subTest(replacement=replacement):
+                with tempfile.TemporaryDirectory() as temporary_name:
+                    repository_root = Path(temporary_name)
+                    source_builder, vault_source = self.create_registered_vault_fixture(
+                        repository_root, relative_path, "$ANSIBLE_VAULT;1.1;AES256\n616263\n"
+                    )
+                    vault_source.unlink()
+                    if replacement == "directory":
+                        vault_source.mkdir()
+
+                    result = subprocess.run(
+                        ["bash", str(source_builder)],
+                        cwd=repository_root,
+                        check=False,
+                        capture_output=True,
+                    )
+
+                    self.assertNotEqual(0, result.returncode)
+                    self.assertEqual(b"", result.stdout)
+                    self.assertEqual(
+                        f"registered Ansible Vault source is not a regular file: {relative_path}\n".encode(),
+                        result.stderr,
+                    )
+
+    def test_registered_vault_symlink_components_are_rejected_before_read(self) -> None:
+        relative_path = "inventory/production/group_vars/os_managed/vault.yml"
+        for symlink_component in ("file", "parent"):
+            with self.subTest(component=symlink_component):
+                with tempfile.TemporaryDirectory() as temporary_name:
+                    temporary_root = Path(temporary_name)
+                    repository_root = temporary_root / "repository"
+                    repository_root.mkdir()
+                    source_builder, vault_source = self.create_registered_vault_fixture(
+                        repository_root, relative_path, "---\nfixture: must-not-be-read\n"
+                    )
+                    target = temporary_root / "unreadable-target"
+                    alias = vault_source if symlink_component == "file" else vault_source.parent
+                    alias.rename(target)
+                    alias.symlink_to(target, target_is_directory=symlink_component == "parent")
+                    target.chmod(0)
+                    try:
+                        result = subprocess.run(
+                            ["bash", str(source_builder)],
+                            cwd=repository_root,
+                            check=False,
+                            capture_output=True,
+                            timeout=10,
+                        )
+                    finally:
+                        target.chmod(0o700)
+
+                    self.assertNotEqual(0, result.returncode)
+                    self.assertEqual(b"", result.stdout)
+                    self.assertEqual(
+                        f"refusing Ansible source symlink: {relative_path}\n".encode(),
+                        result.stderr,
+                    )
 
     def isolated_source_builder(self, repository_root: Path) -> Path:
         source_builder = repository_root / "scripts" / "ci" / "ansible-sources.sh"
@@ -259,15 +415,15 @@ class AnsibleSourceContracts(unittest.TestCase):
             / "inventory"
             / "production"
             / "group_vars"
-            / "pihole"
+            / "os_managed"
             / "vault.yml"
         )
         vault_path.parent.mkdir(parents=True)
-        vault_path.write_text("encrypted fixture\n", encoding="utf-8")
+        vault_path.write_text("$ANSIBLE_VAULT;1.1;AES256\n616263\n", encoding="utf-8")
         vault_alias = repository_root / "playbooks" / "vault-alias.yml"
         vault_alias.parent.mkdir(parents=True)
         vault_alias.symlink_to(
-            "../inventory/production/group_vars/pihole/vault.yml"
+            "../inventory/production/group_vars/os_managed/vault.yml"
         )
         subprocess.run(
             ["git", "add", "scripts/ci/ansible-sources.sh", vault_path],
