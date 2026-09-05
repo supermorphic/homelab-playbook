@@ -17,8 +17,8 @@
       - os_baseline_verify_expected_hostname | length > 0
       - os_baseline_verify_expected_timezone | length > 0
     fail_msg: >-
-      OS baseline verification requires authorized controller keys and
-      management sources
+      OS baseline verification requires desired hostname, timezone,
+      authorized controller keys, and management sources
   no_log: true
 
 - name: Verify host identity state

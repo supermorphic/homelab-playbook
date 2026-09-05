@@ -958,6 +958,14 @@ class SourceContractTests(unittest.TestCase):
                 "{{ security_baseline_management_sources }}"
             ),
         }
+        lifecycle_role_inputs = {
+            "os_baseline_verify_expected_authorized_keys": (
+                "{{ security_baseline_authorized_keys }}"
+            ),
+            "os_baseline_verify_expected_management_sources": (
+                "{{ security_baseline_management_sources }}"
+            ),
+        }
         cases = (
             (
                 "standalone-defaults",
@@ -1066,6 +1074,11 @@ class SourceContractTests(unittest.TestCase):
             main_tasks[1]["ansible.builtin.assert"]["that"],
         )
         self.assertIs(main_tasks[1]["no_log"], True)
+        self.assertEqual(
+            "OS baseline verification requires desired hostname, timezone, "
+            "authorized controller keys, and management sources",
+            main_tasks[1]["ansible.builtin.assert"]["fail_msg"],
+        )
 
         access_tasks = load_tasks("roles/os_baseline_verify/tasks/access.yml")
         access_assert = next(
@@ -1123,7 +1136,7 @@ class SourceContractTests(unittest.TestCase):
         verifier_tasks = (provision[1]["post_tasks"][0], maintain[0]["post_tasks"][0])
         for task in verifier_tasks:
             with self.subTest(playbook=task["name"]):
-                self.assertEqual(required_role_inputs, task["vars"])
+                self.assertEqual(lifecycle_role_inputs, task["vars"])
 
     def test_os_baseline_verifier_reads_and_compares_effective_identity(self) -> None:
         tasks = load_tasks("roles/os_baseline_verify/tasks/identity.yml")
