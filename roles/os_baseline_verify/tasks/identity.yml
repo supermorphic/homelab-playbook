@@ -1,0 +1,32 @@
+---
+- name: Read static hostname
+  ansible.builtin.command:
+    argv: [/usr/bin/hostnamectl, --static]
+  register: os_baseline_verify_static_hostname
+  changed_when: false
+
+- name: Read current hostname
+  ansible.builtin.command:
+    argv: [/usr/bin/hostnamectl, --transient]
+  register: os_baseline_verify_current_hostname
+  changed_when: false
+
+- name: Read effective system timezone
+  ansible.builtin.command:
+    argv: [/usr/bin/timedatectl, show, --property=Timezone, --value]
+  register: os_baseline_verify_timezone
+  changed_when: false
+
+- name: Verify effective host identity
+  ansible.builtin.assert:
+    that:
+      - >-
+        os_baseline_verify_static_hostname.stdout | trim ==
+        os_baseline_verify_expected_hostname
+      - >-
+        os_baseline_verify_current_hostname.stdout | trim ==
+        os_baseline_verify_expected_hostname
+      - >-
+        os_baseline_verify_timezone.stdout | trim ==
+        os_baseline_verify_expected_timezone
+    fail_msg: Static hostname, current hostname, or timezone has drifted

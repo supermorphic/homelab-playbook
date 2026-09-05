@@ -14,10 +14,15 @@
     that:
       - os_baseline_verify_expected_authorized_keys | length > 0
       - os_baseline_verify_expected_management_sources | length > 0
+      - os_baseline_verify_expected_hostname | length > 0
+      - os_baseline_verify_expected_timezone | length > 0
     fail_msg: >-
       OS baseline verification requires authorized controller keys and
       management sources
   no_log: true
+
+- name: Verify host identity state
+  ansible.builtin.import_tasks: identity.yml
 
 - name: Verify administrative access state
   ansible.builtin.import_tasks: access.yml

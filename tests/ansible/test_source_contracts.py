@@ -73,6 +73,9 @@ READ_ONLY_ARGV = {
     ("/usr/bin/systemctl", "is-enabled", "chronyd.service"),
     ("/usr/bin/systemctl", "is-active", "chronyd.service"),
     ("/usr/bin/systemctl", "is-active", "auditd"),
+    ("/usr/bin/hostnamectl", "--static"),
+    ("/usr/bin/hostnamectl", "--transient"),
+    ("/usr/bin/timedatectl", "show", "--property=Timezone", "--value"),
     ("/usr/bin/systemctl", "is-enabled", "firewalld.service"),
     ("/usr/bin/systemctl", "is-enabled", "auditd.service"),
     ("/usr/bin/systemctl", "is-enabled", "apparmor.service"),
@@ -940,10 +943,14 @@ class SourceContractTests(unittest.TestCase):
             "os_baseline_verify_expected_journal_system_keep_free": "1536M",
         }
         documented_inputs = {
+            "host_identity_hostname": "synthetic-hostname",
+            "host_identity_timezone": "Etc/UTC",
             "security_baseline_authorized_keys": ["synthetic-controller-key"],
             "security_baseline_management_sources": ["192.0.2.0/24"],
         }
         required_role_inputs = {
+            "os_baseline_verify_expected_hostname": "{{ host_identity_hostname }}",
+            "os_baseline_verify_expected_timezone": "{{ host_identity_timezone }}",
             "os_baseline_verify_expected_authorized_keys": (
                 "{{ security_baseline_authorized_keys }}"
             ),
@@ -1041,12 +1048,20 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual(
             [], verifier_defaults["os_baseline_verify_expected_management_sources"]
         )
+        self.assertEqual(
+            "", verifier_defaults["os_baseline_verify_expected_hostname"]
+        )
+        self.assertEqual(
+            "", verifier_defaults["os_baseline_verify_expected_timezone"]
+        )
 
         main_tasks = load_tasks("roles/os_baseline_verify/tasks/main.yml")
         self.assertEqual(
             [
                 "os_baseline_verify_expected_authorized_keys | length > 0",
                 "os_baseline_verify_expected_management_sources | length > 0",
+                "os_baseline_verify_expected_hostname | length > 0",
+                "os_baseline_verify_expected_timezone | length > 0",
             ],
             main_tasks[1]["ansible.builtin.assert"]["that"],
         )
@@ -1109,6 +1124,28 @@ class SourceContractTests(unittest.TestCase):
         for task in verifier_tasks:
             with self.subTest(playbook=task["name"]):
                 self.assertEqual(required_role_inputs, task["vars"])
+
+    def test_os_baseline_verifier_reads_and_compares_effective_identity(self) -> None:
+        tasks = load_tasks("roles/os_baseline_verify/tasks/identity.yml")
+        self.assertEqual(
+            [
+                ["/usr/bin/hostnamectl", "--static"],
+                ["/usr/bin/hostnamectl", "--transient"],
+                [
+                    "/usr/bin/timedatectl", "show", "--property=Timezone", "--value",
+                ],
+            ],
+            [task["ansible.builtin.command"]["argv"] for task in tasks[:3]],
+        )
+        self.assertTrue(all(task["changed_when"] is False for task in tasks[:3]))
+        self.assertEqual(
+            [
+                "os_baseline_verify_static_hostname.stdout | trim == os_baseline_verify_expected_hostname",
+                "os_baseline_verify_current_hostname.stdout | trim == os_baseline_verify_expected_hostname",
+                "os_baseline_verify_timezone.stdout | trim == os_baseline_verify_expected_timezone",
+            ],
+            tasks[3]["ansible.builtin.assert"]["that"],
+        )
 
     def test_os_baseline_verifier_script_contract_rejects_missing_and_mutating_sources(self) -> None:
         with self.assertRaises(AssertionError):

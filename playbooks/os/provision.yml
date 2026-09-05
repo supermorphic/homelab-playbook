@@ -95,6 +95,8 @@
       ansible.builtin.import_role:
         name: os_baseline_verify
       vars:
+        os_baseline_verify_expected_hostname: "{{ host_identity_hostname }}"
+        os_baseline_verify_expected_timezone: "{{ host_identity_timezone }}"
         os_baseline_verify_expected_authorized_keys: >-
           {{ security_baseline_authorized_keys }}
         os_baseline_verify_expected_management_sources: >-
