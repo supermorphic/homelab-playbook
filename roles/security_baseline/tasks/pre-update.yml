@@ -12,6 +12,62 @@
     - localpkg_gpgcheck
   when: ansible_facts['os_family'] == 'RedHat'
 
+- name: Inspect the primary legacy Debian repository source
+  ansible.builtin.stat:
+    path: /etc/apt/sources.list
+    follow: false
+  register: security_baseline_debian_primary_legacy_source
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Find legacy Debian repository source fragments
+  ansible.builtin.find:
+    paths: /etc/apt/sources.list.d
+    patterns: '*.list'
+    file_type: file
+    recurse: false
+    follow: false
+  register: security_baseline_debian_legacy_source_fragments
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Record legacy Debian repository source files
+  ansible.builtin.set_fact:
+    security_baseline_debian_legacy_source_files: >-
+      {{
+        (['/etc/apt/sources.list']
+         if (security_baseline_debian_primary_legacy_source.stat.isreg
+             | default(false))
+         else [])
+        + (security_baseline_debian_legacy_source_fragments.files
+           | map(attribute='path') | list)
+      }}
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Pin unqualified legacy Debian repository sources
+  ansible.builtin.replace:
+    path: "{{ item }}"
+    regexp: >-
+      (?x)
+      ^(\s*deb(?:-src)?\s+)
+      (https?://(?:deb\.debian\.org/debian/?|security\.debian\.org/debian-security/?)\s+)
+    replace: >-
+      \g<1>[signed-by=/usr/share/keyrings/debian-archive-keyring.pgp] \g<2>
+  loop: "{{ security_baseline_debian_legacy_source_files }}"
+  when: ansible_facts['os_family'] == 'Debian'
+
+- name: Pin optioned legacy Debian repository sources
+  ansible.builtin.replace:
+    path: "{{ item }}"
+    regexp: >-
+      (?x)
+      ^(\s*deb(?:-src)?\s+\[)
+      (?![^\]]*(?i:signed-by)=)
+      ([^\]]*\]\s+)
+      (https?://(?:deb\.debian\.org/debian/?|security\.debian\.org/debian-security/?)\s+)
+    replace: >-
+      \g<1>signed-by=/usr/share/keyrings/debian-archive-keyring.pgp \g<2>\g<3>
+  loop: "{{ security_baseline_debian_legacy_source_files }}"
+  when: ansible_facts['os_family'] == 'Debian'
+
 - name: Validate effective distribution repository trust
   ansible.builtin.script:
     cmd: validate_repository_trust.py "{{ ansible_facts['os_family'] }}"

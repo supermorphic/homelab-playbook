@@ -214,6 +214,14 @@ and DNF repository GPG checks. It does not import third-party signing keys or
 enable EPEL by default. Later roles must own and justify any additional
 repository.
 
+Debian sources select the package-owned Debian archive keyring explicitly.
+Before trust validation, provisioning adds that restriction to official Debian
+repositories in legacy one-line source files that omit `Signed-By`. It
+preserves their selected suites and components. The trust preflight then
+rejects an unpinned source, a third-party source, or an authentication bypass.
+This supports both Debian source formats without relying on APT's broader
+global trusted-key store.
+
 The baseline package set contains only packages required for:
 
 - the Python and sudo management path;
