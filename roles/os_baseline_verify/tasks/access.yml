@@ -25,10 +25,10 @@
          | reject('equalto', '') | list | sort }}
   ansible.builtin.assert:
     that:
-      - "'ansible' in getent_passwd"
-      - "'ansible' in getent_shadow"
-      - getent_passwd.ansible[5] == '/bin/bash'
-      - getent_shadow.ansible[0] is match('^[!*]')
+      - "'ansible' in ansible_facts['getent_passwd']"
+      - "'ansible' in ansible_facts['getent_shadow']"
+      - ansible_facts['getent_passwd'].ansible[5] == '/bin/bash'
+      - ansible_facts['getent_shadow'].ansible[0] is match('^[!*]')
       - >-
         os_baseline_verify_authorized_key_lines
         == (os_baseline_verify_expected_authorized_keys

@@ -56,7 +56,7 @@
     - name: Assert Debian native security maintenance
       ansible.builtin.assert:
         that:
-          - ansible_os_family == 'Debian'
+          - ansible_facts['os_family'] == 'Debian'
           - "'unattended-upgrades' in ansible_facts.packages"
           - system_maintenance_molecule_debian_timer.stdout | trim == 'enabled'
           - >-
@@ -86,7 +86,7 @@
     - name: Assert Rocky native security maintenance
       ansible.builtin.assert:
         that:
-          - ansible_os_family == 'RedHat'
+          - ansible_facts['os_family'] == 'RedHat'
           - "'dnf-automatic' in ansible_facts.packages"
           - system_maintenance_molecule_rocky_timer.stdout | trim == 'enabled'
           - >-

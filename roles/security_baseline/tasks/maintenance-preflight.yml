@@ -1,7 +1,7 @@
 ---
 - name: Verify effective distribution repository trust
   ansible.builtin.script:
-    cmd: validate_repository_trust.py "{{ ansible_os_family }}"
+    cmd: validate_repository_trust.py "{{ ansible_facts['os_family'] }}"
     executable: /usr/bin/python3
   changed_when: false
 
@@ -10,17 +10,17 @@
     argv: [/usr/bin/dpkg, --audit]
   register: security_baseline_maintenance_debian_package_health
   changed_when: false
-  when: ansible_os_family == 'Debian'
+  when: ansible_facts['os_family'] == 'Debian'
 
 - name: Require consistent Debian package manager state
   ansible.builtin.assert:
     that:
       - security_baseline_maintenance_debian_package_health.stdout | trim == ''
     fail_msg: dpkg reports packages requiring repair; no update was started
-  when: ansible_os_family == 'Debian'
+  when: ansible_facts['os_family'] == 'Debian'
 
 - name: Check Rocky package manager consistency
   ansible.builtin.command:
     argv: [/usr/bin/dnf, check]
   changed_when: false
-  when: ansible_os_family == 'RedHat'
+  when: ansible_facts['os_family'] == 'RedHat'

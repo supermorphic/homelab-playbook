@@ -1,12 +1,12 @@
 ---
 - name: Ensure compose directory exists
   ansible.builtin.file:
-    path: "{{ ansible_user_dir }}/compose/{{ role_name }}"
+    path: "{{ ansible_facts['user_dir'] }}/compose/{{ role_name }}"
     state: directory
     mode: '0755'
 
 - name: Deploy Docker Compose file
   ansible.builtin.template:
     src: docker-compose.yml.j2
-    dest: "{{ ansible_user_dir }}/compose/{{ role_name }}/docker-compose.yml"
+    dest: "{{ ansible_facts['user_dir'] }}/compose/{{ role_name }}/docker-compose.yml"
     mode: '0644'

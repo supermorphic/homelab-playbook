@@ -250,7 +250,7 @@
                  system_maintenance_molecule_baseline_direct_firewall.results,
                  system_maintenance_molecule_baseline_firewall_bindings.stdout,
                  system_maintenance_molecule_baseline_firewall_policies.stdout,
-                 ansible_os_family) }}
+                 ansible_facts['os_family']) }}
       ansible.builtin.assert:
         that:
           - system_maintenance_molecule_baseline_firewall_problems | length == 0
@@ -261,13 +261,13 @@
       ansible.builtin.slurp:
         src: /etc/apparmor/parser.conf
       register: system_maintenance_molecule_baseline_apparmor_configuration
-      when: ansible_os_family == 'Debian'
+      when: ansible_facts['os_family'] == 'Debian'
 
     - name: Read Rocky SELinux configuration evidence
       ansible.builtin.slurp:
         src: /etc/selinux/config
       register: system_maintenance_molecule_baseline_selinux_configuration
-      when: ansible_os_family == 'RedHat'
+      when: ansible_facts['os_family'] == 'RedHat'
 
     - name: Verify platform-native MAC and time provider packages
       ansible.builtin.assert:
@@ -276,7 +276,7 @@
             ('apparmor' in ansible_facts.packages and
              'systemd-timesyncd' in ansible_facts.packages and
              system_maintenance_molecule_baseline_apparmor_configuration.content | b64decode | length > 0)
-            if ansible_os_family == 'Debian'
+            if ansible_facts['os_family'] == 'Debian'
             else
             ('selinux-policy-targeted' in ansible_facts.packages and
              'chrony' in ansible_facts.packages and
@@ -307,13 +307,13 @@
         argv: [/usr/bin/apt-config, dump]
       register: system_maintenance_molecule_baseline_debian_updater
       changed_when: false
-      when: ansible_os_family == 'Debian'
+      when: ansible_facts['os_family'] == 'Debian'
 
     - name: Read Rocky dnf-automatic policy
       ansible.builtin.slurp:
         src: /etc/dnf/automatic.conf
       register: system_maintenance_molecule_baseline_rocky_updater
-      when: ansible_os_family == 'RedHat'
+      when: ansible_facts['os_family'] == 'RedHat'
 
     - name: Read native security updater timer configuration
       ansible.builtin.command:
@@ -322,7 +322,7 @@
           - cat-config
           - >-
             {{ 'systemd/system/apt-daily-upgrade.timer'
-               if ansible_os_family == 'Debian'
+               if ansible_facts['os_family'] == 'Debian'
                else 'systemd/system/dnf-automatic.timer' }}
       register: system_maintenance_molecule_baseline_updater_timer
       changed_when: false
@@ -334,7 +334,7 @@
           - is-enabled
           - >-
             {{ 'apt-daily-upgrade.timer'
-               if ansible_os_family == 'Debian'
+               if ansible_facts['os_family'] == 'Debian'
                else 'dnf-automatic.timer' }}
       register: system_maintenance_molecule_baseline_updater_timer_enabled
       changed_when: false
@@ -346,7 +346,7 @@
               | system_maintenance_molecule_baseline_debian_updater_errors(
                   system_maintenance_molecule_baseline_updater_timer.stdout,
                   system_maintenance_molecule_baseline_updater_timer_enabled.stdout))
-             if ansible_os_family == 'Debian'
+             if ansible_facts['os_family'] == 'Debian'
              else
              (system_maintenance_molecule_baseline_rocky_updater.content
               | b64decode
@@ -360,7 +360,7 @@
     - name: Verify the minimum package set and excluded ownership
       ansible.builtin.assert:
         that:
-          - system_maintenance_molecule_baseline_minimum_packages[ansible_os_family] | difference(ansible_facts.packages.keys()) | length == 0
+          - system_maintenance_molecule_baseline_minimum_packages[ansible_facts['os_family']] | difference(ansible_facts.packages.keys()) | length == 0
           - "'epel-release' not in ansible_facts.packages"
           - "'fail2ban' not in ansible_facts.packages"
 

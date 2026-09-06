@@ -3,10 +3,10 @@
   ansible.builtin.assert:
     that:
       - >-
-        (ansible_distribution == 'Debian' and
-         ansible_distribution_major_version == '13') or
-        (ansible_distribution == 'Rocky' and
-         ansible_distribution_major_version == '9')
+        (ansible_facts['distribution'] == 'Debian' and
+         ansible_facts['distribution_major_version'] == '13') or
+        (ansible_facts['distribution'] == 'Rocky' and
+         ansible_facts['distribution_major_version'] == '9')
     fail_msg: OS baseline verification supports Debian 13 and Rocky Linux 9 only
 
 - name: Validate OS baseline verification inputs

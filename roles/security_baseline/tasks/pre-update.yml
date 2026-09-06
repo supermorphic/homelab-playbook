@@ -10,11 +10,11 @@
   loop:
     - gpgcheck
     - localpkg_gpgcheck
-  when: ansible_os_family == 'RedHat'
+  when: ansible_facts['os_family'] == 'RedHat'
 
 - name: Validate effective distribution repository trust
   ansible.builtin.script:
-    cmd: validate_repository_trust.py "{{ ansible_os_family }}"
+    cmd: validate_repository_trust.py "{{ ansible_facts['os_family'] }}"
     executable: /usr/bin/python3
   changed_when: false
 
@@ -26,7 +26,7 @@
     state: present
     fail_on_autoremove: true
     lock_timeout: 300
-  when: ansible_os_family == 'Debian'
+  when: ansible_facts['os_family'] == 'Debian'
 
 - name: Install Rocky repository trust and time packages
   ansible.builtin.dnf:
@@ -35,11 +35,11 @@
       - chrony
     state: present
     lock_timeout: 300
-  when: ansible_os_family == 'RedHat'
+  when: ansible_facts['os_family'] == 'RedHat'
 
 - name: Enable and start platform time synchronization
   ansible.builtin.systemd_service:
-    name: "{{ 'systemd-timesyncd' if ansible_os_family == 'Debian' else 'chronyd' }}"
+    name: "{{ 'systemd-timesyncd' if ansible_facts['os_family'] == 'Debian' else 'chronyd' }}"
     enabled: true
     state: started
   when: security_baseline_apply_time_runtime | bool

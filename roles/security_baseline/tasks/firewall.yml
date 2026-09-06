@@ -71,7 +71,7 @@
              security_baseline_firewall_management.interface
                if security_baseline_apply_firewall_runtime | bool else '',
              true,
-             ansible_os_family
+             ansible_facts['os_family']
            ) }}
   ansible.builtin.assert:
     that:
@@ -105,7 +105,7 @@
              security_baseline_firewall_runtime_global_before.policies,
              security_baseline_firewall_management.interface | default(''),
              true,
-             ansible_os_family
+             ansible_facts['os_family']
            ) }}
   ansible.builtin.assert:
     that:
@@ -369,7 +369,6 @@
 
 - name: Reset connection after management interface binding
   ansible.builtin.meta: reset_connection
-  when: security_baseline_apply_firewall_runtime | bool
 
 - name: Prove desired management path before removing stale firewall rules
   ansible.builtin.wait_for_connection:
@@ -660,7 +659,7 @@
              security_baseline_firewall_management.interface
                if security_baseline_apply_firewall_runtime | bool else '',
              false,
-             ansible_os_family
+             ansible_facts['os_family']
            ) }}
   ansible.builtin.assert:
     that:
@@ -692,7 +691,7 @@
              security_baseline_firewall_runtime_global_after.policies,
              security_baseline_firewall_management.interface,
              false,
-             ansible_os_family
+             ansible_facts['os_family']
            ) }}
   ansible.builtin.assert:
     that:
@@ -729,7 +728,6 @@
 
 - name: Reset connection after exact firewall reconciliation
   ansible.builtin.meta: reset_connection
-  when: security_baseline_apply_firewall_runtime | bool
 
 - name: Prove a new connection through exact firewall policy
   ansible.builtin.wait_for_connection:

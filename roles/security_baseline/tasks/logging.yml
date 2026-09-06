@@ -75,13 +75,13 @@
     - name: Validate audit package platform support
       ansible.builtin.assert:
         that:
-          - ansible_os_family in security_baseline_audit_packages
+          - ansible_facts['os_family'] in security_baseline_audit_packages
         fail_msg: >-
-          Unsupported audit package platform: {{ ansible_os_family }}
+          Unsupported audit package platform: {{ ansible_facts['os_family'] }}
 
     - name: Install platform audit package
       ansible.builtin.package:
-        name: "{{ security_baseline_audit_packages[ansible_os_family] }}"
+        name: "{{ security_baseline_audit_packages[ansible_facts['os_family']] }}"
         state: present
 
 - name: Enable and start auditd with vendor rules
