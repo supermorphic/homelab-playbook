@@ -5,18 +5,18 @@
       - policycoreutils
       - selinux-policy-targeted
     state: present
-  when: ansible_os_family == 'RedHat'
+  when: ansible_facts['os_family'] == 'RedHat'
 
 - name: Read Rocky SELinux state
   ansible.builtin.command:
     argv: [/usr/sbin/getenforce]
   register: security_baseline_selinux_state
   changed_when: false
-  when: ansible_os_family == 'RedHat'
+  when: ansible_facts['os_family'] == 'RedHat'
 
 - name: Prepare disabled Rocky SELinux for a permissive relabel boot
   when:
-    - ansible_os_family == 'RedHat'
+    - ansible_facts['os_family'] == 'RedHat'
     - security_baseline_apply_kernel_controls | bool
     - security_baseline_selinux_state.stdout | trim == 'Disabled'
   block:
@@ -47,7 +47,7 @@
     update_kernel_param: true
   register: security_baseline_selinux_enforcing
   when:
-    - ansible_os_family == 'RedHat'
+    - ansible_facts['os_family'] == 'RedHat'
     - security_baseline_apply_kernel_controls | bool
     - security_baseline_selinux_state.stdout | trim in ['Permissive', 'Enforcing']
 
@@ -58,7 +58,7 @@
          or (security_baseline_selinux_enforcing.reboot_required
              | default(false) | bool) }}
   when:
-    - ansible_os_family == 'RedHat'
+    - ansible_facts['os_family'] == 'RedHat'
     - security_baseline_apply_kernel_controls | bool
     - security_baseline_selinux_state.stdout | trim in ['Permissive', 'Enforcing']
 
@@ -70,7 +70,7 @@
       - apparmor-profiles
     state: present
   when:
-    - ansible_os_family == 'Debian'
+    - ansible_facts['os_family'] == 'Debian'
 
 - name: Enable and start Debian AppArmor
   ansible.builtin.systemd_service:
@@ -78,5 +78,5 @@
     enabled: true
     state: started
   when:
-    - ansible_os_family == 'Debian'
+    - ansible_facts['os_family'] == 'Debian'
     - security_baseline_apply_kernel_controls | bool

@@ -32,10 +32,10 @@
       ansible.builtin.assert:
         that:
           - >-
-            (ansible_distribution == 'Debian' and
-             ansible_distribution_major_version == '13') or
-            (ansible_distribution == 'Rocky' and
-             ansible_distribution_major_version == '9')
+            (ansible_facts['distribution'] == 'Debian' and
+             ansible_facts['distribution_major_version'] == '13') or
+            (ansible_facts['distribution'] == 'Rocky' and
+             ansible_facts['distribution_major_version'] == '9')
         fail_msg: >-
           os maintenance supports Debian 13 and Rocky Linux 9 only
 
@@ -90,7 +90,6 @@
 
     - name: Reset the connection after an Ansible-controlled reboot
       ansible.builtin.meta: reset_connection
-      when: os_reboot_performed | bool
 
     - name: Gather facts after an Ansible-controlled reboot
       ansible.builtin.setup:

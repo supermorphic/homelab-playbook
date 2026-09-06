@@ -79,6 +79,21 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
             apt_config = self.write_debian_fixture(root, stanza)
             self.repository_trust.validate_debian_configuration(apt_config, root)
 
+    def test_debian_accepts_installer_archive_keyring(self) -> None:
+        stanza = """\
+Types: deb
+URIs: https://deb.debian.org/debian
+Suites: trixie trixie-updates
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            apt_config = self.write_debian_fixture(root, stanza)
+            keyring = root / "usr/share/keyrings/debian-archive-keyring.pgp"
+            keyring.touch()
+            self.repository_trust.validate_debian_configuration(apt_config, root)
+
     def test_debian_rejects_each_source_authentication_bypass(self) -> None:
         bypasses = (
             "Trusted: yes",
@@ -962,6 +977,13 @@ homelab (active)
             "Verify runtime and permanent default firewall zones"
         )
         final_proof = names.index("Prove a new connection through exact firewall policy")
+        reset_tasks = [
+            task
+            for task in tasks
+            if task.get("ansible.builtin.meta") == "reset_connection"
+        ]
+        self.assertEqual(2, len(reset_tasks))
+        self.assertTrue(all("when" not in task for task in reset_tasks))
         self.assertLess(binding_proof, first_proof)
         self.assertLess(first_proof, cleanup)
         self.assertLess(cleanup, exact)
@@ -1059,11 +1081,11 @@ SystemMaxUse=128M
         )
         validate, install = audit["block"]
         self.assertIn(
-            "ansible_os_family in security_baseline_audit_packages",
+            "ansible_facts['os_family'] in security_baseline_audit_packages",
             validate["ansible.builtin.assert"]["that"],
         )
         self.assertEqual(
-            "{{ security_baseline_audit_packages[ansible_os_family] }}",
+            "{{ security_baseline_audit_packages[ansible_facts['os_family']] }}",
             install["ansible.builtin.package"]["name"],
         )
 
@@ -1078,7 +1100,7 @@ SystemMaxUse=128M
             ["policycoreutils", "selinux-policy-targeted"],
             install["ansible.builtin.package"]["name"],
         )
-        self.assertEqual("ansible_os_family == 'RedHat'", install["when"])
+        self.assertEqual("ansible_facts['os_family'] == 'RedHat'", install["when"])
 
 
 if __name__ == "__main__":

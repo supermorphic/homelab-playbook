@@ -603,6 +603,7 @@ def run_platform(
         molecule_environment["ANSIBLE_COLLECTIONS_PATH"] = str(
             repo_root / ".ansible" / "collections"
         )
+        molecule_environment["ANSIBLE_INJECT_FACT_VARS"] = "False"
         molecule_environment["HOMELAB_MOLECULE_PLATFORM"] = (
             platform_definition.name
         )

@@ -10,9 +10,6 @@ RUN apt-get update \
         passwd \
         sudo \
         systemd \
-    && sed -i \
-        's#/usr/share/keyrings/debian-archive-keyring\.pgp#/usr/share/keyrings/debian-archive-keyring.gpg#g' \
-        /etc/apt/sources.list.d/debian.sources \
     && useradd --create-home --shell /bin/bash ansible \
     && passwd --lock ansible \
     && install --directory --mode=0750 /etc/sudoers.d \

@@ -1,7 +1,7 @@
 ---
 - name: Create kube directory
   ansible.builtin.file:
-    path: "{{ ansible_user_dir }}/.kube"
+    path: "{{ ansible_facts['user_dir'] }}/.kube"
     state: directory
     mode: '0700'
 
@@ -25,7 +25,7 @@
 - name: Copy the kubeconfig file to ansible host
   ansible.builtin.copy:
     src: /tmp/kubeconfig
-    dest: "{{ ansible_user_dir }}/.kube/config"
+    dest: "{{ ansible_facts['user_dir'] }}/.kube/config"
     mode: '0600'
 
 - name: Configure kubectl cluster for K3s VIP address
@@ -33,7 +33,7 @@
     kubectl config set-cluster default
       --server https://{{ get_kubeconfig_vip_address }}:6443
   environment:
-    KUBECONFIG: "{{ ansible_user_dir }}/.kube/config"
+    KUBECONFIG: "{{ ansible_facts['user_dir'] }}/.kube/config"
   changed_when: true
 
 - name: Clean tmp kubeconfig

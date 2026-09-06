@@ -7,7 +7,7 @@
   ansible.builtin.slurp:
     src: "{{ item }}"
   loop: >-
-    {{ ['/etc/selinux/config'] if ansible_os_family == 'RedHat'
+    {{ ['/etc/selinux/config'] if ansible_facts['os_family'] == 'RedHat'
        else ['/etc/apparmor/parser.conf', '/etc/apparmor.d/abstractions/base'] }}
   register: os_baseline_verify_platform_configuration
 
@@ -16,7 +16,7 @@
     argv: [/usr/bin/dpkg-query, -L, apparmor, apparmor-profiles]
   register: os_baseline_verify_apparmor_distribution_files
   changed_when: false
-  when: ansible_os_family == 'Debian'
+  when: ansible_facts['os_family'] == 'Debian'
 
 - name: Verify native MAC and time package evidence
   vars:
@@ -25,13 +25,13 @@
   ansible.builtin.assert:
     that:
       - >-
-        ('chrony' in ansible_facts.packages if ansible_os_family == 'RedHat'
+        ('chrony' in ansible_facts.packages if ansible_facts['os_family'] == 'RedHat'
          else 'systemd-timesyncd' in ansible_facts.packages)
       - >-
         ('selinux-policy-targeted' in ansible_facts.packages and
          os_baseline_verify_mac_values.SELINUX | default('') == 'enforcing' and
          os_baseline_verify_mac_values.SELINUXTYPE | default('') == 'targeted')
-        if ansible_os_family == 'RedHat'
+        if ansible_facts['os_family'] == 'RedHat'
         else ('apparmor' in ansible_facts.packages and 'apparmor-utils' in ansible_facts.packages and 'apparmor-profiles' in ansible_facts.packages and
               os_baseline_verify_platform_configuration.results[0].content | b64decode | length > 0 and
               os_baseline_verify_platform_configuration.results[1].content | b64decode | length > 0 and
@@ -45,7 +45,7 @@
   changed_when: false
   when:
     - os_baseline_verify_runtime_controls | bool
-    - ansible_os_family == 'RedHat'
+    - ansible_facts['os_family'] == 'RedHat'
 
 - name: Verify Rocky SELinux relabel recovery action
   ansible.builtin.assert:
@@ -54,7 +54,7 @@
     fail_msg: SELinux is Disabled; reboot the host to complete the authorized relabel.
   when:
     - os_baseline_verify_runtime_controls | bool
-    - ansible_os_family == 'RedHat'
+    - ansible_facts['os_family'] == 'RedHat'
     - security_baseline_reboot_required | default(false) | bool
 
 - name: Verify Rocky SELinux enforcement
@@ -64,7 +64,7 @@
     fail_msg: Rocky SELinux is not enforcing
   when:
     - os_baseline_verify_runtime_controls | bool
-    - ansible_os_family == 'RedHat'
+    - ansible_facts['os_family'] == 'RedHat'
     - >-
       not (os_baseline_verify_selinux_state.stdout | trim == 'Disabled'
            and security_baseline_reboot_required | default(false) | bool)
@@ -76,7 +76,7 @@
   changed_when: false
   when:
     - os_baseline_verify_runtime_controls | bool
-    - ansible_os_family == 'Debian'
+    - ansible_facts['os_family'] == 'Debian'
 
 - name: Read Debian AppArmor service enablement
   ansible.builtin.command:
@@ -85,7 +85,7 @@
   changed_when: false
   when:
     - os_baseline_verify_runtime_controls | bool
-    - ansible_os_family == 'Debian'
+    - ansible_facts['os_family'] == 'Debian'
 
 - name: Read Debian AppArmor enforcing profile state
   ansible.builtin.command:
@@ -94,7 +94,7 @@
   changed_when: false
   when:
     - os_baseline_verify_runtime_controls | bool
-    - ansible_os_family == 'Debian'
+    - ansible_facts['os_family'] == 'Debian'
 
 - name: Verify Debian AppArmor enforcing profiles
   vars:
@@ -114,7 +114,7 @@
     fail_msg: Debian AppArmor is not enabled with loaded profiles
   when:
     - os_baseline_verify_runtime_controls | bool
-    - ansible_os_family == 'Debian'
+    - ansible_facts['os_family'] == 'Debian'
 
 - name: Read Debian time service enablement
   ansible.builtin.command:
@@ -122,7 +122,7 @@
   changed_when: false
   when:
     - os_baseline_verify_runtime_controls | bool
-    - ansible_os_family == 'Debian'
+    - ansible_facts['os_family'] == 'Debian'
 
 - name: Read Debian time service activity
   ansible.builtin.command:
@@ -130,7 +130,7 @@
   changed_when: false
   when:
     - os_baseline_verify_runtime_controls | bool
-    - ansible_os_family == 'Debian'
+    - ansible_facts['os_family'] == 'Debian'
 
 - name: Read Debian time synchronization state
   ansible.builtin.command:
@@ -139,7 +139,7 @@
   changed_when: false
   when:
     - os_baseline_verify_runtime_controls | bool
-    - ansible_os_family == 'Debian'
+    - ansible_facts['os_family'] == 'Debian'
 
 - name: Verify Debian time synchronization
   ansible.builtin.assert:
@@ -148,7 +148,7 @@
     fail_msg: systemd-timesyncd is not synchronized
   when:
     - os_baseline_verify_runtime_controls | bool
-    - ansible_os_family == 'Debian'
+    - ansible_facts['os_family'] == 'Debian'
 
 - name: Read Rocky time service enablement
   ansible.builtin.command:
@@ -156,7 +156,7 @@
   changed_when: false
   when:
     - os_baseline_verify_runtime_controls | bool
-    - ansible_os_family == 'RedHat'
+    - ansible_facts['os_family'] == 'RedHat'
 
 - name: Read Rocky time service activity
   ansible.builtin.command:
@@ -164,7 +164,7 @@
   changed_when: false
   when:
     - os_baseline_verify_runtime_controls | bool
-    - ansible_os_family == 'RedHat'
+    - ansible_facts['os_family'] == 'RedHat'
 
 - name: Read Rocky chrony tracking state
   ansible.builtin.command:
@@ -173,7 +173,7 @@
   changed_when: false
   when:
     - os_baseline_verify_runtime_controls | bool
-    - ansible_os_family == 'RedHat'
+    - ansible_facts['os_family'] == 'RedHat'
 
 - name: Read Rocky chrony source state
   ansible.builtin.command:
@@ -182,7 +182,7 @@
   changed_when: false
   when:
     - os_baseline_verify_runtime_controls | bool
-    - ansible_os_family == 'RedHat'
+    - ansible_facts['os_family'] == 'RedHat'
 
 - name: Verify Rocky chrony synchronization
   ansible.builtin.assert:
@@ -194,4 +194,4 @@
     fail_msg: Chrony is not synchronized with an accepted source
   when:
     - os_baseline_verify_runtime_controls | bool
-    - ansible_os_family == 'RedHat'
+    - ansible_facts['os_family'] == 'RedHat'

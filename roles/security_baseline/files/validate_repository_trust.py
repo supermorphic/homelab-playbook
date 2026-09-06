@@ -13,7 +13,10 @@ from collections.abc import Mapping
 
 
 DEBIAN_ALLOWED_HOSTS = {"deb.debian.org", "security.debian.org"}
-DEBIAN_ARCHIVE_KEYRING = "/usr/share/keyrings/debian-archive-keyring.gpg"
+DEBIAN_ARCHIVE_KEYRINGS = {
+    "/usr/share/keyrings/debian-archive-keyring.gpg",
+    "/usr/share/keyrings/debian-archive-keyring.pgp",
+}
 DEBIAN_GLOBAL_BYPASSES = {
     "Acquire::AllowInsecureRepositories",
     "Acquire::AllowWeakRepositories",
@@ -78,9 +81,9 @@ def _apt_path(config: Mapping[str, str], leaf: str) -> str:
 
 def _require_debian_archive_key(value: str, root: pathlib.Path) -> None:
     keys = value.split()
-    if keys != [DEBIAN_ARCHIVE_KEYRING]:
+    if len(keys) != 1 or keys[0] not in DEBIAN_ARCHIVE_KEYRINGS:
         raise ValueError("Debian source does not use the distribution archive keyring")
-    if not _rooted(root, DEBIAN_ARCHIVE_KEYRING).is_file():
+    if not _rooted(root, keys[0]).is_file():
         raise ValueError("Debian distribution archive keyring is absent")
 
 

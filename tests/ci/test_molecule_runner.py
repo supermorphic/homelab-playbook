@@ -863,6 +863,10 @@ class PlatformWorkerTests(unittest.TestCase):
             "system_maintenance/default",
             molecule_call[2].get("HOMELAB_MOLECULE_SCENARIO_SELECTOR"),
         )
+        self.assertEqual(
+            "False",
+            molecule_call[2].get("ANSIBLE_INJECT_FACT_VARS"),
+        )
 
     def test_worker_cleans_up_after_each_primary_stage_failure(self) -> None:
         cases = (

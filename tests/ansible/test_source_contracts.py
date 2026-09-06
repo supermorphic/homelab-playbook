@@ -96,18 +96,18 @@ READ_ONLY_ARGV_TEMPLATES = {
     "{{ ['/usr/bin/firewall-cmd', item] }}",
     "{{ ['/usr/bin/firewall-offline-cmd', '--direct', item] }}",
     "{{ ['/usr/bin/firewall-cmd', '--direct', item] }}",
-    "{{ ['/usr/bin/systemctl', 'is-enabled',\n    {{ 'apt-daily-upgrade.timer' if ansible_os_family == 'Debian'\n       else 'dnf-automatic.timer' }}] }}",
-    "{{ ['/usr/bin/systemd-analyze', 'cat-config',\n    {{ 'systemd/system/apt-daily-upgrade.timer'\n       if ansible_os_family == 'Debian'\n       else 'systemd/system/dnf-automatic.timer' }}] }}",
+    "{{ ['/usr/bin/systemctl', 'is-enabled',\n    {{ 'apt-daily-upgrade.timer' if ansible_facts['os_family'] == 'Debian'\n       else 'dnf-automatic.timer' }}] }}",
+    "{{ ['/usr/bin/systemd-analyze', 'cat-config',\n    {{ 'systemd/system/apt-daily-upgrade.timer'\n       if ansible_facts['os_family'] == 'Debian'\n       else 'systemd/system/dnf-automatic.timer' }}] }}",
 }
 
 READ_ONLY_ARGV_DYNAMIC_LISTS = {
     (
         "/usr/bin/systemctl", "is-enabled",
-        "{{ 'apt-daily-upgrade.timer' if ansible_os_family == 'Debian'\n   else 'dnf-automatic.timer' }}",
+        "{{ 'apt-daily-upgrade.timer' if ansible_facts['os_family'] == 'Debian'\n   else 'dnf-automatic.timer' }}",
     ),
     (
         "/usr/bin/systemd-analyze", "cat-config",
-        "{{ 'systemd/system/apt-daily-upgrade.timer'\n   if ansible_os_family == 'Debian'\n   else 'systemd/system/dnf-automatic.timer' }}",
+        "{{ 'systemd/system/apt-daily-upgrade.timer'\n   if ansible_facts['os_family'] == 'Debian'\n   else 'systemd/system/dnf-automatic.timer' }}",
     ),
 }
 
@@ -592,7 +592,8 @@ class SourceContractTests(unittest.TestCase):
             "ansible.builtin.import_role",
             {"name": "security_baseline", "tasks_from": "mac.yml"},
         )
-        for index in (reset, setup, post_boot):
+        self.assertNotIn("when", provisioning_pre[reset])
+        for index in (setup, post_boot):
             self.assertEqual("os_reboot_performed | bool", provisioning_pre[index]["when"])
         assert_strictly_ordered(
             identity,
@@ -648,8 +649,8 @@ class SourceContractTests(unittest.TestCase):
             "ansible.builtin.assert"
         ]["that"]
         self.assertEqual(1, len(maintenance_platform_contract))
-        self.assertIn("ansible_distribution == 'Debian'", maintenance_platform_contract[0])
-        self.assertIn("ansible_distribution == 'Rocky'", maintenance_platform_contract[0])
+        self.assertIn("ansible_facts['distribution'] == 'Debian'", maintenance_platform_contract[0])
+        self.assertIn("ansible_facts['distribution'] == 'Rocky'", maintenance_platform_contract[0])
         self.assertEqual(
             "os maintenance supports Debian 13 and Rocky Linux 9 only",
             normalize_expression(
@@ -742,10 +743,10 @@ class SourceContractTests(unittest.TestCase):
             if task["name"]
             == "Gather facts after an Ansible-controlled reboot"
         )
-        for index in (maintenance_reset, maintenance_setup):
-            self.assertEqual(
-                "os_reboot_performed | bool", maintenance_pre[index]["when"]
-            )
+        self.assertNotIn("when", maintenance_pre[maintenance_reset])
+        self.assertEqual(
+            "os_reboot_performed | bool", maintenance_pre[maintenance_setup]["when"]
+        )
         assert_strictly_ordered(
             maintenance_connection_preflight,
             maintenance_initial_setup,
@@ -872,8 +873,8 @@ class SourceContractTests(unittest.TestCase):
     def test_os_maintenance_rejects_unsupported_distribution_releases(self) -> None:
         """Full maintenance must stop before updating unsupported family members."""
         unsupported = (
-            {"ansible_os_family": "Debian", "ansible_distribution": "Debian", "ansible_distribution_major_version": "12"},
-            {"ansible_os_family": "RedHat", "ansible_distribution": "RedHat", "ansible_distribution_major_version": "9"},
+            {"os_family": "Debian", "distribution": "Debian", "distribution_major_version": "12"},
+            {"os_family": "RedHat", "distribution": "RedHat", "distribution_major_version": "9"},
         )
         for facts in unsupported:
             with self.subTest(facts=facts):
@@ -891,7 +892,7 @@ class SourceContractTests(unittest.TestCase):
                         "--start-at-task",
                         "Validate full-maintenance platform support",
                         "--extra-vars",
-                        str({"ansible_become": False, **facts}),
+                        str({"ansible_become": False, "ansible_facts": facts}),
                     ],
                     cwd=REPOSITORY_ROOT,
                     check=False,
@@ -935,7 +936,7 @@ class SourceContractTests(unittest.TestCase):
             [task["name"] for task in tasks],
         )
         self.assertEqual(
-            {"cmd": "validate_repository_trust.py \"{{ ansible_os_family }}\"", "executable": "/usr/bin/python3"},
+            {"cmd": "validate_repository_trust.py \"{{ ansible_facts['os_family'] }}\"", "executable": "/usr/bin/python3"},
             tasks[0]["ansible.builtin.script"],
         )
         self.assertIs(tasks[0]["changed_when"], False)
@@ -1165,13 +1166,16 @@ class SourceContractTests(unittest.TestCase):
             for task in access_tasks
             if task["name"] == "Verify authoritative ansible access records"
         )
+        access_conditions = access_assert["ansible.builtin.assert"]["that"]
+        self.assertIn("'ansible' in ansible_facts['getent_passwd']", access_conditions)
+        self.assertIn("'ansible' in ansible_facts['getent_shadow']", access_conditions)
         self.assertIn(
             "os_baseline_verify_authorized_key_lines "
             "== (os_baseline_verify_expected_authorized_keys "
             "| map('trim') | list | sort)",
             [
                 normalize_expression(assertion)
-                for assertion in access_assert["ansible.builtin.assert"]["that"]
+                for assertion in access_conditions
             ],
         )
 
@@ -1329,7 +1333,7 @@ class SourceContractTests(unittest.TestCase):
             if "ansible.builtin.import_role" in task
         ]
         self.assertEqual(
-            ["ansible_os_family in ['Debian', 'RedHat']"],
+            ["ansible_facts['os_family'] in ['Debian', 'RedHat']"],
             platform_preflight["ansible.builtin.assert"]["that"],
         )
         self.assertTrue(imported_role_indices)
@@ -1353,7 +1357,7 @@ class SourceContractTests(unittest.TestCase):
                 "--start-at-task",
                 "Validate complete provisioning platform support",
                 "--extra-vars",
-                '{"ansible_become": false, "ansible_os_family": "Archlinux"}',
+                '{"ansible_become": false, "ansible_facts": {"os_family": "Archlinux"}}',
             ],
             cwd=REPOSITORY_ROOT,
             check=False,
@@ -1428,11 +1432,11 @@ class SourceContractTests(unittest.TestCase):
             first_task["ansible.builtin.assert"],
             {
                 "that": [
-                    "ansible_os_family in ['Debian', 'RedHat']"
+                    "ansible_facts['os_family'] in ['Debian', 'RedHat']"
                 ],
                 "fail_msg": (
                     "system-maintenance does not support operating-system family "
-                    "received {{ ansible_os_family }}"
+                    "received {{ ansible_facts['os_family'] }}"
                 ),
             },
         )
@@ -1457,7 +1461,7 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual(
             [
                 "system_maintenance_configure_automatic_updates | bool",
-                "ansible_os_family in ['Debian', 'RedHat']",
+                "ansible_facts['os_family'] in ['Debian', 'RedHat']",
             ],
             automatic_updates["when"],
         )
@@ -1465,7 +1469,7 @@ class SourceContractTests(unittest.TestCase):
             "roles/system_maintenance/tasks/reboot-state.yml"
         )[0]
         self.assertEqual(
-            "ansible_os_family in ['Debian', 'RedHat']",
+            "ansible_facts['os_family'] in ['Debian', 'RedHat']",
             reboot_state["when"],
         )
 
@@ -1476,11 +1480,11 @@ class SourceContractTests(unittest.TestCase):
         supported_families = ("Debian",)
 
         self.assertEqual(
-            "setup-{{ ansible_os_family }}.yml",
+            "setup-{{ ansible_facts['os_family'] }}.yml",
             dispatch_task["ansible.builtin.include_tasks"],
         )
         self.assertEqual(
-            "ansible_os_family in ['Debian']",
+            "ansible_facts['os_family'] in ['Debian']",
             dispatch_task["when"],
         )
         for os_family in supported_families:
@@ -1780,8 +1784,8 @@ class SourceContractTests(unittest.TestCase):
         )
         self.assertEqual("targeted", selinux["ansible.posix.selinux"]["policy"])
         self.assertEqual("enforcing", selinux["ansible.posix.selinux"]["state"])
-        self.assertIn("ansible_os_family == 'RedHat'", selinux["when"])
-        self.assertIn("ansible_os_family == 'Debian'", apparmor["when"])
+        self.assertIn("ansible_facts['os_family'] == 'RedHat'", selinux["when"])
+        self.assertIn("ansible_facts['os_family'] == 'Debian'", apparmor["when"])
 
     def test_logging_uses_persistent_bounded_journal(self) -> None:
         template = (
@@ -1825,16 +1829,16 @@ class SourceContractTests(unittest.TestCase):
             {"name": ["ca-certificates", "systemd-timesyncd"], "state": "present", "fail_on_autoremove": True, "lock_timeout": 300},
             debian["ansible.builtin.apt"],
         )
-        self.assertEqual("ansible_os_family == 'Debian'", debian["when"])
+        self.assertEqual("ansible_facts['os_family'] == 'Debian'", debian["when"])
         self.assertNotIn("security_baseline_apply_time_runtime", str(debian))
         self.assertEqual(
             {"name": ["ca-certificates", "chrony"], "state": "present", "lock_timeout": 300},
             rocky["ansible.builtin.dnf"],
         )
-        self.assertEqual("ansible_os_family == 'RedHat'", rocky["when"])
+        self.assertEqual("ansible_facts['os_family'] == 'RedHat'", rocky["when"])
         self.assertNotIn("security_baseline_apply_time_runtime", str(rocky))
         self.assertEqual(
-            "{{ 'systemd-timesyncd' if ansible_os_family == 'Debian' else 'chronyd' }}",
+            "{{ 'systemd-timesyncd' if ansible_facts['os_family'] == 'Debian' else 'chronyd' }}",
             runtime["ansible.builtin.systemd_service"]["name"],
         )
         self.assertEqual("security_baseline_apply_time_runtime | bool", runtime["when"])
@@ -1864,7 +1868,7 @@ class SourceContractTests(unittest.TestCase):
                 self.assertEqual(argv, task["ansible.builtin.command"]["argv"])
                 self.assertIs(False, task["changed_when"])
                 self.assertEqual(
-                    ["os_baseline_verify_runtime_controls | bool", "ansible_os_family == 'Debian'" if "Debian" in name else "ansible_os_family == 'RedHat'"],
+                    ["os_baseline_verify_runtime_controls | bool", "ansible_facts['os_family'] == 'Debian'" if "Debian" in name else "ansible_facts['os_family'] == 'RedHat'"],
                     task["when"],
                 )
 
@@ -2367,6 +2371,7 @@ class SourceContractTests(unittest.TestCase):
 
         self.assertEqual(config["defaults"]["roles_path"], "./.ansible/roles:./roles")
         self.assertEqual(config["defaults"]["collections_path"], "./.ansible/collections")
+        self.assertEqual(config["defaults"]["inject_facts_as_vars"], "false")
 
     def test_ansible_cfg_does_not_disable_host_key_checking(self) -> None:
         """Host-key verification must remain enabled unless Ansible's default is used."""

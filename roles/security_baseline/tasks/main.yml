@@ -7,10 +7,10 @@
   ansible.builtin.assert:
     that:
       - >-
-        (ansible_distribution == 'Debian' and
-         ansible_distribution_major_version == '13') or
-        (ansible_distribution == 'Rocky' and
-         ansible_distribution_major_version == '9')
+        (ansible_facts['distribution'] == 'Debian' and
+         ansible_facts['distribution_major_version'] == '13') or
+        (ansible_facts['distribution'] == 'Rocky' and
+         ansible_facts['distribution_major_version'] == '9')
       - ansible_user | default('') == 'ansible'
       - security_baseline_authorized_keys | length > 0
       - security_baseline_management_sources | length > 0

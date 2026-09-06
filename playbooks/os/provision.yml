@@ -18,9 +18,9 @@
     - name: Validate complete provisioning platform support
       ansible.builtin.assert:
         that:
-          - ansible_os_family in ['Debian', 'RedHat']
+          - ansible_facts['os_family'] in ['Debian', 'RedHat']
         fail_msg: >-
-          os provision does not support {{ ansible_os_family }} because its
+          os provision does not support {{ ansible_facts['os_family'] }} because its
           complete security baseline supports only Debian and RedHat
 
     - name: Validate complete provisioning security baseline inputs
@@ -85,7 +85,6 @@
 
     - name: Reset the connection after an Ansible-controlled reboot
       ansible.builtin.meta: reset_connection
-      when: os_reboot_performed | bool
 
     - name: Gather facts after an Ansible-controlled reboot
       ansible.builtin.setup:

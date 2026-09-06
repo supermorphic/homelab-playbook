@@ -440,7 +440,6 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertNotIn("python3", debian)
-        self.assertIn("debian-archive-keyring.gpg", debian)
         self.assertIn("python3", rocky)
         self.assertIn("rm -f /usr/bin/python3", rocky)
         self.assertNotIn("/usr/libexec/platform-python", rocky.split("rm -f", 1)[1])
