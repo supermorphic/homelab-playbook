@@ -18,7 +18,8 @@ unset \
   ANSIBLE_VAULT_PASSWORD_FILE
 
 mkdir -p \
-  "$inventory_test_root/production/group_vars/pihole" \
+  "$inventory_test_root/production/group_vars/os_managed" \
+  "$inventory_test_root/production/host_vars/nuc4" \
   "$inventory_test_root/staging/group_vars/semaphore" \
   "$inventory_test_root/staging-semaphore/group_vars/semaphore" \
   "$inventory_test_root/frozen/k3s/group_vars/k3s_cluster" \
@@ -26,8 +27,10 @@ mkdir -p \
 
 cp "$repository_root/inventory/production/hosts.yml" \
   "$inventory_test_root/production/hosts.yml"
-cp "$repository_root/inventory/production/group_vars/pihole/vars.yml" \
-  "$inventory_test_root/production/group_vars/pihole/vars.yml"
+cp "$repository_root/inventory/production/group_vars/os_managed/vars.yml" \
+  "$inventory_test_root/production/group_vars/os_managed/vars.yml"
+cp "$repository_root/inventory/production/host_vars/nuc4/vars.yml" \
+  "$inventory_test_root/production/host_vars/nuc4/vars.yml"
 
 cp "$repository_root/inventory/staging/hosts.yml" \
   "$inventory_test_root/staging/hosts.yml"
@@ -91,25 +94,21 @@ frozen_k3s = load_inventory(sys.argv[2])
 staging = load_inventory(sys.argv[3])
 staging_semaphore = load_inventory(sys.argv[4])
 
-assert "pihole" in production, "production inventory must contain the pihole group"
+assert production["os_managed"].get("hosts", []) == ["nuc4"]
+for retired_group in ("servers", "pihole", "ansible"):
+    assert retired_group not in production
+host_variables = production.get("_meta", {}).get("hostvars", {}).get("nuc4", {})
+assert host_variables.get("ansible_user") == "ansible"
+assert host_variables.get("host_identity_hostname") == "nuc4"
+for protected_variable in (
+    "host_identity_timezone",
+    "security_baseline_authorized_keys",
+    "security_baseline_management_sources",
+):
+    assert protected_variable not in host_variables
 assert "k3s_cluster" not in production, (
     "production inventory must not contain the k3s_cluster group"
 )
-pihole_hosts = production["pihole"].get("hosts", [])
-assert pihole_hosts, "production inventory must resolve at least one pihole host"
-required_pihole_variables = {
-    "pihole_dns_list_file",
-    "pihole_dnsmasq_listening",
-    "pihole_pihole_dns_1",
-    "unbound_listen_addresses",
-}
-for host in pihole_hosts:
-    host_variables = production.get("_meta", {}).get("hostvars", {}).get(host, {})
-    missing_variables = required_pihole_variables.difference(host_variables)
-    assert not missing_variables, (
-        f"production pihole host {host} is missing public dependency variables: "
-        f"{sorted(missing_variables)}"
-    )
 assert "k3s_cluster" in frozen_k3s, (
     "frozen/k3s inventory must contain the k3s_cluster group"
 )

@@ -136,8 +136,9 @@ authority and precondition rules in `AGENTS.md`.
 
 For example, `os inspect` follows the live-observation profile, while `os
 provision` and `os maintain` follow the existing-state-reconciliation profile.
-The [OS playbook guide](../../playbooks/os/README.md) documents their exact
-interface and safeguards.
+The [OS playbook README](../../playbooks/os/README.md) describes the subsystem.
+The [managed host onboarding guide](../guides/managed-host-onboarding.md)
+documents the exact operator interface and safeguards.
 
 ### Dependency bootstrap
 

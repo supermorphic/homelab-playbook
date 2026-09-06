@@ -1,6 +1,6 @@
 ---
 - name: Inspect operating system
-  hosts: servers
+  hosts: os_managed
   become: false
   gather_facts: false
   tasks:

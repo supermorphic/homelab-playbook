@@ -67,6 +67,8 @@
     - name: Start the unprivileged systemd test container
       containers.podman.podman_container:
         name: "{{ system_maintenance_molecule_platform.container_name }}"
+        hostname: >-
+          {{ system_maintenance_molecule_platform.hostname | default(omit) }}
         image: "{{ system_maintenance_molecule_platform.image }}"
         command: "{{ system_maintenance_molecule_platform.container_command }}"
         state: started

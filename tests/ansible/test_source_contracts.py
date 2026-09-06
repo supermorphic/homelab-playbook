@@ -73,6 +73,9 @@ READ_ONLY_ARGV = {
     ("/usr/bin/systemctl", "is-enabled", "chronyd.service"),
     ("/usr/bin/systemctl", "is-active", "chronyd.service"),
     ("/usr/bin/systemctl", "is-active", "auditd"),
+    ("/usr/bin/hostnamectl", "--static"),
+    ("/usr/bin/hostnamectl", "--transient"),
+    ("/usr/bin/timedatectl", "show", "--property=Timezone", "--value"),
     ("/usr/bin/systemctl", "is-enabled", "firewalld.service"),
     ("/usr/bin/systemctl", "is-enabled", "auditd.service"),
     ("/usr/bin/systemctl", "is-enabled", "apparmor.service"),
@@ -436,12 +439,50 @@ def assert_scheduler_neutral_maintenance(play: dict[str, object]) -> None:
 
 
 class SourceContractTests(unittest.TestCase):
+    def test_host_identity_validates_all_inputs_before_mutation(self) -> None:
+        tasks = load_tasks("roles/host_identity/tasks/main.yml")
+        self.assertEqual(
+            [
+                "ansible.builtin.assert",
+                "ansible.builtin.stat",
+                "ansible.builtin.assert",
+                "ansible.builtin.hostname",
+                "community.general.timezone",
+            ],
+            [task_module(task) for task in tasks],
+        )
+        self.assertTrue(all(task.get("no_log") is True for task in tasks[:3]))
+        self.assertEqual(
+            "/usr/share/zoneinfo/{{ host_identity_timezone }}",
+            tasks[1]["ansible.builtin.stat"]["path"],
+        )
+        self.assertEqual(
+            {"name": "{{ host_identity_hostname }}"},
+            tasks[3]["ansible.builtin.hostname"],
+        )
+        self.assertEqual(
+            {"name": "{{ host_identity_timezone }}"},
+            tasks[4]["community.general.timezone"],
+        )
+        timezone_shape = tasks[0]["ansible.builtin.assert"]["that"][-1]
+        self.assertIn("split('/')", timezone_shape)
+        self.assertIn("select('in', ['', '.', '..'])", timezone_shape)
+        self.assertIn("length == 0", timezone_shape)
+
+        requirements = load_yaml_documents("requirements.yml")[0]
+        community_general = next(
+            collection for collection in requirements["collections"]
+            if collection["name"] == "community.general"
+        )
+        self.assertEqual("13.3.0", community_general["version"])
+
     def test_os_playbooks_are_sequential_and_reboot_at_playbook_level(self) -> None:
         provision, maintain = (
             load_yaml_documents(path)[0]
             for path in ("playbooks/os/provision.yml", "playbooks/os/maintain.yml")
         )
         for plays in (provision, maintain):
+            self.assertTrue(all(play["hosts"] == "os_managed" for play in plays))
             self.assertTrue(all(play["serial"] == 1 for play in plays))
             self.assertTrue(all(play["any_errors_fatal"] is True for play in plays))
 
@@ -472,6 +513,27 @@ class SourceContractTests(unittest.TestCase):
         self.assertIs(maintenance_initial_facts["become"], True)
         provisioning_pre = provisioning["pre_tasks"]
         provisioning_post = provisioning["post_tasks"]
+        provisioning_input_preflight = next(
+            task
+            for task in provisioning_pre
+            if task["name"]
+            == "Validate complete provisioning security baseline inputs"
+        )
+        self.assertEqual(
+            [
+                "ansible_user | default('') == 'ansible'",
+                "security_baseline_authorized_keys | length > 0",
+                "security_baseline_management_sources | length > 0",
+                "host_identity_hostname | default('') | length > 0",
+                "host_identity_timezone | default('') | length > 0",
+            ],
+            provisioning_input_preflight["ansible.builtin.assert"]["that"],
+        )
+        identity = unique_task_index(
+            provisioning_pre,
+            "ansible.builtin.import_role",
+            {"name": "host_identity"},
+        )
         pre_update = unique_task_index(
             provisioning_pre,
             "ansible.builtin.import_role",
@@ -533,6 +595,7 @@ class SourceContractTests(unittest.TestCase):
         for index in (reset, setup, post_boot):
             self.assertEqual("os_reboot_performed | bool", provisioning_pre[index]["when"])
         assert_strictly_ordered(
+            identity,
             pre_update,
             full_update,
             security_post_update,
@@ -552,6 +615,23 @@ class SourceContractTests(unittest.TestCase):
             {"name": "os_baseline_verify"},
         )
         self.assertEqual(0, verifier)
+        self.assertEqual(
+            {
+                "os_baseline_verify_expected_authorized_keys": (
+                    "{{ security_baseline_authorized_keys }}"
+                ),
+                "os_baseline_verify_expected_management_sources": (
+                    "{{ security_baseline_management_sources }}"
+                ),
+                "os_baseline_verify_expected_hostname": (
+                    "{{ host_identity_hostname }}"
+                ),
+                "os_baseline_verify_expected_timezone": (
+                    "{{ host_identity_timezone }}"
+                ),
+            },
+            provisioning_post[verifier]["vars"],
+        )
 
         maintenance_post = maintenance["post_tasks"]
         assert_scheduler_neutral_maintenance(maintenance)
@@ -582,6 +662,22 @@ class SourceContractTests(unittest.TestCase):
             if task["name"] == "Validate complete-platform verification inputs"
         )
         self.assertNotIn("when", maintenance_input_preflight)
+        self.assertEqual(
+            [
+                "security_baseline_authorized_keys | length > 0",
+                "security_baseline_management_sources | length > 0",
+                "host_identity_hostname | default('') | length > 0",
+                "host_identity_timezone | default('') | length > 0",
+            ],
+            maintenance_input_preflight["ansible.builtin.assert"]["that"],
+        )
+        self.assertFalse(
+            any(
+                task.get("ansible.builtin.import_role")
+                == {"name": "host_identity"}
+                for task in maintenance_pre
+            )
+        )
         maintenance_connection_preflight = unique_task_index(
             maintenance_pre,
             "ansible.builtin.import_role",
@@ -680,6 +776,23 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual(0, maintenance_verifier)
         self.assertNotIn("when", maintenance_post[maintenance_verifier])
         self.assertIs(maintenance_post[maintenance_verifier]["become"], True)
+        self.assertEqual(
+            {
+                "os_baseline_verify_expected_authorized_keys": (
+                    "{{ security_baseline_authorized_keys }}"
+                ),
+                "os_baseline_verify_expected_management_sources": (
+                    "{{ security_baseline_management_sources }}"
+                ),
+                "os_baseline_verify_expected_hostname": (
+                    "{{ host_identity_hostname }}"
+                ),
+                "os_baseline_verify_expected_timezone": (
+                    "{{ host_identity_timezone }}"
+                ),
+            },
+            maintenance_post[maintenance_verifier]["vars"],
+        )
 
     def test_os_playbook_contracts_reject_unsafe_composition_mutations(self) -> None:
         provision, maintenance_document = (
@@ -769,11 +882,11 @@ class SourceContractTests(unittest.TestCase):
                         "ansible-playbook",
                         "playbooks/os/maintain.yml",
                         "--inventory",
-                        "servers,",
+                        "os_managed,",
                         "--connection",
                         "local",
                         "--limit",
-                        "servers",
+                        "os_managed",
                         "--check",
                         "--start-at-task",
                         "Validate full-maintenance platform support",
@@ -903,10 +1016,28 @@ class SourceContractTests(unittest.TestCase):
             "os_baseline_verify_expected_journal_system_keep_free": "1536M",
         }
         documented_inputs = {
+            "host_identity_hostname": "synthetic-hostname",
+            "host_identity_timezone": "Etc/UTC",
             "security_baseline_authorized_keys": ["synthetic-controller-key"],
             "security_baseline_management_sources": ["192.0.2.0/24"],
         }
         required_role_inputs = {
+            "os_baseline_verify_expected_hostname": "{{ host_identity_hostname }}",
+            "os_baseline_verify_expected_timezone": "{{ host_identity_timezone }}",
+            "os_baseline_verify_expected_authorized_keys": (
+                "{{ security_baseline_authorized_keys }}"
+            ),
+            "os_baseline_verify_expected_management_sources": (
+                "{{ security_baseline_management_sources }}"
+            ),
+        }
+        lifecycle_role_inputs = {
+            "os_baseline_verify_expected_hostname": (
+                "{{ host_identity_hostname }}"
+            ),
+            "os_baseline_verify_expected_timezone": (
+                "{{ host_identity_timezone }}"
+            ),
             "os_baseline_verify_expected_authorized_keys": (
                 "{{ security_baseline_authorized_keys }}"
             ),
@@ -1004,16 +1135,29 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual(
             [], verifier_defaults["os_baseline_verify_expected_management_sources"]
         )
+        self.assertEqual(
+            "", verifier_defaults["os_baseline_verify_expected_hostname"]
+        )
+        self.assertEqual(
+            "", verifier_defaults["os_baseline_verify_expected_timezone"]
+        )
 
         main_tasks = load_tasks("roles/os_baseline_verify/tasks/main.yml")
         self.assertEqual(
             [
                 "os_baseline_verify_expected_authorized_keys | length > 0",
                 "os_baseline_verify_expected_management_sources | length > 0",
+                "os_baseline_verify_expected_hostname | length > 0",
+                "os_baseline_verify_expected_timezone | length > 0",
             ],
             main_tasks[1]["ansible.builtin.assert"]["that"],
         )
         self.assertIs(main_tasks[1]["no_log"], True)
+        self.assertEqual(
+            "OS baseline verification requires desired hostname, timezone, "
+            "authorized controller keys, and management sources",
+            main_tasks[1]["ansible.builtin.assert"]["fail_msg"],
+        )
 
         access_tasks = load_tasks("roles/os_baseline_verify/tasks/access.yml")
         access_assert = next(
@@ -1071,7 +1215,29 @@ class SourceContractTests(unittest.TestCase):
         verifier_tasks = (provision[1]["post_tasks"][0], maintain[0]["post_tasks"][0])
         for task in verifier_tasks:
             with self.subTest(playbook=task["name"]):
-                self.assertEqual(required_role_inputs, task["vars"])
+                self.assertEqual(lifecycle_role_inputs, task["vars"])
+
+    def test_os_baseline_verifier_reads_and_compares_effective_identity(self) -> None:
+        tasks = load_tasks("roles/os_baseline_verify/tasks/identity.yml")
+        self.assertEqual(
+            [
+                ["/usr/bin/hostnamectl", "--static"],
+                ["/usr/bin/hostnamectl", "--transient"],
+                [
+                    "/usr/bin/timedatectl", "show", "--property=Timezone", "--value",
+                ],
+            ],
+            [task["ansible.builtin.command"]["argv"] for task in tasks[:3]],
+        )
+        self.assertTrue(all(task["changed_when"] is False for task in tasks[:3]))
+        self.assertEqual(
+            [
+                "os_baseline_verify_static_hostname.stdout | trim == os_baseline_verify_expected_hostname",
+                "os_baseline_verify_current_hostname.stdout | trim == os_baseline_verify_expected_hostname",
+                "os_baseline_verify_timezone.stdout | trim == os_baseline_verify_expected_timezone",
+            ],
+            tasks[3]["ansible.builtin.assert"]["that"],
+        )
 
     def test_os_baseline_verifier_script_contract_rejects_missing_and_mutating_sources(self) -> None:
         with self.assertRaises(AssertionError):
@@ -1179,11 +1345,11 @@ class SourceContractTests(unittest.TestCase):
                 "ansible-playbook",
                 "playbooks/os/provision.yml",
                 "--inventory",
-                "servers,",
+                "os_managed,",
                 "--connection",
                 "local",
                 "--limit",
-                "servers",
+                "os_managed",
                 "--start-at-task",
                 "Validate complete provisioning platform support",
                 "--extra-vars",
@@ -2065,6 +2231,73 @@ class SourceContractTests(unittest.TestCase):
             ],
         )
 
+    def test_managed_host_onboarding_guide_preserves_operator_procedure(self) -> None:
+        """The onboarding guide must preserve the complete operator procedure."""
+        guide = (
+            REPOSITORY_ROOT / "docs/guides/managed-host-onboarding.md"
+        ).read_text(
+            encoding="utf-8"
+        )
+        required_commands = (
+            "ssh-keygen \\\n  -t ed25519 \\\n  -f ~/.ssh/id_ed25519_homelab_ansible \\\n  -C \"homelab ansible operator\"",
+            "ssh-copy-id -i ~/.ssh/id_ed25519_homelab_ansible.pub nuc4",
+            "ssh nuc4 'id -un'",
+            "ssh nuc4 'sudo -n id -u'",
+            (
+                "mise exec -- ansible-vault create "
+                "inventory/production/group_vars/os_managed/vault.yml"
+            ),
+            (
+                "mise run playbook -- os inspect production --limit nuc4 "
+                "--ask-vault-pass"
+            ),
+            (
+                "mise run playbook -- os provision production --limit nuc4 "
+                "--ask-vault-pass"
+            ),
+            (
+                "mise run playbook -- os maintain production --limit nuc4 "
+                "--ask-vault-pass"
+            ),
+            "ssh nuc4 'hostnamectl --static'",
+            "ssh nuc4 'timedatectl show --property=Timezone --value'",
+        )
+        for command in required_commands:
+            with self.subTest(command=command):
+                self.assertIn(command, guide)
+
+        self.assertIn(
+            "The complete desired SSH public-key set is required because the "
+            "existing security baseline authoritatively manages the `ansible` "
+            "account's `authorized_keys`.",
+            guide,
+        )
+
+        forbidden_fragments = (
+            "-a 64",
+            "--vault-password-file",
+            "--vault-id",
+            "ANSIBLE_VAULT_PASSWORD_FILE",
+            "vault_password_file",
+            "security find-generic-password",
+            "op read",
+            "pass show",
+        )
+        for fragment in forbidden_fragments:
+            with self.subTest(fragment=fragment):
+                self.assertNotIn(fragment, guide)
+
+        self.assertNotRegex(
+            guide,
+            r"-o\s*(?:PreferredAuthentications|PasswordAuthentication|"
+            r"KbdInteractiveAuthentication)\b",
+        )
+        self.assertNotRegex(
+            guide,
+            r"\b(?:Africa|America|Antarctica|Arctic|Asia|Atlantic|Australia|"
+            r"Europe|Indian|Pacific)/[A-Za-z0-9_+.-]+(?:/[A-Za-z0-9_+.-]+)?\b",
+        )
+
     def test_os_inspect_reports_only_allowlisted_facts(self) -> None:
         """Host inspection must remain read-only and omit identifying facts."""
         playbook_path = REPOSITORY_ROOT / "playbooks/os/inspect.yml"
@@ -2086,7 +2319,7 @@ class SourceContractTests(unittest.TestCase):
             "ansible_virtualization_type",
         ]
 
-        self.assertEqual(play["hosts"], "servers")
+        self.assertEqual(play["hosts"], "os_managed")
         self.assertIs(play["become"], False)
         self.assertIs(play["gather_facts"], False)
         self.assertEqual(len(tasks), 2)

@@ -6,7 +6,7 @@ ignore: |
   .venv/
   .tmp/
   inventory/frozen/k3s/group_vars/k3s_cluster/vault.yml
-  inventory/production/group_vars/pihole/vault.yml
+  inventory/production/group_vars/os_managed/vault.yml
   inventory/staging/group_vars/semaphore/vault.yml
 rules:
   braces:

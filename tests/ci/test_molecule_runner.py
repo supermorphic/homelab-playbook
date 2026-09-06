@@ -165,7 +165,7 @@ class RunnerCliTests(unittest.TestCase):
             "system_maintenance/baseline": {
                 "role_name": "system_maintenance",
                 "scenario_name": "baseline",
-                "groups": ["servers"],
+                "groups": ["os_managed"],
                 "platforms": [
                     (
                         "debian13",

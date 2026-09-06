@@ -1,6 +1,6 @@
 ---
 - name: Independently verify the complete OS baseline
-  hosts: servers
+  hosts: os_managed
   gather_facts: true
   become: true
   vars:
@@ -38,6 +38,36 @@
       - /etc/systemd/system/homelab-full-update.service
       - /etc/systemd/system/homelab-full-update.timer
   tasks:
+    - name: Read static hostname
+      ansible.builtin.command:
+        argv: [/usr/bin/hostnamectl, --static]
+      register: system_maintenance_molecule_baseline_static_hostname
+      changed_when: false
+
+    - name: Read current hostname
+      ansible.builtin.command:
+        argv: [/usr/bin/hostnamectl, --transient]
+      register: system_maintenance_molecule_baseline_current_hostname
+      changed_when: false
+
+    - name: Read effective system timezone
+      ansible.builtin.command:
+        argv: [/usr/bin/timedatectl, show, --property=Timezone, --value]
+      register: system_maintenance_molecule_baseline_timezone
+      changed_when: false
+
+    - name: Verify effective host identity
+      ansible.builtin.assert:
+        that:
+          - >-
+            system_maintenance_molecule_baseline_static_hostname.stdout | trim ==
+            'molecule-' ~ inventory_hostname
+          - >-
+            system_maintenance_molecule_baseline_current_hostname.stdout | trim ==
+            'molecule-' ~ inventory_hostname
+          - >-
+            system_maintenance_molecule_baseline_timezone.stdout | trim == 'UTC'
+
     - name: Gather independently observable package state
       ansible.builtin.package_facts:
         manager: auto

@@ -4,6 +4,30 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
+validate_vault_source() {
+  local vault_source="$1"
+  local vault_header=
+  # The Vault marker is literal; shell expansion would change the format check.
+  # shellcheck disable=SC2016
+  local vault_header_pattern='^\$ANSIBLE_VAULT;1\.1;AES256$|^\$ANSIBLE_VAULT;1\.2;AES256;[[:alnum:]_.-]+$'
+
+  if [[ ! -f "$vault_source" || -L "$vault_source" ]]; then
+    printf 'registered Ansible Vault source is not a regular file: %s\n' \
+      "$vault_source" >&2
+    exit 1
+  fi
+  if ! IFS= read -r vault_header < "$vault_source"; then
+    printf 'registered Ansible Vault source has no header: %s\n' \
+      "$vault_source" >&2
+    exit 1
+  fi
+  if [[ ! "$vault_header" =~ $vault_header_pattern ]]; then
+    printf 'registered Ansible Vault source has an invalid header: %s\n' \
+      "$vault_source" >&2
+    exit 1
+  fi
+}
+
 candidate_manifest="$(mktemp)"
 trap 'rm -f -- "$candidate_manifest"' EXIT
 
@@ -38,9 +62,12 @@ while IFS= read -r -d '' candidate_source; do
     candidate_remainder="${candidate_remainder#*/}"
   done
   case "$candidate_source" in
-    inventory/frozen/k3s/group_vars/k3s_cluster/vault.yml) continue ;;
-    inventory/production/group_vars/pihole/vault.yml) continue ;;
-    inventory/staging/group_vars/semaphore/vault.yml) continue ;;
+    inventory/frozen/k3s/group_vars/k3s_cluster/vault.yml | \
+      inventory/production/group_vars/os_managed/vault.yml | \
+      inventory/staging/group_vars/semaphore/vault.yml)
+      validate_vault_source "$candidate_source"
+      continue
+      ;;
   esac
   [[ -f "$candidate_source" ]] || continue
 
