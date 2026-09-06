@@ -950,6 +950,71 @@ class SourceContractTests(unittest.TestCase):
             self.assertIs(task["changed_when"], False)
             self.assertNotIn("failed_when", task)
 
+    def test_provisioning_pins_legacy_debian_sources_before_trust_validation(
+        self,
+    ) -> None:
+        tasks = load_tasks("roles/security_baseline/tasks/pre-update.yml")
+        names = [task["name"] for task in tasks]
+        self.assertIn("Pin unqualified legacy Debian repository sources", names)
+        self.assertIn("Pin optioned legacy Debian repository sources", names)
+        plain = tasks[names.index("Pin unqualified legacy Debian repository sources")]
+        options = tasks[names.index("Pin optioned legacy Debian repository sources")]
+        validation = names.index("Validate effective distribution repository trust")
+
+        self.assertLess(tasks.index(plain), validation)
+        self.assertLess(tasks.index(options), validation)
+        self.assertEqual(
+            "ansible_facts['os_family'] == 'Debian'",
+            plain["when"],
+        )
+        self.assertEqual(
+            "ansible_facts['os_family'] == 'Debian'",
+            options["when"],
+        )
+
+        plain_replace = plain["ansible.builtin.replace"]
+        option_replace = options["ansible.builtin.replace"]
+        plain_source = "deb http://deb.debian.org/debian/ trixie main\n"
+        option_source = (
+            "deb [arch=amd64] http://security.debian.org/debian-security "
+            "trixie-security main\n"
+        )
+        already_pinned = (
+            "deb [signed-by=/usr/share/keyrings/debian-archive-keyring.pgp] "
+            "http://deb.debian.org/debian/ trixie main\n"
+        )
+        third_party = "deb https://packages.example.test/debian trixie main\n"
+        expected_key = "signed-by=/usr/share/keyrings/debian-archive-keyring.pgp"
+
+        normalized_plain = re.sub(
+            plain_replace["regexp"],
+            plain_replace["replace"],
+            plain_source,
+            flags=re.MULTILINE,
+        )
+        normalized_option = re.sub(
+            option_replace["regexp"],
+            option_replace["replace"],
+            option_source,
+            flags=re.MULTILINE,
+        )
+        normalized_pinned = re.sub(
+            option_replace["regexp"],
+            option_replace["replace"],
+            already_pinned,
+            flags=re.MULTILINE,
+        )
+        normalized_third_party = re.sub(
+            plain_replace["regexp"],
+            plain_replace["replace"],
+            third_party,
+            flags=re.MULTILINE,
+        )
+        self.assertIn(expected_key, normalized_plain)
+        self.assertIn(expected_key, normalized_option)
+        self.assertEqual(already_pinned, normalized_pinned)
+        self.assertEqual(third_party, normalized_third_party)
+
     def test_os_baseline_verifier_is_observational(self) -> None:
         task_paths = sorted(
             (REPOSITORY_ROOT / "roles/os_baseline_verify/tasks").glob("*.yml")
