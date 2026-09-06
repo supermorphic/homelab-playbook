@@ -2231,9 +2231,11 @@ class SourceContractTests(unittest.TestCase):
             ],
         )
 
-    def test_os_guide_documents_managed_host_onboarding(self) -> None:
-        """The OS guide must preserve the complete managed-host procedure."""
-        guide = (REPOSITORY_ROOT / "playbooks/os/README.md").read_text(
+    def test_managed_host_onboarding_guide_preserves_operator_procedure(self) -> None:
+        """The onboarding guide must preserve the complete operator procedure."""
+        guide = (
+            REPOSITORY_ROOT / "docs/guides/managed-host-onboarding.md"
+        ).read_text(
             encoding="utf-8"
         )
         required_commands = (

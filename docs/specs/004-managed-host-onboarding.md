@@ -44,6 +44,9 @@ does not deploy a container runtime or an application.
 10. Pull-request validation remains offline and secret-free. Live provisioning
     occurs only after merge and only after explicit authorization for the
     exact playbook, action, inventory, host limit, and arguments.
+11. The source-adjacent OS README describes the playbook subsystem. The
+    goal-oriented setup and operator procedure lives in
+    `docs/guides/managed-host-onboarding.md`, and `docs/README.md` indexes it.
 
 ## Scope
 
@@ -61,7 +64,8 @@ does not deploy a container runtime or an application.
   `os_managed` baseline-input boundary;
 - migration of OS playbooks and their complete-baseline test composition from
   `servers` to `os_managed`;
-- exact workstation commands for inventory preparation, inspection, initial
+- a reusable managed-host guide with `nuc4` as the current example, including
+  exact workstation commands for inventory preparation, inspection, initial
   provisioning, and live confirmation; and
 - offline contract, inventory, lint, and Molecule coverage.
 
@@ -408,7 +412,9 @@ Offline evidence includes:
 - the complete provisioning role order applies identity before baseline
   reconciliation and verifies it afterward;
 - no new target package or Galaxy dependency is introduced; and
-- documentation gives the exact interactive Vault and onboarding commands.
+- `docs/guides/managed-host-onboarding.md` gives the exact interactive Vault
+  and onboarding commands while the source-adjacent OS README remains a brief
+  subsystem description.
 
 Molecule may use synthetic hostnames, the `UTC` timezone, and generated
 disposable SSH keys. It must not read the production Vault file or contact
@@ -445,7 +451,9 @@ not skip required work.
 6. Have the operator create the opaque encrypted `os_managed` Vault input, then
    remove the production Pi-hole variable directory without inspecting its
    encrypted file.
-7. Update operator documentation and run all required offline validation.
+7. Put the operator procedure in the managed-host onboarding guide, link it
+   from the documentation index and source-adjacent OS README, and run all
+   required offline validation.
 8. Merge only through the approved feature-branch workflow.
 9. After merge, repeat the live prerequisites and obtain explicit operator
    authorization immediately before running `os provision` against production
@@ -481,3 +489,6 @@ Issue #2 is complete when:
 12. after merge and fresh explicit authorization, `os provision` completes for
     `nuc4`, its included verifier passes, and the operator confirms effective
     hostname, timezone, key-only login, and passwordless sudo.
+13. the managed-host guide owns the reusable operator procedure, uses `nuc4`
+    only as the current example, and the source-adjacent OS README remains a
+    concise description of the playbook subsystem.

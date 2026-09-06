@@ -20,8 +20,9 @@ mise run bootstrap
 ## Repository layout
 
 `playbooks/` contains host automation, `roles/` contains reusable Ansible roles,
-and `inventory/` contains environment inventories. Durable design specifications
-live in `docs/specs/`; transient implementation plans belong in `.tmp/plans/`.
+and `inventory/` contains environment inventories. The
+[documentation index](docs/README.md) links current guides, references, and
+durable specifications. Transient implementation plans belong in `.tmp/plans/`.
 
 ## Running playbooks
 
@@ -41,47 +42,17 @@ Execute against production or staging only with explicit operator direction.
 
 ### OS baseline operations
 
-The [OS baseline guide](playbooks/os/README.md) documents the supported
-platforms, required operator inputs, reboot behavior, native update policy,
-evidence limits, and complete operating lifecycle. The three operator actions
-are:
+The OS playbooks inspect, provision, and maintain Debian 13 and Rocky Linux 9
+hosts in `os_managed`. The source-adjacent
+[OS playbook README](playbooks/os/README.md) summarizes their composition and
+development boundaries. Follow the
+[managed host onboarding guide](docs/guides/managed-host-onboarding.md) for
+manual prerequisites, SSH setup, inventory and Vault preparation, exact live
+commands, lifecycle decisions, verification, and recovery.
 
-```bash
-mise run playbook -- os inspect <inventory> --limit <host>
-mise run playbook -- os provision <inventory> --limit <host>
-mise run playbook -- os maintain <inventory> --limit <host>
-```
-
-The active production inventory contains `nuc4` in `os_managed`. Its encrypted
-group input is required when Ansible loads the production OS inventory, so use
-interactive Vault password entry for all three production operations:
-
-```bash
-mise run playbook -- os inspect production --limit nuc4 --ask-vault-pass
-mise run playbook -- os provision production --limit nuc4 --ask-vault-pass
-mise run playbook -- os maintain production --limit nuc4 --ask-vault-pass
-```
-
-Use them over the life of a host as follows:
-
-1. Optionally run `inspect` to collect a read-only OS snapshot.
-2. After a fresh OS installation satisfies the access prerequisites, run
-   `provision`. It performs the initial full update, applies and verifies the
-   complete baseline, and configures native automatic security updates.
-3. Do not run `maintain` immediately after successful provisioning; the full
-   update and verification have already completed.
-4. Let the native Debian or Rocky updater apply daily security updates and
-   perform its required security-update reboots.
-5. Run `maintain` periodically for later full package updates. Issue #4 will
-   schedule this operation through Semaphore; no host-local full-update timer
-   or cron job exists.
-6. Rerun `provision` after an incomplete provisioning attempt or when baseline
-   policy, authoritative inputs, or suspected baseline drift must be
-   reconciled. `maintain` does not apply baseline configuration.
-
-Provisioning and maintenance reboot when the operating system reports that a
-reboot is required. They do not provide a suppression input. The
-NUC/Semaphore full-update and self-reboot policy remains deferred to Issue #4.
+The active production inventory contains `nuc4` as the first managed-host
+example. Native daily security updates remain separate from explicit full
+maintenance, and no host-local recurring full-update scheduler exists.
 
 ## Inventories
 
