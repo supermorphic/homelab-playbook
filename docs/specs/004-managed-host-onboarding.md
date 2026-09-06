@@ -90,98 +90,27 @@ does not deploy a container runtime or an application.
 ## Authority established before Ansible
 
 Ansible must not create the access path that grants Ansible root authority.
-The Debian installer, physical console, or an already authorized operator must
-establish these prerequisites first:
-
-- Debian 13 is installed and boots normally;
-- official package repositories are usable;
-- the `ansible` account exists with a home directory and interactive shell;
-- the operator's public key is present in the account's `authorized_keys`;
-- `ansible` can run non-interactive passwordless sudo;
-- the `ansible` account password is locked; and
-- the operator retains Debian rescue or install media and has confirmed access
-  to the NUC boot menu.
+Before provisioning, an installer or operator must establish a supported,
+bootable operating system with usable official repositories; a key-only
+`ansible` account with a locked password and non-interactive passwordless sudo;
+SSH reachability from an authorized controller; and an independent console or
+rescue path.
 
 The recovery requirement means the operator can boot trusted Debian media and
 repair the installed system if SSH access is lost. It is not a request to keep
 a root SSH credential or an unlocked account password.
 
-### Operator SSH key and client configuration
+The operator uses a dedicated Ed25519 key and named SSH client configuration.
+The repository stores no private key and defines no passphrase-caching
+mechanism. Each additional operator or automation controller receives a
+distinct key in the complete desired key set; private keys are never shared.
+After reconciliation, OpenSSH accepts only the authoritative keys for the
+`ansible` account and rejects password and direct root login.
 
-Continue to use Ed25519 for the operator key. When a replacement key is needed,
-create it without a custom key-derivation-round argument:
-
-```bash
-ssh-keygen \
-  -t ed25519 \
-  -f ~/.ssh/id_ed25519_homelab_ansible \
-  -C "homelab ansible operator"
-```
-
-The operator protects the private key according to workstation policy. The
-repository does not store it or define how its passphrase is cached.
-
-Configure the workstation in `~/.ssh/config`:
-
-```sshconfig
-Host nuc4
-    HostName nuc4
-    User ansible
-    IdentityFile ~/.ssh/id_ed25519_homelab_ansible
-    IdentitiesOnly yes
-```
-
-`HostName` may use the operator's resolvable private hostname or address. A live
-address must not be committed to this public repository. The stable inventory
-alias remains `nuc4`.
-
-Install the public key through the already authorized installer or account
-password path:
-
-```bash
-ssh-copy-id -i ~/.ssh/id_ed25519_homelab_ansible.pub nuc4
-```
-
-Create and validate the passwordless-sudo drop-in on the target:
-
-```bash
-ssh nuc4
-sudo visudo -f /etc/sudoers.d/ansible
-sudo visudo -c
-sudo -n true
-```
-
-The drop-in contains exactly:
-
-```sudoers
-ansible ALL=(ALL:ALL) NOPASSWD: ALL
-```
-
-Lock and inspect the account password:
-
-```bash
-sudo passwd --lock ansible
-sudo passwd --status ansible
-exit
-```
-
-Confirm both the unprivileged login identity and the non-interactive root path:
-
-```bash
-ssh nuc4 'id -un'
-ssh nuc4 'sudo -n id -u'
-```
-
-The first command must print `ansible`. The second command must print `0`.
-These checks use the named SSH client configuration and do not repeat
-`PreferredAuthentications`, `PasswordAuthentication`, or
-`KbdInteractiveAuthentication` options on each command.
-
-After the baseline is applied, OpenSSH accepts only the authoritative keys for
-the `ansible` account and does not accept password or direct root login. The
-operator can use the same named SSH connection for exceptional maintenance.
-Each additional controller or operator receives a distinct key in the complete
-desired key set; private keys are never shared.
+The [managed host onboarding guide](../guides/managed-host-onboarding.md)
+contains the commands that establish and verify these prerequisites. Keeping
+the procedure in the guide prevents the specification and operator workflow
+from drifting independently.
 
 ## Inventory design
 
@@ -260,12 +189,6 @@ because the baseline authoritatively limits inbound SSH through firewalld. The
 desired timezone is also protected to avoid publishing the machine's deployment
 location.
 
-Create the new encrypted group input with the pinned controller tool:
-
-```bash
-mise exec -- ansible-vault create inventory/production/group_vars/os_managed/vault.yml
-```
-
 The encrypted document contains these variables with real operator-approved
 values instead of the marked placeholders:
 
@@ -288,19 +211,12 @@ Ansible Vault header and rejects plaintext at a protected path. This format
 guard complements Gitleaks because a generic secret scanner cannot prove that
 every protected value is encrypted.
 
-The operator supplies the Vault password interactively for production OS
-operations:
-
-```bash
-mise run playbook -- os inspect production --limit nuc4 --ask-vault-pass
-mise run playbook -- os provision production --limit nuc4 --ask-vault-pass
-mise run playbook -- os maintain production --limit nuc4 --ask-vault-pass
-```
-
-No playbook calls a credential helper. The canonical runner forwards
-`--ask-vault-pass` to `ansible-playbook`. The runner continues to reject SSH and
-sudo password prompts for mutating OS operations because those would violate
-the established key-only, passwordless-sudo authority boundary.
+The operator creates or edits the registered Vault and supplies its password
+interactively with `--ask-vault-pass`. No playbook calls a credential helper.
+The canonical runner forwards the interactive request to `ansible-playbook`
+and rejects SSH and sudo password prompts for mutating OS operations because
+those would violate the established key-only, passwordless-sudo authority
+boundary. The onboarding guide owns the exact Vault and playbook commands.
 
 Issue #4 will separately design Semaphore's encrypted credential storage and
 task attachment. This initiative does not make a personal password manager or
@@ -349,18 +265,11 @@ stops the one-host batch. After the operator corrects the reported cause, they
 rerun `os provision`; they do not use `os maintain` to finish incomplete
 onboarding.
 
-The final live confirmation is:
-
-```bash
-ssh nuc4 'hostnamectl --static'
-ssh nuc4 'timedatectl show --property=Timezone --value'
-ssh nuc4 'sudo -n id -u'
-```
-
-The commands must print `nuc4`, the operator-approved timezone local to the
-machine deployment, and `0`, respectively. These operator observations
-complement the playbook's effective-state verifier. They do not replace the
-playbook result or become pull-request CI evidence.
+After provisioning, the operator confirms the effective hostname, the
+deployment-local timezone, and non-interactive root access through sudo. The
+onboarding guide owns the exact live commands and expected output. These
+operator observations complement the playbook's effective-state verifier; they
+do not replace the playbook result or become pull-request CI evidence.
 
 ## Package and application boundary
 
