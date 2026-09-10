@@ -2,7 +2,7 @@
 
 Issue: [#4 Semaphore infrastructure automation](https://github.com/supermorphic/homelab-playbook/issues/4)
 
-Status: Draft for operator review. Records the agreed design and implementation
+Status: Approved by the operator. Records the agreed design and implementation
 acceptance requirements; it is not evidence of deployment or live recovery.
 
 ## Purpose and scope
@@ -77,8 +77,13 @@ trusted repository revision and executes `os verify` through
 selection; do not expose arbitrary playbook actions or free-form shell input.
 Record the executed commit and target selection without protected values.
 
-Prepare a reproducible Semaphore execution image with Mise and the tools needed
-by the repository's locked bootstrap workflow. Prepare the selected checkout
+Use a pinned upstream Semaphore image without custom image builds. Provision
+the repository's pinned execution tools into persistent runtime storage where
+they are not already supplied at the required versions. Verify compatibility
+with the upstream image's libraries, runtime user, and mounted paths before
+accepting this execution arrangement. Missing system-library support requires
+design review, not an implicit custom build or package installation on every job.
+Prepare the selected checkout
 through `mise run bootstrap`, then use its normal gateway and dependency checks.
 Make the repository bootstrap conditional: unchanged, verified Galaxy dependencies
 must be reused without contacting Galaxy or their Git sources. Do not substitute
@@ -135,9 +140,10 @@ per-archive transaction ledger.
 | Operation | Schedule | Behavior |
 | --- | --- | --- |
 | PostgreSQL dump | Daily, `03:00` host-local | Publish a completed local archive |
-| NAS transfer | Hourly at `:15` host-local | Copy and verify outstanding archives |
+| NAS transfer | Every four hours at `:15` host-local | Copy and verify outstanding archives |
 
-Use `OnCalendar=*-*-* 03:00:00` and `OnCalendar=*-*-* *:15:00`, without a timezone
+Use `OnCalendar=*-*-* 03:00:00` and
+`OnCalendar=*-*-* 00,04,08,12,16,20:15:00`, without a timezone
 suffix or random delay. Enable persistent catch-up; this runs a missed activation
 when the timer resumes, rather than recreating every missed daily archive.
 One-shot services must return to an inactive state so later timer activations
@@ -150,23 +156,23 @@ rename. Use unique creation-time names and immutable completed contents. A faile
 or interrupted dump never becomes eligible for transfer. Checksums detect damage;
 an archive read is not a substitute for a restore drill.
 
-The hourly transfer scans only completed archives. Use rclone copy semantics,
+The four-hourly transfer scans only completed archives. Use rclone copy semantics,
 not a mirror that propagates local deletion. Skip unchanged destination data;
-successful daily transfer leaves subsequent normal hourly runs doing metadata
+successful daily transfer leaves subsequent normal scheduled runs doing metadata
 checks. Transfer every outstanding archive, including older days after an outage.
 An interrupted upload remains retryable without another database dump.
 
 Publish remote completion only after both dump and checksum are present and the
 uploaded dump is verified against the local checksum. Use remote content reads
 when the SMB backend cannot supply the required hash. Restrict this expensive
-verification to new or repaired uploads; hourly success checks must not reread
+verification to new or repaired uploads; scheduled success checks must not reread
 every historical dump. A completion marker follows verification and is part of
 the archive format, not a separate transaction database. Recovery always checks
 the retrieved content again.
 
 The transfer service can succeed when no work is needed. NAS failure leaves the
 dump service independent and preserves outstanding local archives; the next
-hourly activation retries. Systemd records success, failure, and bounded
+four-hour activation retries. Systemd records success, failure, and bounded
 diagnostics. The timers operate independently: a failed new dump must not prevent
 transfer of older completed archives.
 
@@ -198,23 +204,31 @@ passes acceptance and the operator accepts cutover. Recreate declared database
 roles from configuration; one application database does not need a generic
 multi-database catalog or global-role backup framework.
 
-The attended drill follows the homelab-talos single-database recovery pattern:
+The attended drill proves recovery from NAS storage through a running application:
 
 1. Retrieve an explicitly selected completed archive and checksum from the NAS.
-   Validate the exact pair and refuse a corrupt or missing selection without
-   silently substituting a different archive.
+   Require the remote completion marker, check the retrieved dump's SHA-256
+   against its sidecar, and verify PostgreSQL archive readability. Reject paths
+   outside the selected archive and symlinked inputs. Refuse a corrupt or missing
+   selection without silently substituting a different archive.
 2. Create run-owned temporary PostgreSQL storage and a fresh database. Restore
    through the matching client container with first-error failure and a single
    transaction. Never restore over the active database.
 3. Start an isolated Semaphore instance with the matching runtime settings.
-   Block access to managed infrastructure before starting it, and expose no
-   production proxy route. Recovered schedules must not execute against real
-   targets during the drill.
+   Establish an isolated network before starting it, allowing only the temporary
+   database and test target plus the bounded test client. Block access to managed
+   infrastructure, and expose no production proxy route. Recovered schedules
+   must not execute against real targets during the drill.
 4. Check expected projects, templates, and history. Exercise a restored synthetic
    credential against a temporary test target to prove application-level use.
    Seed this harmless recovery fixture before the archive used for acceptance.
+   Require the restored template to use the restored credential without replacing
+   its value during the drill. Prove the target rejects missing or incorrect
+   credentials and accepts the restored job's credential. Record the job result
+   and expected target response without recording credentials.
 5. Remove run-owned containers, networks, and storage, and verify their absence.
-   Report cleanup failure separately from the original test failure.
+   Run cleanup on success and failure, limiting deletion to resources created by
+   this run. Report cleanup failure separately from the original test failure.
 
 The drill ends with cleanup and never cuts over production. Actual recovery has
 a separate operator procedure: validate the replacement, review recovered job
@@ -249,7 +263,7 @@ and performs no install. Cover changed requirements, missing dependencies, overr
 changes without downloads, failed installation without publishing success, and
 reuse across fresh checkouts and application container restarts.
 Test interrupted dumps, corrupt archives, unavailable NAS, interrupted transfer,
-three-day backlog recovery, unchanged hourly runs, retention boundaries, and
+three-day backlog recovery, unchanged scheduled runs, retention boundaries, and
 cleanup scope. Restore real fixture data and prove stored credential use; stub
 tests alone cannot establish recoverability.
 
