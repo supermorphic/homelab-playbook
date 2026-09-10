@@ -25,24 +25,29 @@ def _load_rules(path: Path) -> list[dict]:
     if not isinstance(rules, list) or not rules:
         raise ValueError("empty impact map")
     for rule in rules:
-        if not isinstance(rule, dict) or set(rule) != {
-            "prefixes",
-            "selectors",
-            "reason",
-        }:
-            raise ValueError("invalid impact rule")
-        prefixes, selectors = rule["prefixes"], rule["selectors"]
         if (
-            not isinstance(prefixes, list)
-            or not prefixes
-            or any(
-                not isinstance(prefix, str)
-                or not classify._valid_relative_path(prefix)
-                or not prefix.endswith("/")
-                for prefix in prefixes
-            )
+            not isinstance(rule, dict)
+            or not {"selectors", "reason"} <= set(rule)
+            or set(rule) - {"prefixes", "paths", "selectors", "reason"}
+            or not {"prefixes", "paths"} & set(rule)
         ):
-            raise ValueError("invalid impact prefixes")
+            raise ValueError("invalid impact rule")
+        selectors = rule["selectors"]
+        for key in ("prefixes", "paths"):
+            if key not in rule:
+                continue
+            matchers = rule[key]
+            if (
+                not isinstance(matchers, list)
+                or not matchers
+                or any(
+                    not isinstance(matcher, str)
+                    or not classify._valid_relative_path(matcher)
+                    or matcher.endswith("/") != (key == "prefixes")
+                    for matcher in matchers
+                )
+            ):
+                raise ValueError(f"invalid impact {key}")
         if selectors != "all" and (
             not isinstance(selectors, list)
             or not selectors
@@ -101,7 +106,7 @@ def build_plan(result: dict, *, map_path: Path = MAP_PATH) -> dict:
         matches = [
             (len(prefix), rule)
             for rule in rules
-            for prefix in rule["prefixes"]
+            for prefix in rule.get("prefixes", [])
             if path.startswith(prefix)
         ]
         if "/molecule/" in path:
@@ -116,6 +121,14 @@ def build_plan(result: dict, *, map_path: Path = MAP_PATH) -> dict:
                 and parts[2] == "molecule"
                 and length >= len(scenario_prefix)
             ]
+        else:
+            # Exact files outrank directory rules. They cannot replace the
+            # explicit directory declaration required for a Molecule scenario.
+            matches.extend(
+                (len(path) + 1, rule)
+                for rule in rules
+                if path in rule.get("paths", [])
+            )
         if not matches:
             full_reasons.append(f"{path}: unmapped Molecule impact")
             continue

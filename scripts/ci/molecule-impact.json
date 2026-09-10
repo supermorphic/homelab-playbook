@@ -31,6 +31,12 @@
       "reason": "baseline and proxy scenarios exercise proxy and TLS integration"
     },
     {
+      "prefixes": ["tests/tls/"],
+      "paths": ["tests/ansible/test_tls_role.py", "tests/ansible/test_tls_proxy_policy.py", "tests/ansible/test_tls_fixture_material.py"],
+      "selectors": ["system_maintenance/baseline", "reverse_proxy/default"],
+      "reason": "TLS tests cover runtime, policy, and fixtures consumed by baseline and proxy scenarios"
+    },
+    {
       "prefixes": ["roles/reverse_proxy/molecule/default/"],
       "selectors": ["reverse_proxy/default"],
       "reason": "proxy scenario coverage"

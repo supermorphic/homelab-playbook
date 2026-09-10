@@ -87,6 +87,12 @@ def classify_path(path: str) -> tuple[str, str]:
         return "full", "dependency automation changes require full validation"
     if _has_prefix(path, ("scripts/repository/", "tests/repository/")):
         return "full", "GitHub protection tooling changes require full validation"
+    if path.startswith("tests/tls/") or path in {
+        "tests/ansible/test_tls_role.py",
+        "tests/ansible/test_tls_proxy_policy.py",
+        "tests/ansible/test_tls_fixture_material.py",
+    }:
+        return "molecule", "TLS tests require baseline and proxy container validation"
     if _has_prefix(
         path,
         ("scripts/ci/", "tests/ci/", "tests/ansible/", "tests/toolchain/"),

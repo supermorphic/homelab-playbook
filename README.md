@@ -171,6 +171,8 @@ the private proxy using disposable certificates and HTTP/WebSocket backends.
 Change-directed validation selects affected scenarios on both platforms using
 [the checked-in impact map](scripts/ci/molecule-impact.json). Proxy and TLS role
 changes also select the baseline scenario, which exercises those integrations.
+TLS runtime tests and the three TLS-specific Ansible test files select the same
+two scenarios. Other Ansible validation tests retain full-suite selection.
 Shared framework changes and uncertain impact select all six rows. Documentation
 changes under `docs/` or subsystem READMEs select no Molecule rows.
 
