@@ -267,6 +267,8 @@ class MergeGateReconciliationTests(unittest.TestCase):
                 "skipped",
                 "--molecule-result",
                 "failure",
+                "--molecule-plan",
+                '{"mode":"none","matrix":{"include":[]}}',
             ],
             cwd=REPOSITORY_ROOT,
             check=False,
@@ -312,6 +314,8 @@ class MergeGateReconciliationTests(unittest.TestCase):
                         "failure",
                         "--molecule-result",
                         "failure",
+                        "--molecule-plan",
+                        '{"mode":"none","matrix":{"include":[]}}',
                     ],
                     cwd=REPOSITORY_ROOT,
                     check=False,
@@ -327,11 +331,27 @@ class MergeGateReconciliationTests(unittest.TestCase):
                             "classify job result is 'failure', expected 'success'",
                             "fast job result is 'cancelled', expected 'success'",
                             depth_error,
+                            "invalid Molecule plan: required Molecule selection is empty",
                             "",
                         ]
                     ),
                     result.stderr,
                 )
+
+    def test_cli_requires_plan_even_when_all_job_results_succeed(self) -> None:
+        arguments = [
+            sys.executable, str(MERGE_GATE_PATH), "--depth", "fast",
+            "--classify-result", "success", "--fast-result", "success",
+            "--ansible-result", "skipped", "--molecule-result", "skipped",
+        ]
+        result = subprocess.run(arguments, capture_output=True, text=True)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("--molecule-plan", result.stderr)
+        result = subprocess.run(
+            arguments + ["--molecule-plan", '{"mode":"none","matrix":{"include":[]}}'],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
 
 
 class WorkflowContractTests(unittest.TestCase):
@@ -491,7 +511,7 @@ class WorkflowContractTests(unittest.TestCase):
 
         self.assertTrue(workflow_observability_errors(mutated_workflow))
 
-    def test_molecule_runs_an_exact_bounded_six_job_matrix(self) -> None:
+    def test_molecule_runs_the_planned_bounded_matrix(self) -> None:
         self.assertIn("needs: classify", self.molecule)
         self.assertEqual(
             ["needs.classify.outputs.run_molecule == 'true'"],
@@ -504,20 +524,7 @@ class WorkflowContractTests(unittest.TestCase):
                 "    strategy:",
                 "      fail-fast: false",
                 "      max-parallel: 4",
-                "      matrix:",
-                "        include:",
-                "          - selector: system_maintenance/default",
-                "            platform: debian13",
-                "          - selector: system_maintenance/default",
-                "            platform: rockylinux9",
-                "          - selector: system_maintenance/baseline",
-                "            platform: debian13",
-                "          - selector: system_maintenance/baseline",
-                "            platform: rockylinux9",
-                "          - selector: reverse_proxy/default",
-                "            platform: debian13",
-                "          - selector: reverse_proxy/default",
-                "            platform: rockylinux9",
+                "      matrix: ${{ fromJSON(needs.classify.outputs.molecule_matrix) }}",
             ]
         )
         self.assertIn(expected_strategy, self.molecule)
@@ -528,7 +535,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(
             1,
             self.molecule.count(
-                "run: mise run test:molecule -- ${{ matrix.selector }}"
+                'run: mise run test:molecule -- "$MOLECULE_SELECTOR"'
             ),
         )
         lowered = self.molecule.lower()
@@ -559,6 +566,7 @@ class WorkflowContractTests(unittest.TestCase):
             "FAST_RESULT: ${{ needs.fast.result }}",
             "ANSIBLE_RESULT: ${{ needs.ansible.result }}",
             "MOLECULE_RESULT: ${{ needs.molecule.result }}",
+            "MOLECULE_PLAN: ${{ needs.classify.outputs.molecule_plan }}",
         }
         for variable in expected_environment:
             with self.subTest(variable=variable):
@@ -569,6 +577,7 @@ class WorkflowContractTests(unittest.TestCase):
             '--fast-result "$FAST_RESULT"',
             '--ansible-result "$ANSIBLE_RESULT"',
             '--molecule-result "$MOLECULE_RESULT"',
+            '--molecule-plan "$MOLECULE_PLAN"',
         ):
             with self.subTest(argument=argument):
                 self.assertIn(argument, self.merge_gate)

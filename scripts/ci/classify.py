@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 from collections.abc import Sequence
+from pathlib import Path
 
 
 DEPTH_ORDER = {"fast": 0, "ansible": 1, "molecule": 2, "full": 3}
@@ -92,16 +93,28 @@ def classify_path(path: str) -> tuple[str, str]:
     ):
         return "full", "validation implementation changes require full validation"
 
+    if (path.endswith("/README.md") and len(path.split("/")) == 3
+            and _has_prefix(path, ("roles/", "playbooks/"))):
+        return "fast", "subsystem documentation changes require fast validation"
+    if "/molecule/" in path and path.startswith("roles/"):
+        if path.rsplit("/", 1)[-1].startswith("Containerfile") or path.endswith(
+            ("/molecule.yml", "/create.yml", "/destroy.yml", "/cleanup.yml")
+        ):
+            return "full", "Molecule framework changes require full validation"
+        return "molecule", "Molecule scenario changes require container validation"
+
     if _has_prefix(
         path,
         (
             "playbooks/os/",
             "playbooks/podman/",
             "playbooks/tls/",
+            "playbooks/reverse-proxy/",
             "roles/tls_automation/",
             "roles/podman_foundation/",
             "roles/os_baseline_verify/",
             "roles/os_bootstrap/",
+            "roles/host_identity/",
             "roles/security_baseline/",
             "roles/system_maintenance/",
             "roles/reverse_proxy/",
@@ -355,11 +368,15 @@ def format_text(result: dict[str, object]) -> str:
     reason_paths = paths if paths else sorted(reasons)
     for path in reason_paths:
         lines.append(f"  {json.dumps(path, ensure_ascii=True)}: {reasons[path]}")
+    if "molecule_plan" in result:
+        lines.append("molecule_plan: " + format_json(result["molecule_plan"]))
+        lines.append(f"base_sha: {result['base_sha']}")
+        lines.append(f"head_sha: {result['head_sha']}")
     return "\n".join(lines)
 
 
 def format_github(result: dict[str, object]) -> str:
-    return "\n".join(
+    output = "\n".join(
         [
             f"depth={result['depth']}",
             f"run_fast={str(result['run_fast']).lower()}",
@@ -370,6 +387,12 @@ def format_github(result: dict[str, object]) -> str:
             + json.dumps(result["reasons"], ensure_ascii=True, separators=(",", ":")),
         ]
     )
+    if "molecule_plan" in result:
+        output += "\nmolecule_matrix=" + format_json(result["molecule_plan"]["matrix"])
+        output += "\nmolecule_plan=" + format_json(result["molecule_plan"])
+        output += f"\nbase_sha={result['base_sha'] or ''}"
+        output += f"\nhead_sha={result['head_sha'] or ''}"
+    return output
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -381,15 +404,18 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--include-worktree", action="store_true")
     parser.add_argument("--force-depth", choices=EMITTED_DEPTHS)
     parser.add_argument("--format", choices=("text", "json", "github"), default="text")
+    parser.add_argument("--summary", type=Path, help="append the plan to a job summary")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     arguments = parser.parse_args(argv)
+    resolved_base = resolved_head = None
     try:
+        resolved_base, resolved_head = resolve_commits(arguments.base, arguments.head)
         paths = discover_changes(
-            arguments.base, arguments.head, arguments.include_worktree
+            resolved_base, resolved_head, arguments.include_worktree
         )
         result = classify_paths(paths)
         result = force_depth(result, arguments.force_depth)
@@ -403,6 +429,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error(str(error))
     except ValueError as error:
         parser.error(str(error))
+
+    import molecule_plan
+    result.update({
+        "base_sha": resolved_base,
+        "head_sha": resolved_head,
+        "include_worktree": arguments.include_worktree,
+        "molecule_plan": molecule_plan.build_plan(result),
+    })
+    if arguments.summary:
+        with arguments.summary.open("a", encoding="utf-8") as summary:
+            summary.write(molecule_plan.format_summary(result))
 
     formatter = {
         "text": format_text,

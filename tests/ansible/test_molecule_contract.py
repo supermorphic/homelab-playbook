@@ -899,7 +899,7 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             assertion["ansible.builtin.assert"]["that"],
         )
 
-    def test_ci_registers_exact_six_selector_platform_jobs(self) -> None:
+    def test_ci_consumes_planned_selector_platform_jobs(self) -> None:
         workflow = yaml.safe_load(
             (REPOSITORY_ROOT / ".github/workflows/ci.yml").read_text(
                 encoding="utf-8"
@@ -909,18 +909,14 @@ class MoleculeScenarioContractTests(unittest.TestCase):
         matrix = molecule_job["strategy"]["matrix"]
         self.assertEqual(4, molecule_job["strategy"]["max-parallel"])
         self.assertEqual(
-            [
-                {"selector": "system_maintenance/default", "platform": "debian13"},
-                {"selector": "system_maintenance/default", "platform": "rockylinux9"},
-                {"selector": "system_maintenance/baseline", "platform": "debian13"},
-                {"selector": "system_maintenance/baseline", "platform": "rockylinux9"},
-                {"selector": "reverse_proxy/default", "platform": "debian13"},
-                {"selector": "reverse_proxy/default", "platform": "rockylinux9"},
-            ],
-            matrix["include"],
+            "${{ fromJSON(needs.classify.outputs.molecule_matrix) }}", matrix
         )
         run_source = str(molecule_job["steps"][-1]["run"])
-        self.assertIn("matrix.selector", run_source)
+        self.assertIn('"$MOLECULE_SELECTOR"', run_source)
+        self.assertEqual(
+            "${{ matrix.selector }}",
+            molecule_job["steps"][-1]["env"]["MOLECULE_SELECTOR"],
+        )
 
 if __name__ == "__main__":
     unittest.main()
