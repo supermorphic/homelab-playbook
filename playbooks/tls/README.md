@@ -84,6 +84,14 @@ capability. The host does not need an age identity for routine renewal.
 
 ## Disabled installation and bootstrap
 
+The issuer uses Cloudflare's public recursive resolver at `1.1.1.1:53` for
+ACME DNS discovery and propagation checks. It checks both recursive and
+authoritative DNS responses. Permit outbound DNS access to that resolver and
+the zone's authoritative nameservers. The host's system resolver and private
+application DNS remain unchanged; local DNS overrides and caches do not control
+the issuer's challenge checks. Public resolver caching can still delay a check;
+inspect the private diagnostic before retrying a failed issuance.
+
 The timer defaults to disabled. A disabled TLS provisioning run requires the
 installed Caddy capability and declared route inputs, but no Cloudflare
 credential. It installs pinned lego 5.4.1, the Python runtime, the real fixed
@@ -99,6 +107,14 @@ and package-owned `caddy:caddy` identity. The root coordinator can write only
 its managed state and transaction roots: `/var/lib/homelab-tls`, `/etc/caddy`,
 and `/var/lib/homelab-reverse-proxy`. The issuer still writes only its private
 ACME state and receives the Cloudflare credential through systemd.
+
+The root coordinator explicitly retains `CAP_SETUID` through
+`AmbientCapabilities` so it can run Caddy validation and reload commands as
+the `caddy` account. Systemd 257 can otherwise drop that capability during
+seccomp setup when `User=root` and `NoNewPrivileges=yes` are combined.
+The switch to Caddy's UID clears ambient capabilities; the Caddy commands
+run without permitted or effective capabilities. Existing sandbox restrictions
+remain enabled.
 
 Use this sequence for the first certificate:
 
@@ -145,6 +161,37 @@ keeps recovery blocked; do not remove the journal to bypass it.
 `status.json` under the private state directory records the current attempt. An
 `in_progress` attempt can indicate an interrupted operation; it is not evidence
 of successful completion. Observational verification does not change status.
+
+If issuance fails, inspect the issuer's private diagnostic on the target host:
+
+```bash
+sudo tail -n 80 /var/lib/homelab-tls-issuer/last-issue.log
+```
+
+Each lego invocation replaces this file and retains only the final 64 KiB of
+combined standard output and standard error. Output is updated while lego runs,
+including before a timeout. The file is owned by `svc-acme`, mode `0600`, inside
+its `0700` state directory; only that account and root can read it. Ansible,
+journald, and the coordinator's status receive no raw lego output. Treat the
+file as sensitive: inspect it locally and redact credentials and infrastructure
+identifiers before sharing an error. Do not attach it to issues or CI artifacts.
+
+Check the file's modification time against the failed attempt. A failure before
+lego starts may leave an older diagnostic or an empty file. Reprovisioning
+installs updated runtime code; it does not rerun issuance. After correcting the
+reported cause, a separately authorized `tls renew` retries through the normal
+coordinator and its recovery checks. Do not invoke lego directly or change the
+service's credential and isolation settings to obtain diagnostics.
+
+If issuance succeeds but publication fails, inspect the coordinator journal:
+
+```bash
+sudo journalctl -u homelab-tls-renew.service --since "5 minutes ago" --no-pager -n 30
+```
+
+The Caddy adapter reports its action and safe validation errors there. Raw
+Caddy output and unclassified exception contents remain suppressed. A successful
+issuance alone does not prove that Caddy has published the certificate.
 
 Keep encrypted backups of `/var/lib/homelab-tls-issuer` ACME account state,
 `/etc/caddy` configuration, trust, certificate and recovery state,

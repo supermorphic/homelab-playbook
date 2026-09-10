@@ -15,6 +15,7 @@
       - --property=Type
       - --property=ExecStart
       - --property=NoNewPrivileges
+      - --property=AmbientCapabilities
       - --property=ProtectSystem
       - --property=PrivateTmp
       - --property=ReadWritePaths

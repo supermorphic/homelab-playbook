@@ -49,6 +49,7 @@ _UNITS = {
         "ExecStartPost": "",
         "LoadCredential": "",
         "NoNewPrivileges": "yes",
+        "AmbientCapabilities": "cap_setuid",
         "ProtectSystem": "strict",
         "PrivateTmp": "yes",
         "ReadWritePaths": "/var/lib/homelab-tls /etc/caddy /var/lib/homelab-reverse-proxy",
@@ -321,6 +322,11 @@ def validate_units(value: object, allow_absent: object, array_value: object) -> 
                   and properties.get(key) == "/var/lib/homelab-tls"):
                 # Preflight permits upgrading only the earlier canonical,
                 # narrower sandbox. Installed-unit verification stays strict.
+                continue
+            elif (allow_absent and name == "homelab-tls-renew.service"
+                  and key == "AmbientCapabilities" and properties.get(key) == ""):
+                # Provision may upgrade the previous unit, but renewal and
+                # post-install verification require the UID-switch capability.
                 continue
             elif properties.get(key) != expected_value:
                 raise ValueError(f"{name} has an unexpected {key} property")

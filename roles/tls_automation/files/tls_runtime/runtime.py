@@ -8,12 +8,14 @@ import os
 from pathlib import Path
 import pwd
 import re
+import selectors
 import socket
 import ssl
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 from .certificates import validate_certificate, validate_historical_certificate
 from .policy import (
@@ -77,6 +79,7 @@ UNIT_CONTRACTS = {
         "SupplementaryGroups": "",
         "Type": "oneshot",
         "NoNewPrivileges": "yes",
+        "AmbientCapabilities": "cap_setuid",
         "ProtectSystem": "strict",
         "PrivateTmp": "yes",
         "ReadWritePaths": str(STATE) + " /etc/caddy /var/lib/homelab-reverse-proxy",
@@ -98,6 +101,72 @@ def run_fixed(argv, timeout=60, environment=None, capture=False):
     if result.returncode:
         raise RuntimeError("fixed host operation failed")
     return result.stdout if capture else None
+
+
+def run_issuer(argv, timeout=900, environment=None):
+    """Keep a bounded private output tail; never relay child output to callers."""
+    directory = os.open(ISSUER_STATE, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(directory)
+        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            raise ValueError("expected private issuer diagnostic directory")
+        require_no_named_access_acl(directory)
+        require_no_default_acl(directory)
+        descriptor, temporary = tempfile.mkstemp(prefix=".last-issue-", dir=ISSUER_STATE)
+        try:
+            with os.fdopen(descriptor, "w+b", buffering=0) as diagnostic:
+                os.fchmod(diagnostic.fileno(), 0o600)
+                require_no_named_access_acl(diagnostic.fileno())
+                # Replace rather than truncate an existing path, which may be a link.
+                os.replace(temporary, "last-issue.log", dst_dir_fd=directory)
+                deadline = time.monotonic() + timeout
+                with subprocess.Popen(argv, stdin=subprocess.DEVNULL,
+                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                      env=environment or CLEAN_ENV, cwd="/") as process:
+                    try:
+                        tail = b""
+                        timed_out = False
+                        os.set_blocking(process.stdout.fileno(), False)
+                        with selectors.DefaultSelector() as selector:
+                            selector.register(process.stdout, selectors.EVENT_READ)
+                            while selector.get_map():
+                                remaining = deadline - time.monotonic()
+                                if remaining <= 0 and not timed_out:
+                                    timed_out = True
+                                    if process.poll() is None:
+                                        process.kill()
+                                    process.wait()
+                                # After termination, retain bytes already in the pipe.
+                                # Do not wait for a descriptor inherited by another process.
+                                if not selector.select(0 if timed_out else min(remaining, 0.2)):
+                                    if timed_out:
+                                        break
+                                    continue
+                                chunk = os.read(process.stdout.fileno(), 8192)
+                                if not chunk:
+                                    selector.unregister(process.stdout)
+                                    break
+                                tail = (tail + chunk)[-65536:]
+                                diagnostic.seek(0)
+                                diagnostic.write(tail)
+                                diagnostic.truncate()
+                        if timed_out:
+                            raise RuntimeError("issuer timed out; inspect private diagnostic")
+                        try:
+                            code = process.wait(timeout=max(0, deadline - time.monotonic()))
+                        except subprocess.TimeoutExpired:
+                            raise RuntimeError("issuer timed out; inspect private diagnostic") from None
+                        if code:
+                            raise RuntimeError(f"issuer exited with code {code}; inspect private diagnostic")
+                    finally:
+                        if process.poll() is None:
+                            process.kill()
+                        process.wait()
+        finally:
+            if os.path.lexists(temporary):
+                os.unlink(temporary)
+    finally:
+        os.close(directory)
 
 
 def _descriptor_read_only(descriptor):
@@ -262,6 +331,7 @@ def issuer_command(policy):
             "--server", "https://acme-v02.api.letsencrypt.org/directory",
             "--path", str(ISSUER_STATE), "--cert.name", "caddy",
             "--domains", policy.sans[0], "--dns", "cloudflare", "--force-cert-domains",
+            "--dns.resolvers", "1.1.1.1:53",
             "--no-random-sleep", "--ari-wait-to-renew-duration", "0s", "--http-timeout", "30"]
 
 
@@ -273,7 +343,7 @@ def issue(policy):
     secure_path(ISSUER_STATE, account.pw_uid, directory=True)
     validate_runtime_credential(Path(TOKEN_RUNTIME), account.pw_uid, account.pw_gid)
     environment = dict(CLEAN_ENV, CF_DNS_API_TOKEN_FILE=TOKEN_RUNTIME)
-    run_fixed(issuer_command(policy), timeout=900, environment=environment)
+    run_issuer(issuer_command(policy), timeout=900, environment=environment)
 
 
 def inspect_host(policy):
@@ -547,7 +617,7 @@ def renew_attempt():
     result.update(reconcile(publisher, start_issuer, snapshot, publisher.publication_context))
     failed = result["issuance"] == "failed" or result["publication"] == "failed"
     result["attempt"] = "failed" if failed else "completed"
-    # Only fixed phase outcomes are recorded; subprocess output is never stored.
+    # Status contains only fixed phase outcomes, never private issuer output.
     write_status(result)
     print(json.dumps(result, sort_keys=True))
     return int(failed)
@@ -583,4 +653,7 @@ def main(action, arguments=None):
         return 0
     except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError):
         print("TLS " + action + " failed; inspect configuration, unit metadata and phase status", file=sys.stderr)
+        if action == "issue":
+            print("If lego started, inspect /var/lib/homelab-tls-issuer/last-issue.log locally; "
+                  "it may contain sensitive output", file=sys.stderr)
         return 1

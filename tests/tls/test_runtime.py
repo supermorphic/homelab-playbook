@@ -1,5 +1,7 @@
 """Fixed host operations and independent local TLS handshake evidence."""
 from contextlib import nullcontext
+from contextlib import redirect_stderr, redirect_stdout
+import io
 import errno
 import hashlib
 import json
@@ -11,6 +13,7 @@ import stat
 import struct
 import sys
 import tempfile
+import time
 import threading
 from types import SimpleNamespace
 import unittest
@@ -44,6 +47,28 @@ def _named_acl_on(path, attribute="system.posix_acl_access"):
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_renewal_requires_exact_effective_ambient_capability(self):
+        contract = runtime.UNIT_CONTRACTS[runtime.RENEW_UNIT]
+        self.assertEqual('cap_setuid', contract['AmbientCapabilities'])
+        typed = b'a(sasbttttuii) 0\na(sasbttttuii) 0\na(sasbttttuii) 0\na(ss) 0\n'
+        fragment = SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_gid=0)
+        for capability in ('cap_setuid', '', 'cap_setuid cap_net_admin', None):
+            actual = dict(contract)
+            command = actual['ExecStart']
+            actual['ExecStart'] = '{ path=' + command + ' ; argv[]=' + command + ' ; ignore_errors=no }'
+            actual['AmbientCapabilities'] = capability
+            if capability is None:
+                del actual['AmbientCapabilities']
+            raw = '\n'.join(key + '=' + value for key, value in actual.items()).encode()
+            with self.subTest(capability=capability), \
+                    patch.object(runtime, 'run_fixed', side_effect=[raw, typed]), \
+                    patch.object(runtime, 'secure_path', return_value=fragment):
+                if capability == 'cap_setuid':
+                    runtime.inspect_unit(runtime.RENEW_UNIT, contract)
+                else:
+                    with self.assertRaises(ValueError):
+                        runtime.inspect_unit(runtime.RENEW_UNIT, contract)
+
     def setUp(self):
         self.policy = parse_policy(json.dumps(example_policy()).encode())
 
@@ -51,8 +76,10 @@ class RuntimeTests(unittest.TestCase):
         command = runtime.issuer_command(self.policy)
         self.assertEqual(command[:2], ["/usr/local/libexec/lego-5.4.1", "run"])
         for flag, value in [("--domains", "*.infra.example.com"), ("--dns", "cloudflare"),
+                            ("--dns.resolvers", "1.1.1.1:53"),
                             ("--cert.name", "caddy"), ("--path", "/var/lib/homelab-tls-issuer"),
                             ("--server", "https://acme-v02.api.letsencrypt.org/directory")]:
+            self.assertIn(flag, command)
             self.assertEqual(command[command.index(flag) + 1], value)
         self.assertIn("--force-cert-domains", command)
         for forbidden in ["--renew-force", "--renew-days", "--ari-disable", "--deploy-hook"]:
@@ -255,7 +282,7 @@ class RuntimeTests(unittest.TestCase):
             runtime.os, "geteuid", return_value=2010
         ), patch.object(runtime, "secure_path"), patch.object(
             runtime, "validate_runtime_credential"
-        ) as credential, patch.object(runtime, "run_fixed") as run:
+        ) as credential, patch.object(runtime, "run_issuer") as run:
             runtime.issue(self.policy)
 
         credential.assert_called_once_with(Path(runtime.TOKEN_RUNTIME), 2010, 2010)
@@ -739,6 +766,100 @@ class StatusDirectoryBoundaryTests(unittest.TestCase):
         with patch.object(runtime, "secure_path"), patch.object(
                 runtime, "_directory_without_extra_acl", side_effect=ValueError("named ACL")), self.assertRaises(ValueError):
             runtime.validate_status_directory()
+
+
+class IssuerDiagnosticTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name)
+        self.log = self.directory / "last-issue.log"
+        state = patch.object(runtime, "ISSUER_STATE", self.directory)
+        state.start()
+        self.addCleanup(state.stop)
+
+    def run_script(self, script, timeout=5):
+        self.assertTrue(callable(getattr(runtime, "run_issuer", None)),
+                        "issuer output must have a protected diagnostic runner")
+        return runtime.run_issuer([sys.executable, "-c", script],
+                                  environment=runtime.CLEAN_ENV, timeout=timeout)
+
+    def test_failed_child_keeps_both_streams_private_and_preserves_failure(self):
+        output, errors = io.StringIO(), io.StringIO()
+        with redirect_stdout(output), redirect_stderr(errors):
+            with self.assertRaisesRegex(RuntimeError, "issuer exited with code 7") as caught:
+                self.run_script("import sys; print('synthetic stdout'); "
+                                "print('synthetic private error', file=sys.stderr); sys.exit(7)")
+        self.assertEqual("", output.getvalue() + errors.getvalue())
+        self.assertNotIn("synthetic", str(caught.exception))
+        self.assertIn(b"synthetic stdout", self.log.read_bytes())
+        self.assertIn(b"synthetic private error", self.log.read_bytes())
+        self.assertEqual(0o600, stat.S_IMODE(self.log.stat().st_mode))
+        self.assertEqual(os.geteuid(), self.log.stat().st_uid)
+
+    def test_only_latest_attempt_and_last_64_kib_are_retained(self):
+        self.run_script("print('previous attempt')")
+        self.run_script("import os; os.write(1, b'x' * 200000 + b'END')")
+        self.assertEqual(b"x" * (65536 - 3) + b"END", self.log.read_bytes())
+        self.assertEqual([self.log], list(self.directory.iterdir()))
+
+    def test_timeout_keeps_partial_output_and_stops_child(self):
+        started = time.monotonic()
+        with self.assertRaisesRegex(RuntimeError, "issuer timed out"):
+            self.run_script("import os,time; print('started', os.getpid(), flush=True); "
+                            "time.sleep(30)", timeout=0.5)
+        self.assertLess(time.monotonic() - started, 5)
+        words = self.log.read_text().split()
+        self.assertEqual("started", words[0])
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int(words[1]), 0)
+
+    def test_closed_output_does_not_bypass_timeout(self):
+        with self.assertRaisesRegex(RuntimeError, "issuer timed out"):
+            self.run_script("import os,time; os.close(1); os.close(2); time.sleep(30)", timeout=0.5)
+
+    def test_timeout_drains_output_already_buffered_before_deadline(self):
+        ready = self.directory / "ready"
+        clock = time.monotonic
+
+        def expired_after_child_writes():
+            deadline = clock() + 5
+            while not ready.exists():
+                if clock() >= deadline:
+                    self.fail("fixture did not write its diagnostic")
+                time.sleep(0.01)
+            return 100
+
+        clock_first = [True]
+
+        def advance_clock():
+            if clock_first[0]:
+                clock_first[0] = False
+                return 0
+            return expired_after_child_writes()
+
+        with patch.object(runtime.time, "monotonic", side_effect=advance_clock):
+            with self.assertRaisesRegex(RuntimeError, "issuer timed out"):
+                self.run_script("import os,time; from pathlib import Path; "
+                                "os.write(2, b'final buffered diagnostic'); "
+                                f"Path({str(ready)!r}).touch(); time.sleep(30)", timeout=1)
+        self.assertEqual(b"final buffered diagnostic", self.log.read_bytes())
+
+    def test_log_symlink_is_replaced_without_touching_target(self):
+        with tempfile.TemporaryDirectory() as outside:
+            target = Path(outside) / "keep"
+            target.write_text("keep")
+            self.log.symlink_to(target)
+            self.run_script("print('new diagnostic')")
+            self.assertEqual("keep", target.read_text())
+            self.assertFalse(self.log.is_symlink())
+            self.assertEqual(b"new diagnostic\n", self.log.read_bytes())
+
+    def test_public_directory_is_rejected_before_child_runs(self):
+        self.directory.chmod(0o755)
+        with self.assertRaisesRegex(ValueError, "private issuer diagnostic directory"):
+            self.run_script("raise SystemExit(0)")
+        self.assertFalse(self.log.exists())
 
 
 if __name__ == "__main__":
