@@ -1,6 +1,7 @@
 # Specification 002: Multi-OS Molecule validation
 
-Issue: [#11 Establish multi-OS Molecule validation](https://github.com/supermorphic/homelab-playbook/issues/11)
+Issues: [#11 Establish multi-OS Molecule validation](https://github.com/supermorphic/homelab-playbook/issues/11)
+and [#32 Deterministic Molecule CI gating](https://github.com/supermorphic/homelab-playbook/issues/32)
 
 ## Purpose
 
@@ -8,8 +9,9 @@ Add change-directed executable validation for the repository-owned
 `system_maintenance` role. The validation uses Molecule and rootless Podman to
 exercise Debian 13 and Rocky Linux 9 in systemd-capable containers.
 
-This initiative adds and activates the change-directed `molecule` validation
-depth. It adds container evidence without contacting an inventory host, using a
+The original initiative added the change-directed `molecule` validation depth.
+Issue #32 extends it with deterministic impact selection across all registered
+scenarios. It adds container evidence without contacting an inventory host, using a
 repository secret, or claiming VM or physical-hardware coverage.
 
 ## Governing decisions
@@ -37,7 +39,8 @@ change-directed validation, and container-only boundaries.
 
 ### Included
 
-- one `default` Molecule scenario for `roles/system_maintenance`;
+- `default` and `baseline` scenarios for `roles/system_maintenance`, plus
+  `reverse_proxy/default` integration coverage;
 - Debian 13 and Rocky Linux 9 container platforms;
 - rootless Podman preflight, image acquisition, image building, container
   lifecycle, and cleanup;
@@ -46,7 +49,7 @@ change-directed validation, and container-only boundaries.
 - explicit suppression of real reboot attempts during container tests while
   retaining the production default;
 - a public scenario test command and shared per-platform worker;
-- parallel local execution and a two-job GitHub Actions matrix;
+- parallel local platform execution and a generated GitHub Actions matrix;
 - activation of classifier, `full`, and merge-gate support for the `molecule`
   depth;
 - separate timing and image-provenance reporting; and
@@ -386,7 +389,7 @@ classify
          `-- Rocky Linux 9 ------------------------|
 ```
 
-The matrix uses `ubuntu-24.04`, `fail-fast: false`, and at most two concurrent
+The matrix uses `ubuntu-24.04`, `fail-fast: false`, and at most four concurrent
 jobs. Both platforms are native AMD64 in GitHub Actions. Each matrix job invokes
 the same platform worker used by the local command and has a bounded timeout.
 The initial timeout allows for a cold image build and full package upgrade; it
@@ -399,35 +402,76 @@ redundant cleanup or image-pruning stage beyond scenario cleanup.
 
 ## Change-directed validation
 
-The classifier begins emitting all four ordered depths:
+The classifier retains the four ordered depths:
 
 ```text
-fast < ansible < molecule < full
+fast -> ansible -> molecule -> full
 ```
 
-The intended mappings are:
+Within `molecule`, `scripts/ci/molecule_plan.py` selects scenarios using the
+checked-in `scripts/ci/molecule-impact.json`. The runner's `SCENARIOS` registry
+supplies the complete scenario/platform set, including fallback when the map is
+missing or invalid. Every selected scenario runs both Debian 13 and Rocky Linux
+9. Platform-specific impact selection is not supported.
 
-| Change | Selected depth |
+Each map rule declares directory prefixes, consuming selectors, and a reason.
+The most specific matching directory wins; equally specific rules union their
+consumers. This lets scenario-local tests select their own scenario while role
+changes select all consumers. Scenario paths require an explicit scenario-directory
+rule; a broad role rule cannot cover a missing scenario declaration. Rules naming `all` broaden to the complete suite.
+Selections and reasons are deduplicated and emitted in stable registry order.
+
+| Changed input | Scenario selection |
 | --- | --- |
-| `system_maintenance` role source or defaults | `molecule` |
-| its Molecule scenario, Containerfiles, runner, or focused tests | `molecule` |
-| other Ansible roles, playbooks, or inventories | `ansible` |
-| toolchain locks, Galaxy requirements, classifier, CI, or merge gate | `full` |
-| documentation and ordinary policy files | `fast` |
-| unknown or ambiguous path | `full` |
+| Maintenance role | Both maintenance scenarios |
+| OS playbooks, host identity, bootstrap, or Podman | Baseline scenario |
+| Shared security policy and OS baseline verifier | Baseline and proxy scenarios |
+| Proxy or TLS role/playbook | Baseline and proxy scenarios |
+| Default maintenance scenario assertions | Default maintenance scenario |
+| Proxy scenario assertions | Proxy scenario |
+| Baseline scenario assertions | Baseline scenario |
+| Shared default scenario create, cleanup, or destroy | Complete suite |
+| Molecule configuration, Containerfiles, create/destroy/cleanup | Complete suite |
+| Runner, CI, classifier, impact map, dependencies | Complete suite |
+| Unknown Molecule-relevant path or invalid impact map | Complete suite |
+| Documentation under `docs/` or direct subsystem README | No Molecule scenarios |
 
-Specific `system_maintenance` mappings take precedence over the existing generic
-`roles/ -> ansible` mapping. Classifier fixtures cover both the positive
-Molecule paths and unchanged shallower paths.
+The baseline scenario is a declared consumer of both proxy and TLS roles. A
+proxy-only role change therefore excludes `system_maintenance/default` but
+retains `system_maintenance/baseline`. The proxy also imports shared firewall
+policy and verification from `security_baseline` and `os_baseline_verify`, so
+changes to those roles select both consumers. A maintenance role change excludes
+the proxy scenario. Shared create, cleanup, and destroy implementations under the
+default maintenance scenario serve all three scenarios.
 
-`run_molecule` is true for `molecule` and `full`. `full` now means all
-implemented validation and therefore includes Molecule. The public `ci` task and
-`ci:changed -- --force-depth molecule` follow the same rule.
+The existing Git discovery retains deletion paths, both rename/copy paths, and
+local committed, staged, unstaged, and untracked paths. Discovery failure or an
+empty changed-path set selects `full`. A new scenario path enters the Molecule
+tier even if its role was previously static-only; missing impact mapping selects
+the complete registered suite. Add its runner registration and impact consumers
+together. An absent or invalid runner registry fails CI rather than reporting
+partial coverage as successful.
 
-The merge gate accepts `molecule` as an implemented depth, requires successful
-Ansible and Molecule results when selected, permits a skipped Molecule job only
-for `fast` or `ansible`, and continues to fail closed for missing or unknown
-results.
+The generated plan records resolved base/head commit SHAs, whether worktree
+changes are included, `none`, `selective`, or `full` mode, and exact matrix rows
+with reasons. SHAs are null when Git cannot resolve the requested range; the
+result still requires full validation. Local output explicitly marks worktree
+inclusion because a commit SHA does not identify uncommitted content.
+
+GitHub Actions consumes the generated matrix and appends the plan to the job
+summary. Scheduled and manually dispatched workflows force `full`, which always
+selects every registered scenario on both platforms. An explicitly forced
+Molecule tier without mapped Molecule inputs also selects the complete suite.
+`mise run ci:changed` executes only the selected scenarios and clears the internal
+platform override so local validation cannot silently omit a platform.
+`mise run ci` continues to execute the complete local validation suite.
+
+The merge gate requires successful Ansible and aggregate Molecule job results
+for `molecule` and `full`. It also rejects empty, malformed, duplicate, unknown,
+or incomplete platform rows, and requires complete registry coverage in `full`
+mode. Skipped Molecule jobs remain acceptable only for `fast` and `ansible`.
+A failed or cancelled matrix worker makes the required aggregate result fail.
+The matrix retains `fail-fast: false` and no continue-on-error behavior.
 
 ## Failure and cleanup behavior
 
@@ -465,7 +509,7 @@ Implementation follows repository test and validation policy:
 
 Focused tests use positive current invariants as their oracles. They require the
 exact Debian and Red Hat role dispatch set, the exact Debian 13 and Rocky Linux
-9 Molecule set, and the exact two-entry GitHub matrix. Complete OS provisioning
+9 Molecule set, and the complete six-row planned matrix. Complete OS provisioning
 must reject an unsupported operating-system family before configuration roles
 run, and the Molecule runner must reject an unknown workflow platform before
 invoking Podman. No permanent forbidden-reference scan is part of the contract.
@@ -511,9 +555,9 @@ The current contract is satisfied when:
    enabled and whose scenario value prevents actual container reboot;
 10. verification covers representative current role invariants, including Rocky
     kernel retention and EPEL settings;
-11. the classifier selects `molecule` only for explicitly mapped role/scenario
-    changes, retains shallower depths for unaffected changes, and selects all
-    implemented validation for `full`;
+11. the classifier retains four depths and selects affected scenario/platform
+    rows within `molecule`; unknown impact selects the complete Molecule suite,
+    shallower changes retain their depth, and `full` runs all validation;
 12. GitHub executes a bounded two-platform matrix in parallel and the stable
     merge gate requires its success when selected;
 13. local and GitHub workers report pull, build, Molecule, and platform-total

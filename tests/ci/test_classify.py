@@ -162,10 +162,10 @@ class PathClassificationTests(unittest.TestCase):
             "roles/os_baseline_verify/tasks/main.yml": "molecule",
             "roles/security_baseline/tasks/main.yml": "molecule",
             "roles/system_maintenance/tasks/main.yml": "molecule",
-            "roles/system_maintenance/molecule/default/molecule.yml": "molecule",
-            "roles/system_maintenance/molecule/baseline/molecule.yml": "molecule",
+            "roles/system_maintenance/molecule/default/molecule.yml": "full",
+            "roles/system_maintenance/molecule/baseline/molecule.yml": "full",
             "roles/reverse_proxy/tasks/main.yml": "molecule",
-            "roles/reverse_proxy/molecule/default/molecule.yml": "molecule",
+            "roles/reverse_proxy/molecule/default/molecule.yml": "full",
             "playbooks/os/provision.yml": "molecule",
             "playbooks/podman/provision.yml": "molecule",
             "playbooks/podman/verify.yml": "molecule",
@@ -616,6 +616,28 @@ class ClassifierCliTests(unittest.TestCase):
         self.repository = TemporaryGitRepository()
         self.repository.initialize_fixture()
 
+    def test_plan_records_resolved_commits_and_summary(self) -> None:
+        self.repository.write("roles/reverse_proxy/tasks/new.yml", "---\n")
+        head = self.repository.commit_all("proxy change")
+        base = self.repository.git("rev-parse", "HEAD~1").stdout.strip()
+        summary = self.repository.root / "summary.md"
+        result = self.repository.run_python(
+            CLASSIFIER_PATH,
+            ["--base", "HEAD~1", "--head", "HEAD", "--format", "json",
+             "--summary", str(summary)],
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(base, payload["base_sha"])
+        self.assertEqual(head, payload["head_sha"])
+        self.assertFalse(payload["include_worktree"])
+        self.assertEqual("selective", payload["molecule_plan"]["mode"])
+        self.assertEqual(4, len(payload["molecule_plan"]["matrix"]["include"]))
+        summary_text = summary.read_text()
+        for expected in (base, head, "reverse_proxy/default", "debian13",
+                         "rockylinux9", "roles/reverse_proxy/tasks/new.yml"):
+            self.assertIn(expected, summary_text)
+
     def tearDown(self) -> None:
         self.repository.cleanup()
 
@@ -763,6 +785,11 @@ class ChangedRunnerTests(unittest.TestCase):
             result.stdout,
         )
 
+    def test_unresolved_refs_are_not_reported_as_commit_shas(self) -> None:
+        result = self.run_changed("--dry-run", "--base", "missing-ref")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("Base SHA: unresolved; head SHA: unresolved", result.stdout)
+
     def test_dry_run_rejects_requested_deescalation(self) -> None:
         self.repository.write("roles/update_pihole/tasks/new.yml", "---\n")
 
@@ -785,7 +812,7 @@ class ChangedRunnerTests(unittest.TestCase):
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("Selected validation depth: molecule", result.stdout)
-        self.assertEqual(5, result.stdout.count("Would run:"))
+        self.assertEqual(4, result.stdout.count("Would run:"))
         self.assertIn("Would run: mise run validate:fast", result.stdout)
         self.assertIn("Would run: mise run validate:ansible", result.stdout)
         self.assertIn(
@@ -796,7 +823,7 @@ class ChangedRunnerTests(unittest.TestCase):
             "Would run: mise run test:molecule -- system_maintenance/baseline",
             result.stdout,
         )
-        self.assertIn(
+        self.assertNotIn(
             "Would run: mise run test:molecule -- reverse_proxy/default",
             result.stdout,
         )

@@ -28,6 +28,8 @@ jobs:
       run_molecule: ${{ steps.classify.outputs.run_molecule }}
       paths: ${{ steps.classify.outputs.paths }}
       reasons: ${{ steps.classify.outputs.reasons }}
+      molecule_matrix: ${{ steps.classify.outputs.molecule_matrix }}
+      molecule_plan: ${{ steps.classify.outputs.molecule_plan }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -46,7 +48,7 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          classify_args=(--format github)
+          classify_args=(--format github --summary "$GITHUB_STEP_SUMMARY")
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             classify_args+=(
               --base "$PR_BASE_SHA"
@@ -155,20 +157,7 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 4
-      matrix:
-        include:
-          - selector: system_maintenance/default
-            platform: debian13
-          - selector: system_maintenance/default
-            platform: rockylinux9
-          - selector: system_maintenance/baseline
-            platform: debian13
-          - selector: system_maintenance/baseline
-            platform: rockylinux9
-          - selector: reverse_proxy/default
-            platform: debian13
-          - selector: reverse_proxy/default
-            platform: rockylinux9
+      matrix: ${{ fromJSON(needs.classify.outputs.molecule_matrix) }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -185,7 +174,8 @@ jobs:
       - name: Run Molecule platform validation
         env:
           HOMELAB_MOLECULE_PLATFORM: ${{ matrix.platform }}
-        run: mise run test:molecule -- ${{ matrix.selector }}
+          MOLECULE_SELECTOR: ${{ matrix.selector }}
+        run: mise run test:molecule -- "$MOLECULE_SELECTOR"
 
   merge-gate:
     name: merge-gate
@@ -215,13 +205,15 @@ jobs:
           FAST_RESULT: ${{ needs.fast.result }}
           ANSIBLE_RESULT: ${{ needs.ansible.result }}
           MOLECULE_RESULT: ${{ needs.molecule.result }}
+          MOLECULE_PLAN: ${{ needs.classify.outputs.molecule_plan }}
         run: |
           mise exec -- python scripts/ci/merge_gate.py \
             --depth "$SELECTED_DEPTH" \
             --classify-result "$CLASSIFY_RESULT" \
             --fast-result "$FAST_RESULT" \
             --ansible-result "$ANSIBLE_RESULT" \
-            --molecule-result "$MOLECULE_RESULT"
+            --molecule-result "$MOLECULE_RESULT" \
+            --molecule-plan "$MOLECULE_PLAN"
       - name: Write validation summary
         if: always()
         env:

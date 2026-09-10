@@ -1,0 +1,39 @@
+{
+  "rules": [
+    {
+      "prefixes": ["roles/system_maintenance/"],
+      "selectors": ["system_maintenance/default", "system_maintenance/baseline"],
+      "reason": "maintenance role is exercised by both maintenance scenarios"
+    },
+    {
+      "prefixes": ["roles/system_maintenance/molecule/default/"],
+      "selectors": ["system_maintenance/default"],
+      "reason": "maintenance default scenario coverage; shared lifecycle files require full depth"
+    },
+    {
+      "prefixes": ["roles/system_maintenance/molecule/baseline/"],
+      "selectors": ["system_maintenance/baseline"],
+      "reason": "baseline scenario coverage"
+    },
+    {
+      "prefixes": ["playbooks/os/", "roles/os_bootstrap/", "roles/host_identity/", "playbooks/podman/", "roles/podman_foundation/"],
+      "selectors": ["system_maintenance/baseline"],
+      "reason": "baseline scenario exercises host and Podman composition"
+    },
+    {
+      "prefixes": ["roles/security_baseline/", "roles/os_baseline_verify/"],
+      "selectors": ["system_maintenance/baseline", "reverse_proxy/default"],
+      "reason": "baseline and proxy scenarios consume shared firewall policy and verification"
+    },
+    {
+      "prefixes": ["playbooks/tls/", "roles/tls_automation/", "playbooks/reverse-proxy/", "roles/reverse_proxy/"],
+      "selectors": ["system_maintenance/baseline", "reverse_proxy/default"],
+      "reason": "baseline and proxy scenarios exercise proxy and TLS integration"
+    },
+    {
+      "prefixes": ["roles/reverse_proxy/molecule/default/"],
+      "selectors": ["reverse_proxy/default"],
+      "reason": "proxy scenario coverage"
+    }
+  ]
+}

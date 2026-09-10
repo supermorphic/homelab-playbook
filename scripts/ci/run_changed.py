@@ -8,53 +8,20 @@ import subprocess
 from collections.abc import Sequence
 
 import classify
+import molecule_plan
 
 
-COMMANDS = {
-    "fast": [["mise", "run", "validate:fast"]],
-    "ansible": [
-        ["mise", "run", "validate:fast"],
-        ["mise", "run", "validate:ansible"],
-    ],
-    "molecule": [
-        ["mise", "run", "validate:fast"],
-        ["mise", "run", "validate:ansible"],
-        [
-            "mise",
-            "run",
-            "test:molecule",
-            "--",
-            "system_maintenance/default",
-        ],
-        [
-            "mise",
-            "run",
-            "test:molecule",
-            "--",
-            "system_maintenance/baseline",
-        ],
-        ["mise", "run", "test:molecule", "--", "reverse_proxy/default"],
-    ],
-    "full": [
-        ["mise", "run", "validate:fast"],
-        ["mise", "run", "validate:ansible"],
-        [
-            "mise",
-            "run",
-            "test:molecule",
-            "--",
-            "system_maintenance/default",
-        ],
-        [
-            "mise",
-            "run",
-            "test:molecule",
-            "--",
-            "system_maintenance/baseline",
-        ],
-        ["mise", "run", "test:molecule", "--", "reverse_proxy/default"],
-    ],
-}
+def commands_for(result: dict) -> list[list[str]]:
+    commands = [["mise", "run", "validate:fast"]]
+    if result["run_ansible"]:
+        commands.append(["mise", "run", "validate:ansible"])
+    selectors = dict.fromkeys(
+        row["selector"] for row in result["molecule_plan"]["matrix"]["include"]
+    )
+    commands.extend(
+        ["mise", "run", "test:molecule", "--", selector] for selector in selectors
+    )
+    return commands
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -81,8 +48,7 @@ def _print_reasons(result: dict[str, object]) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     arguments = parser.parse_args(argv)
-    resolved_base = arguments.base
-    resolved_head = arguments.head
+    resolved_base = resolved_head = None
 
     try:
         resolved_base, resolved_head = classify.resolve_commits(
@@ -113,22 +79,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Escalated validation depth: {classified_depth} -> {selected_depth}")
     _print_reasons(classified_result)
 
+    result["molecule_plan"] = molecule_plan.build_plan(result)
+    result.update(
+        {"base_sha": resolved_base, "head_sha": resolved_head, "include_worktree": True}
+    )
+    print("Molecule plan: " + classify.format_json(result["molecule_plan"]))
+    print(
+        f"Base SHA: {resolved_base or 'unresolved'}; "
+        f"head SHA: {resolved_head or 'unresolved'}; includes worktree"
+    )
     validation_environment = os.environ.copy()
+    validation_environment.pop("HOMELAB_MOLECULE_PLATFORM", None)
     validation_environment.update(
         {
-            "CI_BASE_SHA": resolved_base,
-            "CI_HEAD_SHA": resolved_head,
+            "CI_BASE_SHA": resolved_base or arguments.base,
+            "CI_HEAD_SHA": resolved_head or arguments.head,
             "LOCAL_CHANGE_DIRECTED": "1",
         }
     )
-    for command in COMMANDS[selected_depth]:
+    for command in commands_for(result):
         if arguments.dry_run:
             print(f"Would run: {shlex.join(command)}")
             continue
         print(f"Running: {shlex.join(command)}", flush=True)
-        completed = subprocess.run(
-            command, check=False, env=validation_environment
-        )
+        completed = subprocess.run(command, check=False, env=validation_environment)
         if completed.returncode != 0:
             return completed.returncode
     return 0

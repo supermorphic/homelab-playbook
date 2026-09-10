@@ -168,8 +168,16 @@ runs locally and in GitHub's native AMD64 matrix.
 `mise run test:molecule -- system_maintenance/baseline` runs complete Debian
 and Rocky composition. `mise run test:molecule -- reverse_proxy/default` exercises
 the private proxy using disposable certificates and HTTP/WebSocket backends.
-CI runs both platforms for all three scenarios as six exact
-selector-and-platform matrix jobs. Container results do not prove physical
+Change-directed validation selects affected scenarios on both platforms using
+[the checked-in impact map](scripts/ci/molecule-impact.json). Proxy and TLS role
+changes also select the baseline scenario, which exercises those integrations.
+Shared framework changes and uncertain impact select all six rows. Documentation
+changes under `docs/` or subsystem READMEs select no Molecule rows.
+
+Use `mise run ci:changed -- --dry-run` to inspect selected scenarios and reasons.
+GitHub Actions consumes the same plan and writes exact base/head SHAs and row
+reasons to its job summary. Scheduled and manual CI run the complete suite;
+`mise run ci` remains the explicit complete local validation command. Container results do not prove physical
 reboot, host-kernel enforcement, real network reachability, or Semaphore
 scheduling and notification delivery.
 
