@@ -78,11 +78,33 @@ selection; do not expose arbitrary playbook actions or free-form shell input.
 Record the executed commit and target selection without protected values.
 
 Prepare a reproducible Semaphore execution image with Mise and the tools needed
-by the repository's locked bootstrap workflow. Bootstrap the selected checkout
+by the repository's locked bootstrap workflow. Prepare the selected checkout
 through `mise run bootstrap`, then use its normal gateway and dependency checks.
-Do not substitute the stock image's bundled Ansible or bypass a failed dependency
-fingerprint. Keep bootstrap and execution serial for a shared checkout, or use
-separate job working directories. Start with one concurrent repository job.
+Make the repository bootstrap conditional: unchanged, verified Galaxy dependencies
+must be reused without contacting Galaxy or their Git sources. Do not substitute
+the stock image's bundled Ansible or bypass a failed dependency fingerprint.
+
+Preserve dependency storage across jobs and container restarts, independently of
+disposable repository checkouts. Present the selected dependencies through the
+workspace-local paths expected by `ansible.cfg`. Start with one concurrent
+repository job and serialize dependency preparation with execution when sharing
+storage. A clean checkout alone must not invalidate reusable dependencies.
+
+Use a SHA-256 fingerprint of Galaxy requirements together with checks that the
+required roles and collections exist at the declared versions. Install only for
+changed requirements, missing dependencies, invalid installed metadata, or an
+explicit repair. Apply repository-owned overrides locally and verify their
+contents; an override-only or Python-lock-only change must not force Galaxy
+downloads. Retain the combined dependency verification before playbook execution.
+Implement these rules in the existing repository dependency workflow, not a
+second Semaphore-only installer.
+
+Prepare changed Galaxy dependencies separately from the last verified set. Publish
+the new set and its success fingerprint only after installation, overrides, and
+verification succeed. A failed update stops that revision's job and preserves the
+previous set; never silently run changed requirements against old dependencies.
+Initial installation and dependency changes still require their sources unless
+available locally. No private mirror is required for this delivery.
 
 Use a dedicated controller SSH credential, strict known-host verification, and a
 separate controller age identity. The identity's public recipient covers only the
@@ -222,6 +244,10 @@ Offline validation uses disposable identities, databases, application fixtures,
 and SMB storage. Cover effective Quadlet behavior, first provisioning and
 idempotence, database readiness, private port publication, image/toolchain
 compatibility, and successful repository-gateway execution against fixture hosts.
+Prove an unchanged job succeeds with Galaxy and dependency Git sources unavailable
+and performs no install. Cover changed requirements, missing dependencies, override
+changes without downloads, failed installation without publishing success, and
+reuse across fresh checkouts and application container restarts.
 Test interrupted dumps, corrupt archives, unavailable NAS, interrupted transfer,
 three-day backlog recovery, unchanged hourly runs, retention boundaries, and
 cleanup scope. Restore real fixture data and prove stored credential use; stub
