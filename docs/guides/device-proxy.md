@@ -112,6 +112,12 @@ For the Room Alert 3E example, configure Caddy to use the explicit
 HTTPS and uses the public `*.infra.example.com` certificate. The Caddy-to-device
 connection is unencrypted because this device does not provide HTTPS.
 
+AVTECH's port reference limits HTTPS web access to the S models. The 3E user
+guide documents HTTP port 80 as the default; an operator can change it under
+**Settings → Advanced → General → HTTP Port**. Confirm the configured port
+before declaring the backend. The v2.4.0 release notes describe a change to
+data pushes, with no addition of HTTPS web access.
+
 Treat this as a route-specific transport property. Keep the backend on a trusted
 private management network, restrict access to NUC #4 and the required
 management clients, and do not expose port 80 through public routing or WAN port
@@ -184,6 +190,9 @@ proxied browser access, not the independent device function.
 
 ## References
 
+- [AVTECH Room Alert port requirements](https://avtech.com/articles/14315/list-of-ports-required-by-room-alert-products-2/)
+- [Room Alert 3E user guide, General settings on printed page 40](https://account.roomalert.com/documentation/AVTECH_Room_Alert_3E_Users_Guide.pdf)
+- [Room Alert 3E firmware release notes](https://avtech.com/articles/14644/room-alert-3e-firmware-release-notes/)
 - [ARRIS S33/S34 Web Manager access](https://arris.my.salesforce-sites.com/consumers/articles/knowledge/S33-Web-Manager-Access)
 - [ARRIS certificate-warning guidance](https://arris.my.salesforce-sites.com/consumers/articles/knowledge/Alert-Message-for-Web-Manager-Access)
 - [Caddy reverse proxy transport](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#the-http-transport)
