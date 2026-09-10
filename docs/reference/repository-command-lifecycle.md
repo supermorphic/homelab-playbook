@@ -164,7 +164,21 @@ mise run bootstrap
 
 Bootstrap establishes the locked local controller and Galaxy capability. It
 does not authorize playbook execution or install dependencies implicitly during
-a later live operation.
+a later live operation. It reuses a verified Galaxy generation when the complete
+`requirements.yml` content and repository overrides are unchanged. A change to
+`uv.lock` or an override alone does not download Galaxy content. Override changes
+copy the matching verified requirements generation and apply the current files.
+
+By default, Galaxy generations are stored under `.cache/galaxy`. Set
+`HOMELAB_GALAXY_CACHE_DIR` to an absolute persistent directory when disposable
+checkouts must share them. Bootstrap validates the selected roles, collections,
+versions, and overrides before updating the workspace links. A failed candidate
+does not replace the previous selection or its success fingerprint. Use this
+command to explicitly reinstall the current Galaxy requirements:
+
+```text
+mise exec -- uv run --frozen --no-sync python scripts/galaxy_dependencies.py --repair
+```
 
 ### Secret identity bootstrap
 

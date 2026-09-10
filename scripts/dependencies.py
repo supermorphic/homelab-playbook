@@ -19,12 +19,6 @@ EXACT_VERSION_PATTERN = re.compile(
 METADATA_VERSION_PATTERN = re.compile(
     r"^version:\s*['\"]?([^'\"\s]+)['\"]?\s*$"
 )
-BOOTSTRAP_FINGERPRINT_PATHS = (
-    "uv.lock",
-    "requirements.yml",
-    "overrides/ansible-galaxy/l3d.unbound/tasks/configure.yml",
-    ".ansible/roles/l3d.unbound/tasks/configure.yml",
-)
 OVERRIDE_PAIRS = (
     (
         "overrides/ansible-galaxy/l3d.unbound/tasks/configure.yml",
@@ -78,12 +72,33 @@ def required_role_names(path: Path) -> list[str]:
     return [role_name for role_name, _ in required_roles(path)]
 
 
-def bootstrap_sha256(repo_root: Path) -> str:
+def bootstrap_sha256(repo_root: Path, roles_root: Path | None = None) -> str:
     digest = hashlib.sha256()
-    for relative_path in BOOTSTRAP_FINGERPRINT_PATHS:
-        digest.update(relative_path.encode("utf-8"))
+    inputs: list[tuple[str, Path]] = [
+        ("uv.lock", repo_root / "uv.lock"),
+        ("requirements.yml", repo_root / "requirements.yml"),
+    ]
+    installed_roles_root = roles_root or repo_root / ".ansible" / "roles"
+    override_root = repo_root / "overrides" / "ansible-galaxy"
+    if override_root.is_dir():
+        override_sources = sorted(
+            path for path in override_root.rglob("*") if path.is_file()
+        )
+        for source_path in override_sources:
+            override_relative = source_path.relative_to(override_root)
+            inputs.extend(
+                (
+                    (source_path.relative_to(repo_root).as_posix(), source_path),
+                    (
+                        (Path(".ansible") / "roles" / override_relative).as_posix(),
+                        installed_roles_root / override_relative,
+                    ),
+                )
+            )
+    for logical_path, source_path in inputs:
+        digest.update(logical_path.encode("utf-8"))
         digest.update(b"\0")
-        digest.update((repo_root / relative_path).read_bytes())
+        digest.update(source_path.read_bytes())
         digest.update(b"\0")
     return digest.hexdigest()
 
