@@ -471,7 +471,7 @@ class WorkflowContractTests(unittest.TestCase):
             ),
             direct_mapping_block(self.ansible, "if", 4),
         )
-        self.assertIn("timeout-minutes: 5", self.ansible)
+        self.assertIn("timeout-minutes: 10", self.ansible)
         self.assertEqual(1, self.ansible.count("mise run bootstrap"))
         self.assertEqual(
             1,
