@@ -118,7 +118,8 @@ class SemaphoreTestCommandTests(unittest.TestCase):
                 run, run.name("private-fixture"), [f"{fixture}:/fixture:ro"], "true"
             )
         self.assertIn("--userns", argv)
-        self.assertEqual("keep-id:uid=1001,gid=0", argv[argv.index("--userns") + 1])
+        self.assertEqual("keep-id:uid=1001", argv[argv.index("--userns") + 1])
+        self.assertEqual("1001:0", argv[argv.index("--user") + 1])
 
     def test_volume_is_tracked_before_a_create_timeout(self) -> None:
         runner = load_runner()

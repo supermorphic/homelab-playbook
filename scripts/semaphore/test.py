@@ -382,7 +382,9 @@ def _container(
 ) -> list[str]:
     argv = ["podman", "run", "--name", name, "--rm", "--entrypoint", "/bin/sh"]
     if image == SEMAPHORE_IMAGE:
-        argv.extend(("--userns", "keep-id:uid=1001,gid=0"))
+        # Podman 4.9 generates an invalid range for keep-id:gid=0 (upstream #22080).
+        # Owner access is sufficient for private fixtures; select process GID separately.
+        argv.extend(("--userns", "keep-id:uid=1001", "--user", "1001:0"))
     if network:
         argv.extend(("--network", network))
     for mount in mounts:
