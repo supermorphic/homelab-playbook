@@ -10,6 +10,9 @@ Group=root
 SupplementaryGroups=
 ExecStart=/usr/local/libexec/homelab-tls-reconcile
 NoNewPrivileges=yes
+# Retain the coordinator's ability to drop to Caddy's UID after systemd's
+# seccomp setup. The root-to-Caddy UID switch clears ambient capabilities.
+AmbientCapabilities=CAP_SETUID
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectSystem=strict

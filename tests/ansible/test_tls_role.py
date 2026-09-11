@@ -29,6 +29,7 @@ def registered_units(absent=False, omit_arrays=False):
         if not absent and unit.endswith("service"):
             command = "/usr/local/libexec/homelab-tls-" + ("issue" if user == "svc-acme" else "reconcile")
             properties.update(User=user, Group=user, SupplementaryGroups="", Type="oneshot",
+                              AmbientCapabilities="cap_setuid" if user == "root" else "",
                               NoNewPrivileges="yes", ProtectSystem="strict", PrivateTmp="yes",
                               ReadWritePaths=path, TimeoutStartUSec=timeout,
                               LoadCredential="cloudflare-token:/etc/homelab-tls/cloudflare-token" if user == "svc-acme" else "",
@@ -59,6 +60,19 @@ def registered_arrays(absent=False):
 
 
 class RoleUnitTests(unittest.TestCase):
+    def test_renewal_ambient_capability_is_exact_with_preflight_upgrade(self):
+        for capability in ('', 'cap_setuid', 'cap_setuid cap_net_admin'):
+            for preflight in (True, False):
+                value = registered_units()
+                value['results'][1]['stdout'] = value['results'][1]['stdout'].replace(
+                    'AmbientCapabilities=cap_setuid', 'AmbientCapabilities=' + capability)
+                with self.subTest(capability=capability, preflight=preflight):
+                    if capability == 'cap_setuid' or (preflight and capability == ''):
+                        self.assertTrue(validation.validate_units(value['results'], preflight, registered_arrays()['results']))
+                    else:
+                        with self.assertRaises(ValueError):
+                            validation.validate_units(value['results'], preflight, registered_arrays()['results'])
+
     def test_previous_canonical_write_scope_can_upgrade_only_in_preflight(self):
         value = registered_units()
         value["results"][1]["stdout"] = value["results"][1]["stdout"].replace(
@@ -232,6 +246,7 @@ class RoleUnitTests(unittest.TestCase):
         self.assertIn('User=', directives)
         production = (ROLE / 'templates/homelab-tls-renew.service.j2').read_text().splitlines()
         for directive in ('User=root', 'Group=root', 'SupplementaryGroups=', 'NoNewPrivileges=yes',
+                          'AmbientCapabilities=CAP_SETUID',
                           'PrivateDevices=yes', 'ProtectKernelTunables=yes', 'ProtectKernelModules=yes',
                           'LockPersonality=yes', 'RestrictSUIDSGID=yes',
                           'RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6'):

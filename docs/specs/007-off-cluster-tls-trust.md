@@ -102,7 +102,30 @@ renewal do not create a new account. Failed DNS validation leaves the previously
 deployed certificate available and produces a failed operation with a bounded,
 credential-free diagnostic.
 
+The fixed lego command uses `--dns.resolvers 1.1.1.1:53` for ACME DNS discovery
+and propagation checks. This queries public DNS independently of the host's
+private application resolver. Both recursive and authoritative propagation
+checks remain enabled. The issuer requires outbound DNS access to the public
+resolver and authoritative nameservers; it does not modify host resolver policy.
+
+The issuer additionally retains the final 64 KiB of the latest lego invocation's
+combined output in `/var/lib/homelab-tls-issuer/last-issue.log`. It replaces the
+previous file without following links and updates the bounded tail during
+execution. The file is `svc-acme` owned, mode `0600`, beneath its existing `0700`
+state directory, with no named or inherited POSIX ACL access. This raw output
+is sensitive operator evidence, not a credential-free public diagnostic. It is
+never relayed to Ansible, journald, coordinator status, or repository artifacts.
+Failed and timed-out invocations retain available output; a failure before
+invocation may leave a stale or empty file. Logs are never execution inputs.
+
 ## Credentials and privilege boundaries
+
+The root TLS coordinator retains `CAP_SETUID` with
+`AmbientCapabilities=CAP_SETUID` for its fixed switch to the Caddy account.
+This preserves the required identity change through systemd 257's seccomp
+setup while keeping `NoNewPrivileges` and the other unit restrictions enabled.
+The root-to-Caddy UID switch clears ambient capabilities; Caddy validation
+and reload commands execute without permitted or effective capabilities.
 
 Each UniFi console owns a separate zone-scoped Cloudflare token. The NUC #4
 issuer gets another token, delivered from operator-managed SOPS inventory through

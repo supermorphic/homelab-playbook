@@ -23,6 +23,20 @@ class MoleculePlanTests(unittest.TestCase):
         consumers = {"system_maintenance/baseline", "reverse_proxy/default"}
         all_scenarios = maintenance | consumers
         cases = [
+            *[
+                ([path], consumers, "selective")
+                for path in (
+                    "tests/tls/test_runtime.py",
+                    "tests/tls/cert_fixtures.py",
+                    "tests/ansible/test_tls_role.py",
+                    "tests/ansible/test_tls_proxy_policy.py",
+                    "tests/ansible/test_tls_fixture_material.py",
+                )
+            ],
+            (["tests/tls/test_runtime.py", "scripts/ci/classify.py"], all_scenarios, "full"),
+            (["tests/ansible/test_tls_role.py.bak"], all_scenarios, "full"),
+            (["tests/ansible/test_tls_future.py"], all_scenarios, "full"),
+            (["tests/tls_extra/test_runtime.py"], all_scenarios, "full"),
             (
                 ["roles/system_maintenance/molecule/default/verify.yml"],
                 {"system_maintenance/default"},
@@ -111,6 +125,8 @@ class MoleculePlanTests(unittest.TestCase):
     def test_union_and_reasons_are_deterministic(self):
         paths = [
             "roles/tls_automation/tasks/main.yml",
+            "tests/tls/test_runtime.py",
+            "tests/ansible/test_tls_role.py",
             "roles/system_maintenance/tasks/main.yml",
         ]
         plan = self.plan(paths)
@@ -146,7 +162,7 @@ class MoleculePlanTests(unittest.TestCase):
         document["rules"] = [
             rule
             for rule in document["rules"]
-            if "roles/reverse_proxy/molecule/default/" not in rule["prefixes"]
+            if "roles/reverse_proxy/molecule/default/" not in rule.get("prefixes", [])
         ]
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "map.json"
@@ -182,6 +198,64 @@ class MoleculePlanTests(unittest.TestCase):
                     )
                     self.assertEqual("full", plan["mode"])
                     self.assertEqual(6, len(plan["matrix"]["include"]))
+
+    def test_exact_paths_override_prefixes_without_matching_other_files(self):
+        import molecule_plan
+
+        target = "tests/tls/test_runtime.py"
+        rules = [
+            {"prefixes": ["tests/tls/"], "selectors": "all", "reason": "shared"},
+            {"paths": [target], "selectors": ["reverse_proxy/default"], "reason": "proxy"},
+            {"paths": [target], "selectors": ["system_maintenance/baseline"], "reason": "baseline"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "map.json"
+            path.write_text(json.dumps({"rules": rules}))
+            result = classify.classify_paths([target])
+            plan = molecule_plan.build_plan(result, map_path=path)
+            self.assertEqual("selective", plan["mode"])
+            self.assertEqual(4, len(plan["matrix"]["include"]))
+            path.write_text(json.dumps({"rules": list(reversed(rules))}))
+            self.assertEqual(plan, molecule_plan.build_plan(result, map_path=path))
+            for other in (target + ".bak", "tests/tls/test_policy.py"):
+                with self.subTest(other=other):
+                    self.assertEqual("full", molecule_plan.build_plan(
+                        classify.classify_paths([other]), map_path=path)["mode"])
+
+    def test_invalid_matchers_fail_closed(self):
+        import molecule_plan
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "map.json"
+            for matchers in (
+                {}, {"paths": []}, {"paths": "tests/tls/test_runtime.py"},
+                {"paths": [None]}, {"paths": ["../outside.py"]},
+                {"paths": ["/absolute.py"]}, {"paths": ["tests/tls/"]},
+                {"prefixes": []}, {"prefixes": ["tests/tls"]},
+                {"paths": ["tests/tls/test_runtime.py"], "unknown": True},
+            ):
+                with self.subTest(matchers=matchers):
+                    path.write_text(json.dumps({"rules": [{
+                        **matchers, "selectors": ["reverse_proxy/default"], "reason": "test"
+                    }]}))
+                    plan = molecule_plan.build_plan(
+                        classify.classify_paths(["tests/tls/test_runtime.py"]), map_path=path)
+                    self.assertEqual("full", plan["mode"])
+                    self.assertEqual(6, len(plan["matrix"]["include"]))
+
+    def test_exact_file_cannot_declare_a_new_scenario(self):
+        import molecule_plan
+
+        target = "roles/reverse_proxy/molecule/future/verify.yml"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "map.json"
+            path.write_text(json.dumps({"rules": [{
+                "prefixes": ["roles/reverse_proxy/"], "paths": [target],
+                "selectors": ["reverse_proxy/default"], "reason": "proxy"
+            }]}))
+            plan = molecule_plan.build_plan(classify.classify_paths([target]), map_path=path)
+            self.assertEqual("full", plan["mode"])
+            self.assertEqual(6, len(plan["matrix"]["include"]))
 
     def test_merge_gate_checks_plan_completeness(self):
         import merge_gate

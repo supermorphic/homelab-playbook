@@ -1,5 +1,7 @@
 """Joint publication recovery uses the real Publisher journal and filesystem."""
 import json
+import io
+from contextlib import nullcontext, redirect_stderr
 from pathlib import Path
 import unittest
 
@@ -58,6 +60,38 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ansible'))
 from test_reverse_proxy_activation import ActivationFixture
 import test_reverse_proxy_activation as proxy_tests
+
+
+class AdapterDiagnosticTests(unittest.TestCase):
+    def test_safe_activation_failure_reaches_operator(self):
+        from tls_runtime import caddy
+        module = proxy_tests.load_activation()
+        activator = mock.Mock()
+        activator.locked.return_value = nullcontext()
+        output = io.StringIO()
+        with mock.patch.object(caddy, 'activation_module', return_value=module), \
+                mock.patch.object(module, 'Activator', return_value=activator), \
+                mock.patch.object(caddy.os, 'geteuid', return_value=0), \
+                mock.patch.object(caddy, 'Integration') as integration, redirect_stderr(output):
+            integration.return_value.validate_candidate.side_effect = module.ActivationError(
+                'external certificate is not currently valid')
+            self.assertEqual(1, caddy.main(['validate', '/synthetic/candidate']))
+        self.assertIn('TLS Caddy validate failed: external certificate is not currently valid', output.getvalue())
+
+    def test_unclassified_failure_does_not_expose_exception_contents(self):
+        from tls_runtime import caddy
+        module = proxy_tests.load_activation()
+        activator = mock.Mock()
+        activator.locked.return_value = nullcontext()
+        output = io.StringIO()
+        with mock.patch.object(caddy, 'activation_module', return_value=module), \
+                mock.patch.object(module, 'Activator', return_value=activator), \
+                mock.patch.object(caddy.os, 'geteuid', return_value=0), \
+                mock.patch.object(caddy, 'Integration') as integration, redirect_stderr(output):
+            integration.return_value.validate_candidate.side_effect = ValueError('synthetic-private-value')
+            self.assertEqual(1, caddy.main(['validate', '/synthetic/candidate']))
+        self.assertNotIn('synthetic-private-value', output.getvalue())
+        self.assertIn('TLS Caddy integration failed', output.getvalue())
 
 
 class AdapterFixture(ActivationFixture):
@@ -164,6 +198,26 @@ class AdapterTests(AdapterFixture):
             self.publisher.publish(b'certificate-one', b'private-key-one')
         self.assertTrue(failure.exception.restoration_failed)
         self.assertTrue(self.publisher._read_journal()['caddy']['restart'])
+
+    def test_adapter_diagnostics_reach_journal_on_initial_and_retry_calls(self):
+        from tls_runtime import caddy
+        from types import SimpleNamespace
+        deployment = caddy.Deployment(self.activation, SimpleNamespace(
+            reader_gid=os.getgid(), endpoints=[{
+                'hostname': 'app.infra.example.com', 'address': '10.20.30.40', 'port': 443}]))
+        for outcomes in ([1], [caddy.RESTART_EXIT, 1]):
+            with self.subTest(outcomes=outcomes), deployment.locked(), \
+                    mock.patch.object(caddy.subprocess, 'run', side_effect=[
+                        SimpleNamespace(returncode=code) for code in outcomes]) as run, \
+                    mock.patch.object(deployment, 'restart'), \
+                    self.assertRaisesRegex(RuntimeError, 'fixed Caddy integration operation failed'):
+                try:
+                    deployment.operation('reload')
+                finally:
+                    self.assertEqual(len(outcomes), run.call_count)
+                    for call in run.call_args_list:
+                        self.assertIsNone(call.kwargs['stderr'])
+                        self.assertEqual(caddy.subprocess.DEVNULL, call.kwargs['stdout'])
 
     def test_inherited_fd9_is_exclusive_and_wrong_inode_is_rejected(self):
         from tls_runtime import caddy

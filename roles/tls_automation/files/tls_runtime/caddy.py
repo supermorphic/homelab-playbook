@@ -223,7 +223,7 @@ class Deployment:
             revision = self.binding()
             argv = [ADAPTER, action] + ([] if path is None else [str(path)])
             result = subprocess.run(argv, pass_fds=(9,), stdin=subprocess.DEVNULL,
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=None,
                                     cwd='/', timeout=900, check=False,
                                     env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C', 'LC_ALL': 'C', 'HOME': '/'})
             if result.returncode == RESTART_EXIT:
@@ -231,7 +231,7 @@ class Deployment:
                 # Startup restored disk authority. The same fixed action now
                 # verifies restoration; it cannot silently activate another revision.
                 result = subprocess.run(argv, pass_fds=(9,), stdin=subprocess.DEVNULL,
-                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                        stdout=subprocess.DEVNULL, stderr=None,
                                         cwd='/', timeout=900, check=False,
                                         env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C', 'LC_ALL': 'C', 'HOME': '/'})
             if result.returncode:
@@ -267,10 +267,12 @@ def main(arguments=None):
     if not (args in (['reload'], ['deactivate']) or len(args) == 2 and args[0] == 'validate'):
         print('usage: homelab-tls-caddy {validate PATH|reload|deactivate}', file=sys.stderr)
         return 2
+    module = None
     try:
         if os.geteuid() != 0:
             raise ValueError('TLS integration requires root')
-        activator = activation_module().Activator()
+        module = activation_module()
+        activator = module.Activator()
         with activator.locked(inherited=True):
             integration = Integration(activator)
             if args[0] == 'validate':
@@ -280,6 +282,12 @@ def main(arguments=None):
         return 0
     except RestartNeeded:
         return RESTART_EXIT
-    except Exception:
-        print('TLS Caddy integration failed; inspect private transaction state', file=sys.stderr)
+    except Exception as error:
+        # ActivationError explicitly contains only safe, repository-owned
+        # diagnostics. Other exceptions can contain protected input values.
+        # HostCommands still discards raw Caddy and OpenSSL stderr.
+        if module is not None and isinstance(error, module.ActivationError):
+            print(f'TLS Caddy {args[0]} failed: {error}', file=sys.stderr)
+        else:
+            print('TLS Caddy integration failed; inspect private transaction state', file=sys.stderr)
         return 1

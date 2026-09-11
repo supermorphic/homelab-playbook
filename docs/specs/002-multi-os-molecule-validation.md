@@ -414,11 +414,14 @@ supplies the complete scenario/platform set, including fallback when the map is
 missing or invalid. Every selected scenario runs both Debian 13 and Rocky Linux
 9. Platform-specific impact selection is not supported.
 
-Each map rule declares directory prefixes, consuming selectors, and a reason.
-The most specific matching directory wins; equally specific rules union their
+Each map rule declares directory `prefixes`, exact-file `paths`, or both, plus
+consuming selectors and a reason. Exact files outrank directory prefixes;
+otherwise the most specific matching directory wins. Equally specific rules union their
 consumers. This lets scenario-local tests select their own scenario while role
 changes select all consumers. Scenario paths require an explicit scenario-directory
-rule; a broad role rule cannot cover a missing scenario declaration. Rules naming `all` broaden to the complete suite.
+rule; a broad role rule or exact-file entry cannot cover a missing scenario
+declaration. Exact-file entries do not participate in scenario-path matching.
+Rules naming `all` broaden to the complete suite.
 Selections and reasons are deduplicated and emitted in stable registry order.
 
 | Changed input | Scenario selection |
@@ -427,6 +430,7 @@ Selections and reasons are deduplicated and emitted in stable registry order.
 | OS playbooks, host identity, bootstrap, or Podman | Baseline scenario |
 | Shared security policy and OS baseline verifier | Baseline and proxy scenarios |
 | Proxy or TLS role/playbook | Baseline and proxy scenarios |
+| `tests/tls/` and the three TLS-specific Ansible test files | Baseline and proxy scenarios |
 | Default maintenance scenario assertions | Default maintenance scenario |
 | Proxy scenario assertions | Proxy scenario |
 | Baseline scenario assertions | Baseline scenario |
@@ -443,6 +447,13 @@ policy and verification from `security_baseline` and `os_baseline_verify`, so
 changes to those roles select both consumers. A maintenance role change excludes
 the proxy scenario. Shared create, cleanup, and destroy implementations under the
 default maintenance scenario serve all three scenarios.
+
+The TLS-specific Ansible files are `test_tls_role.py`, `test_tls_proxy_policy.py`,
+and `test_tls_fixture_material.py` under `tests/ansible/`. These exact files and
+`tests/tls/` cover TLS runtime, policy, and disposable certificate fixtures used
+by the baseline and proxy scenarios. Other files under `tests/ansible/` continue
+to require full validation. Changes to this classifier or impact map also require
+the complete suite, even when combined with TLS changes.
 
 The existing Git discovery retains deletion paths, both rename/copy paths, and
 local committed, staged, unstaged, and untracked paths. Discovery failure or an
