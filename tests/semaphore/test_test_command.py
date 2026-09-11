@@ -46,6 +46,26 @@ class SemaphoreTestCommandTests(unittest.TestCase):
 
         self.assertNotEqual(0, result.returncode)
 
+    def test_opted_in_probe_failure_reports_exit_code_and_output(self) -> None:
+        runner = load_runner()
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; print('probe started'); print('probe error', file=sys.stderr); sys.exit(17)"],
+            capture_output=True, text=True, check=False,
+        )
+        with self.assertRaises(RuntimeError) as raised:
+            runner._must(result, "probe failed", include_output=True)
+        self.assertIn("exit 17", str(raised.exception))
+        self.assertIn("probe started", str(raised.exception))
+        self.assertIn("probe error", str(raised.exception))
+
+    def test_failure_output_is_not_reported_without_explicit_opt_in(self) -> None:
+        runner = load_runner()
+        result = subprocess.CompletedProcess([], 1, "private stdout", "private stderr")
+        with self.assertRaises(RuntimeError) as raised:
+            runner._must(result, "command failed")
+        self.assertEqual("command failed", str(raised.exception))
+
     def test_command_timeout_is_recorded_as_a_failure(self) -> None:
         runner = load_runner()
         run = runner.CompatibilityRun()

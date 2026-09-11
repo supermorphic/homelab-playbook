@@ -393,8 +393,13 @@ def _container(
     return [*argv, "--workdir", workdir, image, "-c", script]
 
 
-def _must(result: subprocess.CompletedProcess[str], message: str) -> None:
+def _must(
+    result: subprocess.CompletedProcess[str], message: str, *, include_output: bool = False
+) -> None:
     if result.returncode:
+        if include_output:
+            message += f" (exit {result.returncode})"
+            message += f"\nstdout:\n{result.stdout or ''}\nstderr:\n{result.stderr or ''}"
         raise RuntimeError(message)
 
 
@@ -500,7 +505,9 @@ def _compatibility() -> int:
                 capture=True,
             )
             run.discard_exited(probe_name)
-            _must(probe, "Semaphore runtime probe failed")
+            # This probe contains only image identity, paths, and tool metadata.
+            # Keep captured output private by default for all other commands.
+            _must(probe, "Semaphore runtime probe failed", include_output=True)
             machine = next(
                 line for line in probe.stdout.splitlines() if line in MISE_ASSETS
             )
