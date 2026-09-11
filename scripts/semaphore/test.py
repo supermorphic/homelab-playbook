@@ -381,6 +381,8 @@ def _container(
     network: str | None = None,
 ) -> list[str]:
     argv = ["podman", "run", "--name", name, "--rm", "--entrypoint", "/bin/sh"]
+    if image == SEMAPHORE_IMAGE:
+        argv.extend(("--userns", "keep-id:uid=1001,gid=0"))
     if network:
         argv.extend(("--network", network))
     for mount in mounts:

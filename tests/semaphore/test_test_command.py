@@ -87,6 +87,19 @@ class SemaphoreTestCommandTests(unittest.TestCase):
         self.assertIn("--network", argv)
         self.assertEqual("none", argv[argv.index("--network") + 1])
 
+    def test_stock_app_maps_private_host_fixture_owner_to_runtime_user(self) -> None:
+        runner = load_runner()
+        run = runner.CompatibilityRun()
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Path(temporary)
+            runner._fixture(fixture)
+            self.assertEqual(0o700, fixture.stat().st_mode & 0o777)
+            argv = runner._container(
+                run, run.name("private-fixture"), [f"{fixture}:/fixture:ro"], "true"
+            )
+        self.assertIn("--userns", argv)
+        self.assertEqual("keep-id:uid=1001,gid=0", argv[argv.index("--userns") + 1])
+
     def test_volume_is_tracked_before_a_create_timeout(self) -> None:
         runner = load_runner()
         run = runner.CompatibilityRun()
