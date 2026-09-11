@@ -67,7 +67,7 @@ and validation boundaries.
 
 ### Podman foundation commands
 
-Run these after establishing the OS baseline. They target `podman_hosts`;
+Run these after establishing the OS baseline. They target `podman`;
 `nuc4` is the current production member. Ansible loads encrypted inventory
 through SOPS and the configured macOS Keychain helper; no extra secret flag is
 needed. Complete the [SOPS setup](docs/guides/sops-secrets.md) on the operator
@@ -82,34 +82,84 @@ Provisioning includes verification. Standalone verification is useful for later
 drift checks, including after OS maintenance. Both verifiers stop at the first
 failed assertion and do not repair drift.
 
-The production service-account list is empty, so these commands currently
-establish and check host capability and shared directories. They deploy no
-applications. See the [Podman playbook README](playbooks/podman/README.md) for
-account inputs, ownership, failure recovery, and validation boundaries.
+Production declares the `svc-semaphore` account on `nuc4`. These commands
+establish host capability, shared directories, and the declared account; the
+Semaphore playbook deploys the application. See the
+[Podman playbook README](playbooks/podman/README.md) for account inputs,
+ownership, failure recovery, and validation boundaries.
 
 ### Shared private HTTPS commands
 
 Caddy runs directly on the host under systemd. Separately managed Podman
 applications publish HTTP backends on host loopback; the shared proxy owns
-private TCP/443 and consumes external certificates supplied under issue #5.
+private TCP/443 and consumes certificates supplied by the TLS playbooks.
 
 | Command | Purpose |
 | --- | --- |
 | `mise run playbook -- reverse-proxy provision production` | Install the distribution package, reconcile declared routes, and verify. |
 | `mise run playbook -- reverse-proxy verify production` | Observe the installed proxy, TLS, and private firewall policy without repairs. |
 
-The production route list is empty. Initial provisioning creates an admin-only
-service with no HTTPS listener. Activating routes requires operator-supplied
-private inputs and externally deployed certificates. Caddy is an unpinned system
+Production routes are supplied through protected host variables. Empty routes
+produce an admin-only service with no HTTPS listener. Activating routes requires
+operator-supplied private inputs and deployed certificates. Caddy is an unpinned system
 package upgraded through existing OS maintenance; package updates may restart
 the shared service. See the [proxy README](playbooks/reverse-proxy/README.md)
 for inputs, prerequisites, and troubleshooting.
+
+### TLS commands
+
+These commands target `tls_issuer` and support only the production inventory.
+The issuer manages the shared `infra` wildcard certificate.
+
+| Command | Purpose |
+| --- | --- |
+| `mise run playbook -- tls provision production` | Install and reconcile the issuer, coordinator, and declared timer state. |
+| `mise run playbook -- tls renew production` | Start the certificate renewal and publication coordinator and wait for its result. |
+| `mise run playbook -- tls verify production` | Check the installed boundaries, certificate publication, and declared TLS endpoints without changes. |
+
+See the [TLS playbook README](playbooks/tls/README.md) for initial issuance,
+renewal prerequisites, and recovery.
+
+### Semaphore commands
+
+These commands target the `semaphore` group; `nuc4` is its production member.
+First provision its Podman foundation and supply the protected application and
+NAS inputs described in the [Semaphore README](playbooks/semaphore/README.md).
+Declare the matching protected proxy route with hostname
+`semaphore.infra.supermorphic.com`, backend port `18080`, and certificate name
+`infra`, preserving existing routes. The shared certificate must already exist.
+
+| Command | Purpose |
+| --- | --- |
+| `mise run playbook -- semaphore provision production --limit nuc4` | Deploy PostgreSQL and Semaphore, reconcile backup timers and the enabled controller job, and verify. |
+| `mise run playbook -- semaphore verify production --limit nuc4` | Check the running containers, definitions, storage, and timers without repairs. |
+
+Provision the application, then reconcile its route with
+`mise run playbook -- reverse-proxy provision production --limit nuc4`.
+The controller remains disabled until its dedicated identity and inputs are
+enrolled. Backups run daily at 03:00 host-local; successful dumps trigger NAS
+transfer, with retries every four hours at :15. See the
+[recovery guide](docs/guides/semaphore-recovery.md) for an isolated restore drill.
+
+### Retained playbook commands
+
+The repository also retains these command families. They have no active
+production targets and are not part of the NUC deployment sequence.
+
+| Playbook | Actions | Command form |
+| --- | --- | --- |
+| `pihole` | `install`, `update`, `verify` | `mise run playbook -- pihole <action> <inventory>` |
+| `k3s` | `install`, `update`, `uninstall` | `mise run playbook -- k3s <action> frozen/k3s` |
+| `cluster` | `create`, `destroy` | `mise run playbook -- cluster <action> frozen/k3s` |
+
+Frozen K3s receives static validation only; live execution remains operator-run.
 
 ## Inventories
 
 Select one of these inventory arguments:
 
-- `production` contains the active `nuc4` host in `os_managed`.
+- `production` contains `nuc4` in `os_managed`, `podman`,
+  `reverse_proxy`, `tls_issuer`, and `semaphore`.
 - `staging` contains no hosts; it retains non-active Semaphore deployment and
   backup inputs for future work.
 - `frozen/k3s` retains the non-active K3s inventory.
@@ -117,7 +167,7 @@ Select one of these inventory arguments:
 Production and staging are operator inputs. Validation parses public-only
 inventory mirrors and does not connect to their hosts.
 Each inventory directory stores its static host and group topology in
-`hosts.yml`; public variables remain under `group_vars/`.
+`hosts.yml`; public variables live under `group_vars/` and `host_vars/`.
 
 ## Secrets
 
@@ -128,10 +178,11 @@ controllers use separate identities. See the [SOPS secrets guide](docs/guides/so
 for workstation setup, recovery, editing, and recipient changes.
 
 Public group variables live in `vars.yml`; version pins in `versions.yml` are
-public as well. Encrypted variables use sibling `secrets.sops.yml` files. The
-active boundary is `inventory/production/group_vars/os_managed/`.
-`inventory/production/host_vars/nuc4/vars.yml` contains public hostname
-metadata. The sibling protected file contains identity and access inputs.
+public as well. Encrypted variables use sibling `secrets.sops.yml` files. Active
+protected inputs live in production group and host variables.
+`inventory/production/host_vars/nuc4/vars.yml` contains public hostname and
+Semaphore deployment settings. The sibling protected file contains TLS and proxy
+inputs and must also supply protected Semaphore inputs before deployment.
 Retained Semaphore inputs are under
 `inventory/staging/group_vars/semaphore/`, and retained K3s variables are under
 `inventory/frozen/k3s/group_vars/`.

@@ -1,6 +1,6 @@
 ---
 - name: Provision off-cluster TLS automation
-  hosts: tls_hosts
+  hosts: tls_issuer
   serial: 1
   any_errors_fatal: true
   gather_facts: false

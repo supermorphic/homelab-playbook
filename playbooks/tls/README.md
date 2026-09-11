@@ -2,8 +2,8 @@
 
 These playbooks install and operate the NUC host issuer from
 [specification 007](../../docs/specs/007-off-cluster-tls-trust.md). They target
-only the `tls_hosts` inventory group through `mise run playbook`. Production
-registers `nuc4` in both `tls_hosts` and `reverse_proxy_hosts`, with renewal
+only the `tls_issuer` inventory group through `mise run playbook`. Production
+registers `nuc4` in both `tls_issuer` and `reverse_proxy`, with renewal
 disabled. Inventory membership does not authorize a live playbook run.
 
 The TLS command family accepts only the `production` inventory. The gateway
@@ -59,7 +59,7 @@ namespace and each address must be a private unicast IP literal.
 
 TLS derives verification targets from every `infra` route and every declared
 Caddy listener at TCP/443. Do not maintain a separate endpoint list. Each route
-must fit the exact wildcard namespace. The public `tls_hosts` defaults declare
+must fit the exact wildcard namespace. The public `tls_issuer` defaults declare
 `reverse_proxy_deferred_certificates: [infra]`, allowing those routes to remain
 inactive until the first certificate exists.
 Provisioning rejects a declaration that differs from Caddy's committed manifest

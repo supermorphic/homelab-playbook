@@ -1,6 +1,6 @@
 ---
 - name: Remove disposable reverse proxy fixtures
-  hosts: reverse_proxy_hosts
+  hosts: reverse_proxy
   gather_facts: true
   become: true
   tasks:

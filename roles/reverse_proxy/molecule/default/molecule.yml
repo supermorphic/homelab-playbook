@@ -12,7 +12,7 @@ platforms:
   - name: debian13
     hostname: reverse-proxy-debian13
     groups:
-      - reverse_proxy_hosts
+      - reverse_proxy
     image: localhost/homelab-playbook-reverse-proxy-debian13:local
     container_name: homelab-playbook-reverse-proxy-debian13
     container_command: /usr/lib/systemd/systemd
@@ -31,7 +31,7 @@ platforms:
   - name: rockylinux9
     hostname: reverse-proxy-rockylinux9
     groups:
-      - reverse_proxy_hosts
+      - reverse_proxy
     image: localhost/homelab-playbook-reverse-proxy-rockylinux9:local
     container_name: homelab-playbook-reverse-proxy-rockylinux9
     container_command: /usr/lib/systemd/systemd

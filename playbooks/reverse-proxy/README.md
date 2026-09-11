@@ -1,7 +1,7 @@
 # Shared private reverse proxy
 
 These playbooks manage distribution-packaged Caddy as a host systemd service on
-Debian 13 and Rocky Linux 9. They target `reverse_proxy_hosts` through the
+Debian 13 and Rocky Linux 9. They target `reverse_proxy` through the
 canonical `mise run playbook` gateway. Establish the
 [OS baseline](../../docs/guides/managed-host-onboarding.md) and controller
 [SOPS setup](../../docs/guides/sops-secrets.md) before using them.

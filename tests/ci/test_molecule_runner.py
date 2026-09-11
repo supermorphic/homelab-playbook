@@ -190,7 +190,7 @@ class RunnerCliTests(unittest.TestCase):
             "reverse_proxy/default": {
                 "role_name": "reverse_proxy",
                 "scenario_name": "default",
-                "groups": ["reverse_proxy_hosts"],
+                "groups": ["reverse_proxy"],
                 "platforms": [
                     (
                         "debian13",

@@ -103,7 +103,7 @@ its configuration, certificate files, deployment helper, or systemd unit.
 
 ## Declarative ingress and routes
 
-Use an explicit `reverse_proxy_hosts` inventory group and these service inputs:
+Use an explicit `reverse_proxy` inventory group and these service inputs:
 
 - `reverse_proxy_bind_addresses`: non-empty private host addresses, with no
   unspecified address or wildcard listener.
