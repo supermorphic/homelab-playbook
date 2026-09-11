@@ -518,7 +518,7 @@ class WorkflowContractTests(unittest.TestCase):
             direct_mapping_values(self.molecule, "if", 4),
         )
         self.assertIn("runs-on: ubuntu-24.04", self.molecule)
-        self.assertIn("timeout-minutes: 60", self.molecule)
+        self.assertIn("timeout-minutes: 75", self.molecule)
         expected_strategy = "\n".join(
             [
                 "    strategy:",
