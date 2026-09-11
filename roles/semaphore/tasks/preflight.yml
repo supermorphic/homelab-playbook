@@ -1,0 +1,312 @@
+---
+- name: Require supported Semaphore host authority
+  ansible.builtin.assert:
+    that:
+      - >-
+        (ansible_facts['distribution'] == 'Debian'
+         and ansible_facts['distribution_major_version'] == '13')
+        or (ansible_facts['distribution'] == 'Rocky'
+            and ansible_facts['distribution_major_version'] == '9')
+      - ansible_facts['service_mgr'] == 'systemd'
+      - ansible_user | default('') == 'ansible'
+      - ansible_password is not defined
+      - ansible_ssh_pass is not defined
+      - ansible_ssh_password is not defined
+      - ansible_become_password is not defined
+      - ansible_become_pass is not defined
+    fail_msg: >-
+      Semaphore management requires a supported OS, key-only SSH, and
+      passwordless ansible administration
+  no_log: true
+
+- name: Validate public Semaphore inputs
+  ansible.builtin.assert:
+    that:
+      - semaphore_account_name == 'svc-semaphore'
+      - semaphore_foundation_account is mapping
+      - semaphore_foundation_account.keys() | list | sort == ['gid', 'name', 'subgid_count', 'subgid_start', 'subuid_count', 'subuid_start', 'uid']
+      - semaphore_foundation_account.name == semaphore_account_name
+      - semaphore_foundation_account.uid is integer
+      - semaphore_foundation_account.gid is integer
+      - semaphore_foundation_account.uid | int > 0
+      - semaphore_foundation_account.gid | int > 0
+      - semaphore_foundation_account.subuid_start is integer
+      - semaphore_foundation_account.subgid_start is integer
+      - semaphore_foundation_account.subuid_count | int >= 65536
+      - semaphore_foundation_account.subgid_count | int >= 65536
+      - semaphore_foundation_account.subuid_start | int > 0
+      - semaphore_foundation_account.subgid_start | int > 0
+      - semaphore_foundation_account.subuid_start | int + semaphore_foundation_account.subuid_count | int <= 4294967295
+      - semaphore_foundation_account.subgid_start | int + semaphore_foundation_account.subgid_count | int <= 4294967295
+      - semaphore_image is match('^\\S+:v2[.]19[.]12@sha256:[0-9a-f]{64}$')
+      - semaphore_postgres_image is match('^\\S+:17([.-][^@\\s]*)?@sha256:[0-9a-f]{64}$')
+      - semaphore_rclone_image is match('^\\S+:[^@\\s]+@sha256:[0-9a-f]{64}$')
+      - semaphore_postgres_major | string == '17'
+      - semaphore_backend_port is integer
+      - semaphore_backend_port | int >= 1024
+      - semaphore_backend_port | int <= 65535
+      - semaphore_hostname is match('^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$')
+      - semaphore_certificate_name is match('^[A-Za-z0-9][A-Za-z0-9_-]*$')
+      - semaphore_database_name is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - semaphore_database_user is match('^[A-Za-z_][A-Za-z0-9_]*$')
+      - semaphore_state_root == '/var/lib/' ~ semaphore_account_name ~ '/semaphore'
+      - semaphore_quadlet_root == '/etc/containers/systemd/users/' ~ (semaphore_foundation_account.uid | string)
+      - semaphore_user_unit_root == '/var/lib/' ~ semaphore_account_name ~ '/.config/systemd/user'
+      - semaphore_helper_root == '/usr/local/libexec/semaphore'
+    fail_msg: Semaphore public inputs are unsafe or incomplete
+
+- name: Require protected Semaphore inputs without disclosing values
+  ansible.builtin.assert:
+    that:
+      - lookup('vars', item, default='') | string | length > 0
+      - "'\\n' not in (lookup('vars', item, default='') | string)"
+      - "'\\r' not in (lookup('vars', item, default='') | string)"
+    fail_msg: A required protected Semaphore runtime value is absent or malformed
+  loop:
+    - semaphore_database_password
+    - semaphore_admin_login
+    - semaphore_admin_password
+    - semaphore_admin_name
+    - semaphore_admin_email
+    - semaphore_cookie_hash
+    - semaphore_cookie_encryption
+    - semaphore_access_key_encryption
+  no_log: true
+
+- name: Validate backup inputs
+  ansible.builtin.assert:
+    that:
+      - semaphore_rclone_remote is match('^[A-Za-z0-9_-]+:[A-Za-z0-9_./-]+$')
+      - "'..' not in semaphore_rclone_remote.split('/')"
+      - semaphore_local_retention_days | int == 7
+      - semaphore_remote_retention_days | int == 90
+      - lookup('vars', 'semaphore_rclone_config', default='') | string | length > 0
+    fail_msg: Semaphore backup and transfer inputs are absent or unsafe
+  when: semaphore_backups_enabled | bool
+  no_log: true
+
+- name: Validate enabled controller inputs
+  ansible.builtin.assert:
+    that:
+      - semaphore_controller_identity_enabled | bool
+      - ansible_architecture in semaphore_mise_assets
+      - semaphore_controller_repository_url is match('^https://\\S+$')
+      - semaphore_controller_revision is match('^[0-9a-f]{40}$')
+      - semaphore_controller_repository_ref is match('^[A-Za-z0-9][A-Za-z0-9._/-]*$')
+      - "'..' not in semaphore_controller_repository_ref"
+      - semaphore_controller_inventory is match('^[A-Za-z0-9][A-Za-z0-9_-]*$')
+      - semaphore_controller_host_selection is match('^[A-Za-z0-9][A-Za-z0-9_.-]*(,[A-Za-z0-9][A-Za-z0-9_.-]*)*$')
+      - lookup('vars', 'semaphore_controller_ssh_private_key', default='') | string | length > 0
+    fail_msg: >-
+      An enabled controller requires its protected identity, a safe absolute
+      adapter and a supported pinned Mise artifact
+  when: semaphore_controller_enabled | bool
+  no_log: true
+
+- name: Inspect Semaphore foundation account
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ semaphore_account_name }}"
+    fail_key: false
+
+- name: Inspect Semaphore foundation group
+  ansible.builtin.getent:
+    database: group
+    key: "{{ semaphore_account_name }}"
+    fail_key: false
+
+- name: Inspect Semaphore foundation record
+  ansible.builtin.stat:
+    path: "{{ semaphore_quadlet_root }}/.foundation-account.json"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  register: semaphore_foundation_record_metadata
+
+- name: Require an existing compatible Podman foundation
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.getent_passwd[semaphore_account_name] is defined
+      - ansible_facts.getent_group[semaphore_account_name] is defined
+      - ansible_facts.getent_passwd[semaphore_account_name][1] | int == semaphore_foundation_account.uid
+      - ansible_facts.getent_group[semaphore_account_name][1] | int == semaphore_foundation_account.gid
+      - semaphore_foundation_record_metadata.stat.exists
+      - semaphore_foundation_record_metadata.stat.isreg | default(false)
+      - not semaphore_foundation_record_metadata.stat.islnk | default(true)
+      - semaphore_foundation_record_metadata.stat.uid == 0
+    fail_msg: >-
+      The declared svc-semaphore Podman foundation must be provisioned separately
+      before Semaphore; this role never creates or changes the foundation account
+
+- name: Read Semaphore foundation declaration
+  ansible.builtin.slurp:
+    src: "{{ semaphore_quadlet_root }}/.foundation-account.json"
+  register: semaphore_foundation_record
+
+- name: Require exact foundation identity declaration
+  ansible.builtin.assert:
+    that:
+      - semaphore_foundation_record.content | b64decode | from_json == semaphore_foundation_account
+    fail_msg: The existing foundation allocation differs from Semaphore inventory
+
+- name: Inspect Semaphore filesystem boundaries
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  loop:
+    - "{{ semaphore_state_root }}"
+    - "{{ semaphore_state_root }}/database"
+    - "{{ semaphore_state_root }}/work"
+    - "{{ semaphore_state_root }}/work/tmp"
+    - "{{ semaphore_state_root }}/work/.ssh"
+    - "{{ semaphore_state_root }}/tools"
+    - "{{ semaphore_state_root }}/dependencies"
+    - "{{ semaphore_state_root }}/backups"
+    - "{{ semaphore_state_root }}/credentials"
+    - "{{ semaphore_state_root }}/credentials/config"
+    - "{{ semaphore_quadlet_root }}/semaphore.network"
+    - "{{ semaphore_quadlet_root }}/semaphore-postgres.container"
+    - "{{ semaphore_quadlet_root }}/semaphore.container"
+    - "{{ semaphore_user_unit_root }}/semaphore-backup.timer"
+    - "{{ semaphore_user_unit_root }}/semaphore-transfer.timer"
+  register: semaphore_filesystem_boundaries
+
+- name: Reject unsafe existing Semaphore paths
+  ansible.builtin.assert:
+    that:
+      - not item.stat.exists or not item.stat.islnk
+      - not item.stat.exists or (item.stat.isdir if item.item.startswith(semaphore_state_root) else item.stat.isreg)
+      - not item.stat.exists or item.stat.uid in [0, semaphore_foundation_account.uid]
+    fail_msg: An existing Semaphore path has an unsafe type, link, or owner
+  loop: "{{ semaphore_filesystem_boundaries.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Inspect existing PostgreSQL major version marker
+  ansible.builtin.stat:
+    path: "{{ semaphore_state_root }}/database/PG_VERSION"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  register: semaphore_postgres_version_file
+
+- name: Reject unsafe existing PostgreSQL version marker
+  ansible.builtin.assert:
+    that:
+      - >-
+        not semaphore_postgres_version_file.stat.exists
+        or (semaphore_postgres_version_file.stat.isreg | default(false)
+            and not semaphore_postgres_version_file.stat.islnk | default(true)
+            and semaphore_postgres_version_file.stat.uid == semaphore_foundation_account.uid)
+    fail_msg: Existing PostgreSQL version metadata has an unsafe type or owner
+
+- name: Read existing PostgreSQL major version marker
+  ansible.builtin.slurp:
+    src: "{{ semaphore_state_root }}/database/PG_VERSION"
+  register: semaphore_existing_postgres_version
+  when: semaphore_postgres_version_file.stat.exists
+
+- name: Require compatible existing PostgreSQL data
+  ansible.builtin.assert:
+    that:
+      - >-
+        not semaphore_postgres_version_file.stat.exists
+        or (semaphore_existing_postgres_version.content | b64decode | trim)
+           == semaphore_postgres_major | string
+    fail_msg: Existing PostgreSQL data requires a different declared major version
+
+- name: Inspect administrator-owned Semaphore helper boundaries
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  loop:
+    - /usr/local
+    - /usr/local/libexec
+    - "{{ semaphore_helper_root }}"
+  register: semaphore_helper_boundaries
+
+- name: Reject unsafe Semaphore helper boundaries
+  ansible.builtin.assert:
+    that:
+      - item.item in ['/usr/local/libexec', semaphore_helper_root] or item.stat.exists
+      - not item.stat.exists or item.stat.isdir
+      - not item.stat.exists or not item.stat.islnk
+      - not item.stat.exists or item.stat.uid == 0
+    fail_msg: A Semaphore helper ancestor is missing, linked, or not administrator-owned
+  loop: "{{ semaphore_helper_boundaries.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Inspect Semaphore account-owned parent boundaries
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  loop:
+    - "/var/lib/{{ semaphore_account_name }}"
+    - "/var/lib/{{ semaphore_account_name }}/.config"
+    - "/var/lib/{{ semaphore_account_name }}/.config/systemd"
+    - "{{ semaphore_user_unit_root }}"
+  register: semaphore_parent_boundaries
+
+- name: Reject unsafe Semaphore account-owned parent boundaries
+  ansible.builtin.assert:
+    that:
+      - item.item != '/var/lib/' ~ semaphore_account_name or item.stat.exists
+      - not item.stat.exists or item.stat.isdir
+      - not item.stat.exists or not item.stat.islnk
+      - not item.stat.exists or item.stat.uid in [0, semaphore_foundation_account.uid]
+    fail_msg: A Semaphore account parent is missing, linked, or unexpectedly owned
+  loop: "{{ semaphore_parent_boundaries.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Require declared shared proxy route
+  ansible.builtin.assert:
+    that:
+      - >-
+        {'hostname': semaphore_hostname,
+         'backend_port': semaphore_backend_port,
+         'certificate_name': semaphore_certificate_name} in reverse_proxy_routes | default([])
+      - >-
+        reverse_proxy_routes | default([])
+        | selectattr('hostname', 'equalto', semaphore_hostname)
+        | list | length == 1
+      - >-
+        reverse_proxy_routes | default([])
+        | selectattr('backend_port', 'equalto', semaphore_backend_port)
+        | list | length == 1
+    fail_msg: >-
+      reverse_proxy_routes must contain the exact Semaphore hostname, loopback
+      backend port, and externally managed certificate name
+
+- name: Inspect externally managed Semaphore certificate files
+  ansible.builtin.stat:
+    path: "/etc/caddy/tls/{{ semaphore_certificate_name }}/current/{{ item }}"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  loop: [fullchain.pem, privkey.pem]
+  register: semaphore_certificate_files
+
+- name: Require existing regular certificate files
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isreg | default(false)
+      - not item.stat.islnk | default(true)
+    fail_msg: The shared proxy certificate must exist before Semaphore provisioning
+  loop: "{{ semaphore_certificate_files.results }}"
+  loop_control:
+    label: "{{ item.item }}"

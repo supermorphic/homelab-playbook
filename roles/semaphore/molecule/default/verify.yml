@@ -1,0 +1,56 @@
+---
+- name: Observe Semaphore definitions in the disposable OS fixture
+  hosts: semaphore
+  gather_facts: true
+  become: true
+  vars_files:
+    - vars/main.yml
+  tasks:
+    - name: Verify installed definitions and filesystem metadata
+      ansible.builtin.include_role:
+        name: semaphore
+        tasks_from: verify-definitions.yml
+
+    - name: Parse the host-local backup and transfer calendars
+      ansible.builtin.command:
+        argv: [systemd-analyze, calendar, "{{ item }}"]
+      loop:
+        - '*-*-* 03:00:00'
+        - '*-*-* 00,04,08,12,16,20:15:00'
+      changed_when: false
+
+    - name: Inspect effective generated container commands and lifecycle
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - --user
+          - --machine=svc-semaphore@.host
+          - show
+          - "{{ item }}"
+          - --property=LoadState,ExecStart,Type,RemainAfterExit,TimeoutStartUSec
+      loop:
+        - semaphore.service
+        - semaphore-postgres.service
+        - semaphore-backup.service
+        - semaphore-transfer.service
+      register: semaphore_fixture_units
+      changed_when: false
+
+    - name: Require valid generated units with bounded one-shot jobs
+      ansible.builtin.assert:
+        that:
+          - "'LoadState=loaded' in item.stdout_lines"
+          - "'TimeoutStartUSec=infinity' not in item.stdout_lines"
+          - "item.item not in ['semaphore-backup.service', 'semaphore-transfer.service'] or 'Type=oneshot' in item.stdout_lines"
+          - "item.item not in ['semaphore-backup.service', 'semaphore-transfer.service'] or 'RemainAfterExit=no' in item.stdout_lines"
+      loop: "{{ semaphore_fixture_units.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Require the application-only loopback publication in generated commands
+      ansible.builtin.assert:
+        that:
+          - "'127.0.0.1:18300:3000' in semaphore_fixture_units.results[0].stdout"
+          - "'--publish' not in semaphore_fixture_units.results[1].stdout"
+          - "'--publish' not in semaphore_fixture_units.results[2].stdout"
+          - "'--publish' not in semaphore_fixture_units.results[3].stdout"

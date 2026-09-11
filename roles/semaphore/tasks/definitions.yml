@@ -1,0 +1,44 @@
+---
+- name: Install Semaphore network and application Quadlets
+  ansible.builtin.template:
+    src: "{{ item.src }}.j2"
+    dest: "{{ semaphore_quadlet_root }}/{{ item.dest }}"
+    owner: root
+    group: "{{ semaphore_account_name }}"
+    mode: '0640'
+  loop:
+    - {src: semaphore.network, dest: semaphore.network}
+    - {src: postgres.container, dest: semaphore-postgres.container}
+    - {src: semaphore.container, dest: semaphore.container}
+  register: semaphore_quadlets
+
+- name: Install Semaphore backup schedules
+  ansible.builtin.import_tasks: backups.yml
+
+- name: Validate installed rootless Quadlet definitions
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/runuser
+      - -u
+      - "{{ semaphore_account_name }}"
+      - --
+      - /usr/lib/systemd/system-generators/podman-system-generator
+      - --user
+      - --dryrun
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ semaphore_foundation_account.uid }}"
+  changed_when: false
+
+- name: Reload the Semaphore user manager after definition changes
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemctl
+      - --user
+      - "--machine={{ semaphore_account_name }}@.host"
+      - daemon-reload
+  when: >-
+    semaphore_quadlets.changed
+    or (semaphore_backup_quadlets.changed | default(false))
+    or (semaphore_backup_timers.changed | default(false))
+    or (semaphore_backup_timer_links.changed | default(false))
+  changed_when: true

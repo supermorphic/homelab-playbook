@@ -166,6 +166,11 @@ class PathClassificationTests(unittest.TestCase):
             "roles/system_maintenance/molecule/baseline/molecule.yml": "full",
             "roles/reverse_proxy/tasks/main.yml": "molecule",
             "roles/reverse_proxy/molecule/default/molecule.yml": "full",
+            "roles/semaphore/tasks/main.yml": "molecule",
+            "roles/semaphore/files/backup.sh": "molecule",
+            "roles/semaphore/files/transfer.sh": "molecule",
+            "playbooks/semaphore/provision.yml": "molecule",
+            "playbooks/semaphore/verify.yml": "molecule",
             "playbooks/os/provision.yml": "molecule",
             "playbooks/podman/provision.yml": "molecule",
             "playbooks/podman/verify.yml": "molecule",
@@ -771,7 +776,7 @@ class ChangedRunnerTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("Selected validation depth: full", result.stdout)
         self.assertIn("Escalated validation depth: fast -> full", result.stdout)
-        self.assertEqual(5, result.stdout.count("Would run:"))
+        self.assertEqual(9, result.stdout.count("Would run:"))
         self.assertIn(
             "Would run: mise run test:molecule -- system_maintenance/default",
             result.stdout,
@@ -784,6 +789,13 @@ class ChangedRunnerTests(unittest.TestCase):
             "Would run: mise run test:molecule -- reverse_proxy/default",
             result.stdout,
         )
+        self.assertIn(
+            "Would run: mise run test:molecule -- semaphore/default",
+            result.stdout,
+        )
+        self.assertIn("Would run: mise run test:semaphore -- compatibility", result.stdout)
+        self.assertIn("Would run: mise run test:semaphore -- fixture", result.stdout)
+        self.assertIn("Would run: mise run test:semaphore -- controller", result.stdout)
 
     def test_unresolved_refs_are_not_reported_as_commit_shas(self) -> None:
         result = self.run_changed("--dry-run", "--base", "missing-ref")
@@ -827,6 +839,13 @@ class ChangedRunnerTests(unittest.TestCase):
             "Would run: mise run test:molecule -- reverse_proxy/default",
             result.stdout,
         )
+        self.assertNotIn(
+            "Would run: mise run test:molecule -- semaphore/default",
+            result.stdout,
+        )
+        self.assertNotIn("Would run: mise run test:semaphore -- compatibility", result.stdout)
+        self.assertNotIn("Would run: mise run test:semaphore -- fixture", result.stdout)
+        self.assertNotIn("Would run: mise run test:semaphore -- controller", result.stdout)
 
     def test_runner_passes_resolved_range_and_local_union_mode_to_fast(self) -> None:
         self.repository.write("docs/new.md", "documentation\n")

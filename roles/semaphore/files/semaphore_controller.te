@@ -1,0 +1,25 @@
+policy_module(semaphore_controller, 1.0.0)
+
+gen_require(`
+    type init_t;
+    type container_file_t;
+    type container_runtime_t;
+')
+
+# Inherit the distribution's confined, MCS-constrained container domain.
+# Only the Semaphore application selects this type; other containers keep theirs.
+container_domain_template(semaphore_controller, container)
+
+type semaphore_age_runtime_t;
+files_pid_file(semaphore_age_runtime_t)
+
+# systemd owns the single named identity socket and its directory.
+allow init_t semaphore_age_runtime_t:dir manage_dir_perms;
+allow init_t semaphore_age_runtime_t:sock_file manage_sock_file_perms;
+allow container_runtime_t semaphore_age_runtime_t:dir { getattr open read search };
+allow container_runtime_t semaphore_age_runtime_t:sock_file getattr;
+
+# Both the named socket inode and its systemd peer must permit connection.
+allow semaphore_controller_t semaphore_age_runtime_t:dir { getattr search };
+allow semaphore_controller_t semaphore_age_runtime_t:sock_file { getattr write };
+allow semaphore_controller_t init_t:unix_stream_socket connectto;

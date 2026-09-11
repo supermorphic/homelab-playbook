@@ -1,0 +1,19 @@
+---
+- name: Prepare Semaphore definitions in the disposable OS fixture
+  hosts: semaphore
+  gather_facts: true
+  become: true
+  vars_files:
+    - vars/main.yml
+  tasks:
+    # Nested rootless Podman cannot create subordinate user namespaces here.
+    # Exercise actual role preparation without claiming host runtime startup.
+    - name: Exercise application preparation and installed Quadlet generation
+      ansible.builtin.include_role:
+        name: semaphore
+        tasks_from: "{{ item }}"
+      loop:
+        - preflight.yml
+        - storage.yml
+        - configuration.yml
+        - definitions.yml

@@ -1,0 +1,28 @@
+[Unit]
+Description=Create an atomic Semaphore PostgreSQL backup
+Requires=semaphore-postgres.service
+After=semaphore-postgres.service
+OnSuccess=semaphore-transfer.service
+
+[Container]
+ContainerName=semaphore-backup
+Image={{ semaphore_postgres_image }}
+Network=semaphore.network
+UserNS=keep-id:uid=999,gid=999
+User=999:999
+EnvironmentFile={{ semaphore_state_root }}/credentials/postgres.env
+Environment=BACKUP_ROOT=/backups
+Environment=PGHOST=semaphore-postgres
+Environment=PGPORT=5432
+Environment=PGDATABASE={{ semaphore_database_name }}
+Environment=PGUSER={{ semaphore_database_user }}
+Volume={{ semaphore_helper_root }}/backup.sh:/opt/homelab/backup.sh:ro
+Volume={{ semaphore_state_root }}/backups:/backups:rw,z
+Entrypoint=/bin/sh
+Exec=/opt/homelab/backup.sh
+NoNewPrivileges=true
+
+[Service]
+Type=oneshot
+TimeoutStartSec={{ semaphore_backup_timeout }}
+RemainAfterExit=no

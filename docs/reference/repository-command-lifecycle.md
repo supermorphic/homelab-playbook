@@ -233,6 +233,26 @@ identity discovery to the selected retrieval command and defaults to the
 repository Keychain helper. Its effect depends on the SOPS arguments; editing a
 protected inventory file is an operator-owned mutation of that exact local file.
 
+### Semaphore deployment and experiments
+
+`semaphore provision` through the playbook gateway changes the selected host's
+application configuration, services, and persistent backup schedules. It needs
+explicit operator direction for that host and action. `semaphore verify` observes
+existing files, units, containers, and health without repair or probe resources.
+
+`mise run test:semaphore -- unit` runs local tests with synthetic inputs.
+`compatibility`, `fixture`, and `controller` are controlled experiments using
+run-owned containers, storage, and synthetic credentials. They test the upstream
+runtime, the backup/SMB/restore flow, and the bounded repository job respectively.
+The controller experiment uses the disposable Debian image prepared by
+`mise run test:molecule -- semaphore/default`. Experiments must remove only their
+own resources and return failure if execution or cleanup fails.
+
+The `restore` mode requires exact archive and destination selection. Its attended
+mode also needs explicit operator authorization for the selected NAS target and
+temporary recovery resources. A confirmation argument guards execution intent;
+it does not supply authorization. No experiment performs production cutover.
+
 ## Command and failure contracts
 
 - Validate public arguments and registered targets before starting an operation.

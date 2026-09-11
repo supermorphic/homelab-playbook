@@ -273,6 +273,16 @@ offline evidence from operator evidence for actual NAS recovery, controller
 enrollment, private ingress, enforcing host controls, and reboot persistence.
 No design approval authorizes live playbooks, credential enrollment, or cutover.
 
+The supported-OS Molecule harness cannot create the nested subordinate user
+namespace required to launch the application containers. In this harness,
+exercise the actual role's preparation and idempotence, then inspect filesystem
+metadata and generated systemd commands and timer properties. Separate tests run
+the pinned application and clients directly in disposable rootless containers.
+Do not describe these combined checks as a complete host provisioning test.
+Full host activation, consecutive timer-triggered one-shot execution, and
+observational verification of that deployment remain operator acceptance checks
+on the intended supported host.
+
 ## References
 
 - [Podman foundation](006-podman-quadlet-foundation.md).

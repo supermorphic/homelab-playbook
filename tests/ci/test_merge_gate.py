@@ -538,6 +538,15 @@ class WorkflowContractTests(unittest.TestCase):
                 'run: mise run test:molecule -- "$MOLECULE_SELECTOR"'
             ),
         )
+        runtime_step = named_step_block(
+            self.molecule, "Test upstream Semaphore runtime and recovery"
+        )
+        self.assertIn(
+            "if: matrix.selector == 'semaphore/default' && matrix.platform == 'debian13'",
+            runtime_step,
+        )
+        for mode in ("compatibility", "fixture", "controller"):
+            self.assertIn(f"mise run test:semaphore -- {mode}", runtime_step)
         lowered = self.molecule.lower()
         for forbidden in (
             "sudo",

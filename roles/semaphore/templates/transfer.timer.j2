@@ -1,0 +1,10 @@
+[Unit]
+Description=Transfer Semaphore backups every four hours
+
+[Timer]
+OnCalendar=*-*-* 00,04,08,12,16,20:15:00
+Persistent=true
+Unit=semaphore-transfer.service
+
+[Install]
+WantedBy=timers.target

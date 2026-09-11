@@ -1,0 +1,32 @@
+{
+  "job": {
+    "work_root": "/workspace",
+    "repository_url": {{ semaphore_controller_repository_url | to_json }},
+    "revision": {{ semaphore_controller_revision | to_json }},
+    "inventory": {{ semaphore_controller_inventory | to_json }},
+    "host_selection": {{ semaphore_controller_host_selection | to_json }},
+    "mise_path": "/tools/bin/mise",
+    "tools_root": "/tools",
+    "galaxy_cache": "/tools/galaxy",
+    "ssh_config": "/etc/ssh/ssh_config.d/00-homelab.conf",
+    "age_identity_command": "/opt/homelab/identity-command.py",
+    "lock_path": "/tools/locks/repository-job.lock",
+    "lock_timeout_seconds": {{ semaphore_controller_lock_timeout_seconds | default(300) }}
+  },
+  "api": {
+    "project": {
+      "name": {{ semaphore_controller_project_name | default("Homelab") | to_json }},
+      "max_parallel_tasks": 1
+    },
+    "repository": {
+      "name": {{ semaphore_controller_repository_name | default("homelab-playbook") | to_json }},
+      "git_url": {{ semaphore_controller_repository_url | to_json }},
+      "git_branch": {{ semaphore_controller_repository_ref | default("main") | to_json }}
+    },
+    "template": {
+      "name": {{ semaphore_controller_template_name | default("OS verification") | to_json }},
+      "playbook": "os-verify",
+      "app": "repository_verify"
+    }
+  }
+}

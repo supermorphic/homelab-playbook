@@ -1,0 +1,50 @@
+---
+- name: Establish private Semaphore state directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ semaphore_account_name }}"
+    group: "{{ semaphore_account_name }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ semaphore_state_root }}", mode: '0700'}
+    - {path: "{{ semaphore_state_root }}/database", mode: '0700'}
+    - {path: "{{ semaphore_state_root }}/work", mode: '0700'}
+    - {path: "{{ semaphore_state_root }}/work/tmp", mode: '0700'}
+    - {path: "{{ semaphore_state_root }}/work/.ssh", mode: '0700'}
+    - {path: "{{ semaphore_state_root }}/tools", mode: '0700'}
+    - {path: "{{ semaphore_state_root }}/dependencies", mode: '0700'}
+    - {path: "{{ semaphore_state_root }}/backups", mode: '0700'}
+    - {path: "{{ semaphore_state_root }}/credentials", mode: '0700'}
+    - {path: "{{ semaphore_state_root }}/credentials/config", mode: '0700'}
+
+- name: Establish administrator-owned Semaphore helper directory
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /usr/local/libexec, group: root, mode: '0755'}
+    - {path: "{{ semaphore_helper_root }}", group: "{{ semaphore_account_name }}", mode: '0750'}
+
+- name: Establish rootless Podman configuration directory
+  ansible.builtin.file:
+    path: "/var/lib/{{ semaphore_account_name }}/.config"
+    state: directory
+    owner: "{{ semaphore_account_name }}"
+    group: "{{ semaphore_account_name }}"
+    mode: '0700'
+
+- name: Establish administrator-owned Semaphore user unit directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: "{{ semaphore_account_name }}"
+    mode: '0750'
+  loop:
+    - "/var/lib/{{ semaphore_account_name }}/.config/systemd"
+    - "{{ semaphore_user_unit_root }}"
+    - "{{ semaphore_user_unit_root }}/timers.target.wants"

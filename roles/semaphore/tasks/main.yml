@@ -1,12 +1,22 @@
 ---
-- name: Ensure compose directory exists
-  ansible.builtin.file:
-    path: "{{ ansible_facts['user_dir'] }}/compose/{{ role_name }}"
-    state: directory
-    mode: '0755'
+- name: Validate Semaphore inputs and existing infrastructure
+  ansible.builtin.import_tasks: preflight.yml
 
-- name: Deploy Docker Compose file
-  ansible.builtin.template:
-    src: docker-compose.yml.j2
-    dest: "{{ ansible_facts['user_dir'] }}/compose/{{ role_name }}/docker-compose.yml"
-    mode: '0644'
+- name: Establish Semaphore storage
+  ansible.builtin.import_tasks: storage.yml
+
+- name: Configure Semaphore protected runtime inputs
+  ansible.builtin.import_tasks: configuration.yml
+
+- name: Enforce controller toolchain compatibility gate
+  ansible.builtin.import_tasks: toolchain.yml
+
+- name: Reconcile Semaphore services
+  ansible.builtin.import_tasks: services.yml
+
+- name: Reconcile the declared Semaphore controller job
+  ansible.builtin.include_tasks: controller.yml
+  when: semaphore_controller_enabled | bool
+
+- name: Verify the reconciled Semaphore deployment
+  ansible.builtin.import_tasks: verify.yml

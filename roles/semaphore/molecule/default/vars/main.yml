@@ -1,0 +1,29 @@
+---
+semaphore_foundation_account:
+  name: svc-semaphore
+  uid: 2201
+  gid: 2201
+  subuid_start: 600000
+  subuid_count: 65536
+  subgid_start: 600000
+  subgid_count: 65536
+semaphore_hostname: semaphore.example.test
+semaphore_backend_port: 18300
+semaphore_certificate_name: semaphore-fixture
+reverse_proxy_routes:  # noqa: var-naming[no-role-prefix] -- shared proxy input contract
+  - hostname: semaphore.example.test
+    backend_port: 18300
+    certificate_name: semaphore-fixture
+semaphore_database_password: fixture-database-password
+semaphore_admin_login: fixture-admin
+semaphore_admin_password: fixture-admin-password
+semaphore_admin_name: Fixture Administrator
+semaphore_admin_email: fixture@example.test
+semaphore_cookie_hash: "{{ ('fixture-cookie-hash-' * 4) | b64encode }}"
+semaphore_cookie_encryption: "{{ ('fixture-cookie--' * 2) | b64encode }}"
+semaphore_access_key_encryption: "{{ ('fixture-access--' * 2) | b64encode }}"
+# This lifecycle fixture checks scheduling; the separate restore fixture uses SMB.
+semaphore_rclone_remote: fixture:/tmp/semaphore-fixture-nas
+semaphore_rclone_config: |
+  [fixture]
+  type = local

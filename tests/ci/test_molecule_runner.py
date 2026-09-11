@@ -136,6 +136,7 @@ class RunnerCliTests(unittest.TestCase):
                 "system_maintenance/default",
                 "system_maintenance/baseline",
                 "reverse_proxy/default",
+                "semaphore/default",
             },
             set(scenarios),
         )
@@ -209,6 +210,25 @@ class RunnerCliTests(unittest.TestCase):
                     ),
                 ],
             },
+        }
+        expected["semaphore/default"] = {
+            "role_name": "semaphore",
+            "scenario_name": "default",
+            "groups": ["semaphore"],
+            "platforms": [
+                (
+                    "debian13", "docker.io/library/debian:13",
+                    "localhost/homelab-playbook-semaphore-debian13:local",
+                    "homelab-playbook-semaphore-debian13",
+                    "/usr/lib/systemd/systemd", "Containerfile.debian13",
+                ),
+                (
+                    "rockylinux9", "docker.io/rockylinux/rockylinux:9",
+                    "localhost/homelab-playbook-semaphore-rockylinux9:local",
+                    "homelab-playbook-semaphore-rockylinux9",
+                    "/usr/lib/systemd/systemd", "Containerfile.rockylinux9",
+                ),
+            ],
         }
         for selector, contract in expected.items():
             with self.subTest(selector=selector):
@@ -291,6 +311,7 @@ class RunnerCliTests(unittest.TestCase):
             "system_maintenance/default",
             "system_maintenance/baseline",
             "reverse_proxy/default",
+            "semaphore/default",
         ):
             with self.subTest(selector=selector):
                 self.assertEqual(selector, parse_selector([selector]))

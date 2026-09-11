@@ -21,6 +21,11 @@ def commands_for(result: dict) -> list[list[str]]:
     commands.extend(
         ["mise", "run", "test:molecule", "--", selector] for selector in selectors
     )
+    if "semaphore/default" in selectors:
+        commands.extend(
+            ["mise", "run", "test:semaphore", "--", mode]
+            for mode in ("compatibility", "fixture", "controller")
+        )
     return commands
 
 

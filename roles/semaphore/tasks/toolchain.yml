@@ -1,0 +1,328 @@
+---
+- name: Establish persistent controller tool directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ semaphore_account_name }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ semaphore_state_root }}/tools/bin", owner: "{{ semaphore_account_name }}", mode: '0700'}
+    - {path: "{{ semaphore_state_root }}/tools/mise", owner: "{{ semaphore_account_name }}", mode: '0700'}
+    - {path: "{{ semaphore_state_root }}/tools/cache", owner: "{{ semaphore_account_name }}", mode: '0700'}
+    - {path: "{{ semaphore_state_root }}/tools/config", owner: "{{ semaphore_account_name }}", mode: '0700'}
+    - {path: "{{ semaphore_state_root }}/tools/state", owner: "{{ semaphore_account_name }}", mode: '0700'}
+    - {path: "{{ semaphore_state_root }}/tools/uv-cache", owner: "{{ semaphore_account_name }}", mode: '0700'}
+    - {path: "{{ semaphore_state_root }}/tools/bootstrap", owner: "{{ semaphore_account_name }}", mode: '0700'}
+    - {path: "{{ semaphore_state_root }}/tools/bootstrap/scripts", owner: "{{ semaphore_account_name }}", mode: '0700'}
+    - {path: "{{ semaphore_state_root }}/tools/bootstrap/overrides", owner: "{{ semaphore_account_name }}", mode: '0700'}
+  when: semaphore_controller_enabled | bool
+
+- name: Discover every controller Galaxy override input
+  ansible.builtin.find:
+    paths: "{{ role_path }}/../../overrides/ansible-galaxy"
+    recurse: true
+    file_type: file
+    hidden: true
+    follow: false
+    get_checksum: true
+    checksum_algorithm: sha256
+  delegate_to: localhost
+  become: false
+  register: semaphore_toolchain_override_sources
+  when: semaphore_controller_enabled | bool
+
+- name: Discover linked controller Galaxy override inputs
+  ansible.builtin.find:
+    paths: "{{ role_path }}/../../overrides/ansible-galaxy"
+    recurse: true
+    file_type: link
+    hidden: true
+    follow: false
+  delegate_to: localhost
+  become: false
+  register: semaphore_toolchain_override_links
+  when: semaphore_controller_enabled | bool
+
+- name: Reject linked controller Galaxy override inputs
+  ansible.builtin.assert:
+    that:
+      - semaphore_toolchain_override_links.matched == 0
+    fail_msg: Controller Galaxy override inputs must be regular files
+  when: semaphore_controller_enabled | bool
+
+- name: Initialize controller runtime input fingerprint material
+  ansible.builtin.set_fact:
+    semaphore_toolchain_fingerprint_material: >-
+      {{ semaphore_toolchain_fingerprint_inputs | join('\u0000') }}
+  vars:
+    semaphore_toolchain_fingerprint_inputs:
+      - ".mise.toml\u0000{{ lookup('file', role_path ~ '/../../.mise.toml', rstrip=false) }}"
+      - "mise.lock\u0000{{ lookup('file', role_path ~ '/../../mise.lock', rstrip=false) }}"
+      - "pyproject.toml\u0000{{ lookup('file', role_path ~ '/../../pyproject.toml', rstrip=false) }}"
+      - "uv.lock\u0000{{ lookup('file', role_path ~ '/../../uv.lock', rstrip=false) }}"
+      - "requirements.yml\u0000{{ lookup('file', role_path ~ '/../../requirements.yml', rstrip=false) }}"
+      - "ansible.cfg\u0000{{ lookup('file', role_path ~ '/../../ansible.cfg', rstrip=false) }}"
+      - "scripts/bootstrap.sh\u0000{{ lookup('file', role_path ~ '/../../scripts/bootstrap.sh', rstrip=false) }}"
+      - "scripts/dependencies.py\u0000{{ lookup('file', role_path ~ '/../../scripts/dependencies.py', rstrip=false) }}"
+      - "scripts/galaxy_dependencies.py\u0000{{ lookup('file', role_path ~ '/../../scripts/galaxy_dependencies.py', rstrip=false) }}"
+  when: semaphore_controller_enabled | bool
+
+- name: Add every sorted override path and checksum to controller fingerprint material
+  ansible.builtin.set_fact:
+    semaphore_toolchain_fingerprint_material: >-
+      {{ semaphore_toolchain_fingerprint_material
+         ~ '\u0000overrides/ansible-galaxy/'
+         ~ (item.path | regex_replace('^' ~ (semaphore_override_source_root | regex_escape) ~ '/', ''))
+         ~ '\u0000' ~ item.checksum }}
+  loop: "{{ semaphore_toolchain_override_sources.files | sort(attribute='path') }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  vars:
+    semaphore_override_source_root: "{{ role_path }}/../../overrides/ansible-galaxy"
+  when: semaphore_controller_enabled | bool
+
+- name: Compute current controller runtime input fingerprint
+  ansible.builtin.set_fact:
+    semaphore_toolchain_input_fingerprint: >-
+      {{ semaphore_toolchain_fingerprint_material | hash('sha256') }}
+  when: semaphore_controller_enabled | bool
+
+- name: Inspect prior desired controller runtime fingerprint
+  ansible.builtin.stat:
+    path: "{{ semaphore_state_root }}/tools/bootstrap/.desired-input-fingerprint"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  register: semaphore_prior_toolchain_fingerprint_metadata
+  when: semaphore_controller_enabled | bool
+
+- name: Inspect controller Galaxy override staging tree
+  ansible.builtin.stat:
+    path: "{{ semaphore_state_root }}/tools/bootstrap/overrides/ansible-galaxy"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  register: semaphore_toolchain_override_staging
+  when: semaphore_controller_enabled | bool
+
+- name: Read prior desired controller runtime fingerprint
+  ansible.builtin.slurp:
+    src: "{{ semaphore_state_root }}/tools/bootstrap/.desired-input-fingerprint"
+  register: semaphore_prior_toolchain_fingerprint
+  when:
+    - semaphore_controller_enabled | bool
+    - semaphore_prior_toolchain_fingerprint_metadata.stat.exists
+
+- name: Decide whether controller runtime staging inputs changed
+  ansible.builtin.set_fact:
+    semaphore_toolchain_inputs_changed: >-
+      {{ not semaphore_prior_toolchain_fingerprint_metadata.stat.exists
+         or not semaphore_toolchain_override_staging.stat.exists
+         or semaphore_toolchain_override_staging.stat.islnk | default(false)
+         or not semaphore_toolchain_override_staging.stat.isdir | default(false)
+         or (semaphore_prior_toolchain_fingerprint.content
+             | default('') | b64decode | trim)
+            != semaphore_toolchain_input_fingerprint }}
+  when: semaphore_controller_enabled | bool
+
+- name: Install the verified musl Mise controller binary
+  ansible.builtin.get_url:
+    url: "{{ semaphore_mise_assets[ansible_architecture].url }}"
+    dest: "{{ semaphore_state_root }}/tools/bin/mise"
+    checksum: "{{ semaphore_mise_assets[ansible_architecture].checksum }}"
+    owner: "{{ semaphore_account_name }}"
+    group: "{{ semaphore_account_name }}"
+    mode: '0755'
+  register: semaphore_mise_installation
+  when: semaphore_controller_enabled | bool
+
+- name: Install controller bootstrap inputs
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../{{ item.src }}"
+    dest: "{{ semaphore_state_root }}/tools/bootstrap/{{ item.dest }}"
+    owner: "{{ semaphore_account_name }}"
+    group: "{{ semaphore_account_name }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {src: .mise.toml, dest: .mise.toml, mode: '0600'}
+    - {src: mise.lock, dest: mise.lock, mode: '0600'}
+    - {src: pyproject.toml, dest: pyproject.toml, mode: '0600'}
+    - {src: uv.lock, dest: uv.lock, mode: '0600'}
+    - {src: requirements.yml, dest: requirements.yml, mode: '0600'}
+    - {src: ansible.cfg, dest: ansible.cfg, mode: '0600'}
+    - {src: scripts/bootstrap.sh, dest: scripts/bootstrap.sh, mode: '0700'}
+    - {src: scripts/dependencies.py, dest: scripts/dependencies.py, mode: '0600'}
+    - {src: scripts/galaxy_dependencies.py, dest: scripts/galaxy_dependencies.py, mode: '0600'}
+  register: semaphore_toolchain_inputs
+  when: semaphore_controller_enabled | bool
+
+- name: Remove changed controller Galaxy override staging tree
+  ansible.builtin.file:
+    path: "{{ semaphore_state_root }}/tools/bootstrap/overrides/ansible-galaxy"
+    state: absent
+  when:
+    - semaphore_controller_enabled | bool
+    - semaphore_toolchain_inputs_changed | bool
+
+- name: Recreate changed controller Galaxy override staging tree
+  ansible.builtin.file:
+    path: "{{ semaphore_state_root }}/tools/bootstrap/overrides/ansible-galaxy"
+    state: directory
+    owner: "{{ semaphore_account_name }}"
+    group: "{{ semaphore_account_name }}"
+    mode: '0700'
+  when:
+    - semaphore_controller_enabled | bool
+    - semaphore_toolchain_inputs_changed | bool
+
+- name: Install controller Galaxy override inputs
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../../overrides/ansible-galaxy/"
+    dest: "{{ semaphore_state_root }}/tools/bootstrap/overrides/ansible-galaxy/"
+    owner: "{{ semaphore_account_name }}"
+    group: "{{ semaphore_account_name }}"
+    mode: preserve
+  register: semaphore_toolchain_overrides
+  when:
+    - semaphore_controller_enabled | bool
+    - semaphore_toolchain_inputs_changed | bool
+
+- name: Record desired controller runtime input fingerprint
+  ansible.builtin.copy:
+    content: "{{ semaphore_toolchain_input_fingerprint }}\n"
+    dest: "{{ semaphore_state_root }}/tools/bootstrap/.desired-input-fingerprint"
+    owner: "{{ semaphore_account_name }}"
+    group: "{{ semaphore_account_name }}"
+    mode: '0600'
+  register: semaphore_toolchain_fingerprint
+  when: semaphore_controller_enabled | bool
+
+- name: Check persistent controller tool readiness in the stock image
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/runuser
+      - -u
+      - "{{ semaphore_account_name }}"
+      - --
+      - /usr/bin/podman
+      - run
+      - --rm
+      - --name=semaphore-toolchain-check
+      - --userns=keep-id:uid=1001,gid=0
+      - --user=1001:0
+      - --volume={{ semaphore_state_root }}/tools:/tools:rw,z
+      - --volume={{ semaphore_state_root }}/dependencies:/tools/galaxy:rw,z
+      - --workdir=/tools/bootstrap
+      - --env=PATH=/tools/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      - --env=MISE_DATA_DIR=/tools/mise
+      - --env=MISE_CACHE_DIR=/tools/cache
+      - --env=MISE_CONFIG_DIR=/tools/config
+      - --env=MISE_STATE_DIR=/tools/state
+      - --env=MISE_TRUSTED_CONFIG_PATHS=/tools/bootstrap
+      - --env=MISE_ALL_COMPILE=false
+      - --env=MISE_LOCKED=1
+      - --env=MISE_AUTO_INSTALL=0
+      - --env=UV_CACHE_DIR=/tools/uv-cache
+      - --env=HOMELAB_GALAXY_CACHE_DIR=/tools/galaxy
+      - --env=VIRTUAL_ENV=
+      - --entrypoint=/bin/sh
+      - "{{ semaphore_image }}"
+      - -ec
+      - mise exec -- uv run --frozen --no-sync python scripts/dependencies.py verify
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ semaphore_foundation_account.uid }}"
+  register: semaphore_toolchain_check
+  failed_when: false
+  changed_when: false
+  when: semaphore_controller_enabled | bool
+
+- name: Prepare changed or incomplete persistent controller tools
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/runuser
+      - -u
+      - "{{ semaphore_account_name }}"
+      - --
+      - /usr/bin/podman
+      - run
+      - --rm
+      - --name=semaphore-toolchain-prepare
+      - --userns=keep-id:uid=1001,gid=0
+      - --user=1001:0
+      - --volume={{ semaphore_state_root }}/tools:/tools:rw,z
+      - --volume={{ semaphore_state_root }}/dependencies:/tools/galaxy:rw,z
+      - --workdir=/tools/bootstrap
+      - --env=PATH=/tools/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      - --env=MISE_DATA_DIR=/tools/mise
+      - --env=MISE_CACHE_DIR=/tools/cache
+      - --env=MISE_CONFIG_DIR=/tools/config
+      - --env=MISE_STATE_DIR=/tools/state
+      - --env=MISE_TRUSTED_CONFIG_PATHS=/tools/bootstrap
+      - --env=MISE_ALL_COMPILE=false
+      - --env=MISE_LOCKED=1
+      - --env=UV_CACHE_DIR=/tools/uv-cache
+      - --env=HOMELAB_GALAXY_CACHE_DIR=/tools/galaxy
+      - --env=VIRTUAL_ENV=
+      - --entrypoint=/bin/sh
+      - "{{ semaphore_image }}"
+      - -ec
+      - mise run bootstrap
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ semaphore_foundation_account.uid }}"
+  when: >-
+    semaphore_controller_enabled | bool
+    and (semaphore_toolchain_check.rc != 0
+         or semaphore_mise_installation.changed
+         or semaphore_toolchain_inputs.changed
+         or semaphore_toolchain_overrides.changed
+         or semaphore_toolchain_fingerprint.changed)
+  changed_when: true
+
+- name: Verify prepared persistent controller tools
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/runuser
+      - -u
+      - "{{ semaphore_account_name }}"
+      - --
+      - /usr/bin/podman
+      - run
+      - --rm
+      - --name=semaphore-toolchain-verify
+      - --userns=keep-id:uid=1001,gid=0
+      - --user=1001:0
+      - --volume={{ semaphore_state_root }}/tools:/tools:rw,z
+      - --volume={{ semaphore_state_root }}/dependencies:/tools/galaxy:rw,z
+      - --workdir=/tools/bootstrap
+      - --env=PATH=/tools/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      - --env=MISE_DATA_DIR=/tools/mise
+      - --env=MISE_CACHE_DIR=/tools/cache
+      - --env=MISE_CONFIG_DIR=/tools/config
+      - --env=MISE_STATE_DIR=/tools/state
+      - --env=MISE_TRUSTED_CONFIG_PATHS=/tools/bootstrap
+      - --env=MISE_ALL_COMPILE=false
+      - --env=MISE_LOCKED=1
+      - --env=MISE_AUTO_INSTALL=0
+      - --env=UV_CACHE_DIR=/tools/uv-cache
+      - --env=HOMELAB_GALAXY_CACHE_DIR=/tools/galaxy
+      - --env=VIRTUAL_ENV=
+      - --entrypoint=/bin/sh
+      - "{{ semaphore_image }}"
+      - -ec
+      - mise exec -- uv run --frozen --no-sync python scripts/dependencies.py verify
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ semaphore_foundation_account.uid }}"
+  changed_when: false
+  when: semaphore_controller_enabled | bool
+
+- name: Record verified controller runtime input fingerprint
+  ansible.builtin.copy:
+    content: "{{ semaphore_toolchain_input_fingerprint }}\n"
+    dest: "{{ semaphore_state_root }}/tools/.verified-input-fingerprint"
+    owner: "{{ semaphore_account_name }}"
+    group: "{{ semaphore_account_name }}"
+    mode: '0600'
+  when: semaphore_controller_enabled | bool

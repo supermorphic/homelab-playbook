@@ -911,11 +911,15 @@ class MoleculeScenarioContractTests(unittest.TestCase):
         self.assertEqual(
             "${{ fromJSON(needs.classify.outputs.molecule_matrix) }}", matrix
         )
-        run_source = str(molecule_job["steps"][-1]["run"])
+        platform_step = next(
+            step for step in molecule_job["steps"]
+            if step.get("name") == "Run Molecule platform validation"
+        )
+        run_source = str(platform_step["run"])
         self.assertIn('"$MOLECULE_SELECTOR"', run_source)
         self.assertEqual(
             "${{ matrix.selector }}",
-            molecule_job["steps"][-1]["env"]["MOLECULE_SELECTOR"],
+            platform_step["env"]["MOLECULE_SELECTOR"],
         )
 
 if __name__ == "__main__":

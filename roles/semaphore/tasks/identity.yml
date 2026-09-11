@@ -1,0 +1,108 @@
+---
+- name: Require a supported controller identity platform and fixed credential path
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] in ['Debian', 'RedHat']
+      - semaphore_controller_identity_credential_path == '/etc/semaphore/controller-age.cred'
+    fail_msg: >-
+      Controller identity deployment requires a supported host and the fixed
+      administrator-owned encrypted credential path.
+
+- name: Inspect administrator-owned identity ancestors before mutation
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  loop:
+    - /etc/semaphore
+    - /run/semaphore-identity
+  register: semaphore_identity_ancestors
+
+- name: Refuse identity paths with unexpected ownership or symlinks
+  ansible.builtin.assert:
+    that:
+      - >-
+        not item.stat.exists or
+        (item.stat.isdir | default(false) and
+         not (item.stat.islnk | default(false)) and
+         item.stat.uid | default(-1) == 0 and
+         item.stat.mode | default('') in ['0700', '0750', '0755'])
+    fail_msg: Identity paths must have administrator-owned non-writable parents.
+  loop: "{{ semaphore_identity_ancestors.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Inspect operator-enrolled controller ciphertext metadata
+  ansible.builtin.stat:
+    path: "{{ semaphore_controller_identity_credential_path }}"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  register: semaphore_identity_ciphertext
+
+- name: Require a private operator-enrolled encrypted identity
+  ansible.builtin.assert:
+    that:
+      - semaphore_identity_ciphertext.stat.exists
+      - semaphore_identity_ciphertext.stat.isreg | default(false)
+      - not (semaphore_identity_ciphertext.stat.islnk | default(false))
+      - semaphore_identity_ciphertext.stat.uid | default(-1) == 0
+      - semaphore_identity_ciphertext.stat.mode | default('') == '0600'
+    fail_msg: >-
+      The operator must enroll the controller encrypted credential outside the
+      repository before enabling identity delivery. Provisioning does not create,
+      read, or replace a live age identity.
+
+- name: Check systemd credential executable
+  ansible.builtin.command: /usr/bin/systemd-creds --version
+  changed_when: false
+
+- name: Install the application-specific Rocky identity socket policy
+  ansible.builtin.include_tasks: identity-selinux.yml
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Install identity socket directory boot declaration
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/semaphore-identity.conf
+    content: "d /run/semaphore-identity 0750 root {{ semaphore_account_name }} -\n"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Create administrator-owned identity socket directory
+  ansible.builtin.file:
+    path: /run/semaphore-identity
+    state: directory
+    owner: root
+    group: "{{ semaphore_account_name }}"
+    mode: '0750'
+
+- name: Apply the dedicated Rocky identity socket directory label
+  ansible.builtin.command: /usr/sbin/restorecon -Rv /run/semaphore-identity
+  register: semaphore_identity_restorecon
+  changed_when: semaphore_identity_restorecon.stdout | length > 0
+  when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Install controller identity system units
+  ansible.builtin.template:
+    src: "{{ item.src }}.j2"
+    dest: "/etc/systemd/system/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - src: controller-identity.socket
+      dest: semaphore-age.socket
+    - src: controller-identity@.service
+      dest: semaphore-age@.service
+  register: semaphore_identity_units
+
+- name: Enable controller identity socket
+  ansible.builtin.systemd_service:
+    name: semaphore-age.socket
+    daemon_reload: "{{ semaphore_identity_units.changed }}"
+    enabled: true
+    state: "{{ 'restarted' if semaphore_identity_units.changed else 'started' }}"

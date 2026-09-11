@@ -28,6 +28,7 @@ uv run --frozen --no-sync python scripts/secrets/validate.py
 bash tests/ansible/inventory-test.sh
 mise run test:secrets
 mise run test:tls
+mise run test:semaphore -- unit
 uv run --frozen --no-sync python -m unittest discover -s tests/ansible -p 'test_*.py' -v
 
 ansible_source_manifest="$ansible_validation_root/ansible-sources.bin"

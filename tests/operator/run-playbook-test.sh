@@ -144,6 +144,14 @@ for proxy_action in provision verify; do
   rg -q '^ansible-playbook$' "$uv_log" || fail 'proxy action did not reach playbook gateway'
 done
 
+for semaphore_action in provision verify; do
+  : >"$uv_log"
+  assert_status 0 env PATH="$fake_bin:$PATH" FAKE_UV_LOG="$uv_log" \
+    "$repo_root/scripts/playbook.sh" semaphore "$semaphore_action" production --check
+  rg -q '^ansible-config$' "$uv_log" || fail 'Semaphore action omitted credential guards'
+  rg -q '^ansible-playbook$' "$uv_log" || fail 'Semaphore action did not reach playbook gateway'
+done
+
 for unsafe_args in \
   '-k' \
   '--ask-pass' \
@@ -161,7 +169,8 @@ for unsafe_args in \
   read -r -a unsafe_argv <<<"$unsafe_args"
   for guarded_selector in 'os maintain' 'os verify' 'podman provision' 'podman verify' \
     'tls provision' 'tls renew' 'tls verify' \
-    'reverse-proxy provision' 'reverse-proxy verify'; do
+    'reverse-proxy provision' 'reverse-proxy verify' \
+    'semaphore provision' 'semaphore verify'; do
     read -r -a guarded_argv <<<"$guarded_selector"
     assert_status 2 env \
     PATH="$fake_bin:$PATH" \

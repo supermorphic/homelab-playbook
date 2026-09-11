@@ -87,15 +87,16 @@ An automation controller runs playbooks on your behalf. Semaphore is an example:
 you start or schedule a job through its web UI, and its runner executes Ansible.
 The runner needs access to the encrypted variables used by that job.
 
-When Semaphore or another controller is configured, give it its own age identity
-and authorize its public recipient only for the inventory scope it needs. It
-never receives your Mac's private identity. This section describes future
-controller setup; the repository does not provision that integration yet.
+Semaphore uses its own age identity and authorizes its public recipient only for
+the inventory scope it needs. It never receives the Mac operator identity. The
+operator enrolls the encrypted controller credential at
+`/etc/semaphore/controller-age.cred` before enabling the controller. The role
+does not create, read, or replace that live identity.
 
 For a controller job that runs a playbook, use:
 
 ```bash
-ANSIBLE_SOPS_AGE_KEY_CMD=/controller/owned/identity-command \
+ANSIBLE_SOPS_AGE_KEY_CMD=/opt/homelab/identity-command.py \
   mise run playbook -- <playbook> <action> <inventory> [ansible-args...]
 ```
 
@@ -105,17 +106,19 @@ Configure this in the runner's job environment so routine jobs use it
 automatically. You normally do not need this override when running playbooks
 on your Mac.
 
-`/controller/owned/identity-command` is a placeholder for an executable that
-retrieves the controller's private key from its protected credential storage
-and writes it to standard output for SOPS to consume. It is not a path to a
-private-key file. The controller's public recipient must also be added to the
-authorized files through the [recipient procedure](#change-recipients); setting
-the command alone does not grant decryption access.
+`/opt/homelab/identity-command.py` reads one bounded response from the private
+`/run/semaphore-identity/age.sock` socket. A host systemd socket service decrypts
+the enrolled systemd credential directly into that response. The command writes
+the validated identity only to the SOPS pipe. It does not use a plaintext
+private-key file or an ambient age identity. The controller's public recipient
+must also be added to the authorized files through the
+[recipient procedure](#change-recipients); setting the command alone does not
+grant decryption access.
 
 For a direct SOPS operation using the controller's identity, use:
 
 ```bash
-SOPS_AGE_KEY_CMD=/controller/owned/identity-command \
+SOPS_AGE_KEY_CMD=/opt/homelab/identity-command.py \
   mise run secrets:sops -- <sops-args...>
 ```
 
@@ -128,9 +131,30 @@ In these examples, each environment override applies only to the command it
 prefixes. On your Mac, normal `mise run playbook` and `mise run secrets:sops`
 commands already select the repository Keychain helper automatically.
 
-The controller's credential storage and retrieval program are chosen during
-controller setup. The repository does not require a network secret service or
-a plaintext identity file.
+Debian uses the normal host socket permissions. Rocky additionally installs a
+dedicated `semaphore_controller_t` SELinux domain for this application and labels
+the identity socket separately. The policy retains the distribution's container
+confinement and grants this domain access to the host socket service. Offline
+tests exercise systemd activation and compile and inspect the policy; actual
+host enforcement needs operator verification on the selected host.
+
+Credential enrollment and recipient edits remain explicit operator actions.
+After creating the root-owned private `/etc/semaphore` directory, pipe the
+dedicated identity from its approved protected source into this command on the
+selected host:
+
+```bash
+sudo systemd-creds encrypt --with-key=host --name=semaphore-age - \
+  /etc/semaphore/controller-age.cred
+```
+
+Keep the credential root-owned with mode `0600`. Do not put the identity in
+shell arguments, a here-document, or a temporary file. The host key used by
+systemd protects this credential at rest; keep the original controller identity
+in independent protected recovery storage. Replacement-host recovery enrolls
+that same identity under the replacement host's key before starting the adapter.
+The repository requires neither a network secret service nor a plaintext
+identity file.
 
 ## Change recipients
 

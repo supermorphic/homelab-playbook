@@ -73,7 +73,8 @@ shift 3
 
 guarded_host_action=false
 if [[ ( "$playbook" == 'os' && "$action" != 'inspect' ) || \
-      "$playbook" == 'podman' || "$playbook" == 'tls' || "$playbook" == 'reverse-proxy' ]]; then
+      "$playbook" == 'podman' || "$playbook" == 'tls' || "$playbook" == 'reverse-proxy' || \
+      "$playbook" == 'semaphore' ]]; then
   guarded_host_action=true
   for argument in "$@"; do
     case "$argument" in

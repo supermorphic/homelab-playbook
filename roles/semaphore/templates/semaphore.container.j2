@@ -1,0 +1,42 @@
+[Unit]
+Description=Semaphore UI
+Requires=semaphore-postgres.service
+After=semaphore-postgres.service
+
+[Container]
+ContainerName=semaphore
+Image={{ semaphore_image }}
+Network=semaphore.network
+UserNS=keep-id:uid=1001,gid=0
+EnvironmentFile={{ semaphore_state_root }}/credentials/semaphore.env
+PublishPort=127.0.0.1:{{ semaphore_backend_port }}:3000
+Volume={{ semaphore_state_root }}/credentials/config:/etc/semaphore:rw,Z
+Volume={{ semaphore_state_root }}/credentials/ssh_config:/etc/ssh/ssh_config.d/00-homelab.conf:ro
+Volume={{ semaphore_state_root }}/credentials/known_hosts:/var/lib/semaphore/.ssh/known_hosts:ro
+Volume={{ semaphore_state_root }}/work:/var/lib/semaphore:rw,Z
+Volume={{ semaphore_state_root }}/work:/workspace:rw,Z
+Volume={{ semaphore_state_root }}/work/tmp:/tmp/semaphore:rw,Z
+Volume={{ semaphore_state_root }}/tools:/tools:rw,z
+Volume={{ semaphore_state_root }}/dependencies:/tools/galaxy:rw,z
+{% if semaphore_controller_enabled | default(false) %}
+Volume={{ semaphore_helper_root }}/repository-job.py:/opt/homelab/repository-job.py:ro
+Volume={{ semaphore_helper_root }}/repository-job.json:/etc/semaphore/repository-job.json:ro
+{% endif %}
+{% if semaphore_controller_identity_enabled | default(false) %}
+Volume=/run/semaphore-identity:/run/semaphore-identity:ro
+Volume={{ semaphore_helper_root }}/identity-command.py:/opt/homelab/identity-command.py:ro
+{% if (ansible_facts | default({})).get('os_family', '') == 'RedHat' %}
+SecurityLabelType=semaphore_controller_t
+{% endif %}
+{% endif %}
+NoNewPrivileges=true
+
+[Service]
+ExecStartPre=/bin/sh -ec 'for attempt in $(seq 1 {{ semaphore_health_timeout_seconds }}); do /usr/bin/podman healthcheck run semaphore-postgres && exit 0; sleep 1; done; exit 1'
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=90
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target
