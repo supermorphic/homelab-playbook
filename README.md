@@ -173,15 +173,25 @@ Change-directed validation selects affected scenarios on both platforms using
 changes also select the baseline scenario, which exercises those integrations.
 TLS runtime tests and the three TLS-specific Ansible test files select the same
 two scenarios. Other Ansible validation tests retain full-suite selection.
-Shared framework changes and uncertain impact select all six rows. Documentation
+Shared framework changes and uncertain impact select all eight rows. Documentation
 changes under `docs/` or subsystem READMEs select no Molecule rows.
 
 Use `mise run ci:changed -- --dry-run` to inspect selected scenarios and reasons.
 GitHub Actions consumes the same plan and writes exact base/head SHAs and row
 reasons to its job summary. Scheduled and manual CI run the complete suite;
 `mise run ci` remains the explicit complete local validation command. Container results do not prove physical
-reboot, host-kernel enforcement, real network reachability, or Semaphore
-scheduling and notification delivery.
+reboot, host-kernel enforcement, real network reachability, private ingress, or recovery from the real NAS.
+
+`mise run test:molecule -- semaphore/default` prepares Semaphore storage and
+configuration and checks generated Quadlets and timers on both distributions.
+Nested user-namespace limits prevent application startup in these OS fixtures.
+Separate `test:semaphore` modes exercise the pinned runtime and recovery with
+disposable containers whenever the Semaphore scenario is selected.
+
+See the [Semaphore playbooks](playbooks/semaphore/README.md) for prerequisites,
+controller configuration, and backup operation, and the
+[recovery guide](docs/guides/semaphore-recovery.md) for isolated restore tests
+and replacement-host recovery.
 
 ## GitHub main protection
 

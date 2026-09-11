@@ -1,0 +1,65 @@
+---
+- name: Validate declared Semaphore controller job inputs
+  ansible.builtin.assert:
+    that:
+      - semaphore_controller_identity_enabled | bool
+      - semaphore_controller_repository_url | default('') is match('^https://\\S+$')
+      - semaphore_controller_revision | default('') is match('^[0-9a-f]{40}$')
+      - semaphore_controller_inventory | default('') is match('^[A-Za-z0-9][A-Za-z0-9_-]*$')
+      - semaphore_controller_host_selection | default('') is match('^[A-Za-z0-9][A-Za-z0-9_.-]*(,[A-Za-z0-9][A-Za-z0-9_.-]*)*$')
+      - semaphore_controller_lock_timeout_seconds | default(300) | int >= 0
+      - semaphore_controller_lock_timeout_seconds | default(300) | int <= 300
+      - semaphore_controller_ssh_private_key | default('') | string | length > 0
+    fail_msg: >-
+      The controller job requires its dedicated identity, a trusted HTTPS
+      repository at a full commit, a bounded inventory and host selection,
+      and a dedicated SSH private key
+  no_log: true
+
+- name: Install administrator-owned controller API reconciler
+  ansible.builtin.copy:
+    src: repository-job-api.py
+    dest: "{{ semaphore_helper_root }}/repository-job-api.py"
+    owner: root
+    group: "{{ semaphore_account_name }}"
+    mode: '0750'
+
+- name: Wait for Semaphore controller API readiness
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ semaphore_backend_port }}/api/ping"
+    method: GET
+    status_code: 200
+    return_content: false
+  register: semaphore_controller_api_readiness
+  until: semaphore_controller_api_readiness.status == 200
+  retries: "{{ semaphore_health_timeout_seconds }}"
+  delay: 1
+  changed_when: false
+
+- name: Reconcile declared Semaphore project repository and template
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - "{{ semaphore_helper_root }}/repository-job-api.py"
+      - --base-url
+      - "http://127.0.0.1:{{ semaphore_backend_port }}"
+      - --declaration
+      - "{{ semaphore_helper_root }}/repository-job.json"
+    stdin: >-
+      {{ {'auth': semaphore_admin_login,
+          'password': semaphore_admin_password} | to_json }}
+    stdin_add_newline: false
+  register: semaphore_controller_reconcile
+  failed_when: false
+  changed_when: >-
+    semaphore_controller_reconcile.rc == 0
+    and (semaphore_controller_reconcile.stdout | from_json).changed | bool
+  no_log: true
+
+- name: Report sanitized Semaphore controller reconciliation failure
+  ansible.builtin.fail:
+    msg: >-
+      {{ semaphore_controller_reconcile.stderr
+         | default('Semaphore controller reconciliation failed')
+         | regex_replace('[\r\n]+', ' ') }}
+  when: semaphore_controller_reconcile.rc != 0

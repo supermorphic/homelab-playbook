@@ -3,6 +3,7 @@ extends: default
 ignore: |
   .git/
   .ansible/
+  .cache/galaxy/
   .venv/
   .tmp/
   inventory/**/*.sops.yml

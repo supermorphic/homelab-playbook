@@ -57,6 +57,7 @@ class CommandLifecycleTests(unittest.TestCase):
             {
                 "validate:fast",
                 "validate:ansible",
+                "test:semaphore",
                 "test:molecule",
                 "ci:changed",
                 "ci",
@@ -87,6 +88,15 @@ class CommandLifecycleTests(unittest.TestCase):
         self.assertEqual(
             ["uv run --frozen --no-sync python scripts/molecule.py"],
             molecule_task["run"],
+        )
+
+        semaphore_task = next(
+            task for task in tasks if task["name"] == "test:semaphore"
+        )
+        self.assertEqual([], semaphore_task["aliases"])
+        self.assertEqual(
+            ["uv run --frozen --no-sync python scripts/semaphore/test.py"],
+            semaphore_task["run"],
         )
 
         ci_task = next(task for task in tasks if task["name"] == "ci")

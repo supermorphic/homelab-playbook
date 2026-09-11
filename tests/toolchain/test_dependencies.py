@@ -339,6 +339,14 @@ class DependencyVerificationTests(unittest.TestCase):
 
         self.assertTrue(any("fingerprint" in error for error in errors), errors)
 
+    def test_galaxy_requirements_identity_excludes_python_lock(self) -> None:
+        requirements_path = self.repo_root / "requirements.yml"
+        before = dependencies.requirements_sha256(requirements_path)
+
+        (self.repo_root / "uv.lock").write_text("version = 2\n")
+
+        self.assertEqual(before, dependencies.requirements_sha256(requirements_path))
+
     def test_verify_rejects_non_exact_galaxy_requirement_version(self) -> None:
         self.create_current_environment()
         requirements_path = self.repo_root / "requirements.yml"

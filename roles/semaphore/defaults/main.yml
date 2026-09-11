@@ -1,0 +1,47 @@
+---
+semaphore_account_name: svc-semaphore
+semaphore_foundation_account: {}
+
+semaphore_image: docker.io/semaphoreui/semaphore:v2.19.12@sha256:3996804607ebb63690528185bb9adc3507ee896851098e4453975f2ce7f8b435
+semaphore_postgres_image: docker.io/library/postgres:17.11@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675
+semaphore_rclone_image: docker.io/rclone/rclone:1.75.1@sha256:45401ad7410db1d67ffdb58e19059ad20b0d8e0285a60e38bbec55cc1019c7a5
+semaphore_postgres_major: '17'
+
+semaphore_backend_port: null
+semaphore_hostname: ''
+semaphore_certificate_name: semaphore
+semaphore_database_name: semaphore
+semaphore_database_user: semaphore
+semaphore_state_root: "/var/lib/{{ semaphore_account_name }}/semaphore"
+semaphore_quadlet_root: "/etc/containers/systemd/users/{{ semaphore_foundation_account.uid | default(0) }}"
+semaphore_user_unit_root: "/var/lib/{{ semaphore_account_name }}/.config/systemd/user"
+semaphore_helper_root: /usr/local/libexec/semaphore
+semaphore_health_timeout_seconds: 60
+semaphore_backup_timeout: 2h
+semaphore_transfer_timeout: 2h
+semaphore_local_retention_days: 7
+semaphore_remote_retention_days: 90
+semaphore_backups_enabled: true
+semaphore_rclone_remote: ''
+
+# Enable the controller after enrolling its dedicated identity and SSH inputs.
+semaphore_controller_enabled: false
+semaphore_controller_identity_enabled: false
+semaphore_controller_identity_credential_path: /etc/semaphore/controller-age.cred
+semaphore_controller_repository_url: ''
+semaphore_controller_revision: ''
+semaphore_controller_repository_ref: main
+semaphore_controller_inventory: production
+semaphore_controller_host_selection: ''
+semaphore_controller_project_name: Homelab
+semaphore_controller_repository_name: homelab-playbook
+semaphore_controller_template_name: OS verification
+semaphore_controller_lock_timeout_seconds: 300
+semaphore_mise_version: 2026.9.4
+semaphore_mise_assets:
+  x86_64:
+    url: https://github.com/jdx/mise/releases/download/v2026.9.4/mise-v2026.9.4-linux-x64-musl
+    checksum: sha256:4c53429e230c07588ae810b3b37f1541f1a763a1f6ac3a71c3fc98904ac3c333
+  aarch64:
+    url: https://github.com/jdx/mise/releases/download/v2026.9.4/mise-v2026.9.4-linux-arm64-musl
+    checksum: sha256:82d10b29ac668b31f937b788fd99feb305fc9f2f4955825baf57d714aac2e25d

@@ -1,0 +1,114 @@
+---
+- name: Observe Semaphore prerequisites without repair
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Verify Semaphore definitions and filesystem metadata
+  ansible.builtin.import_tasks: verify-definitions.yml
+
+- name: Observe Semaphore user service state
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemctl
+      - --user
+      - "--machine={{ semaphore_account_name }}@.host"
+      - is-active
+      - "{{ item }}"
+  loop:
+    - semaphore-postgres.service
+    - semaphore.service
+  changed_when: false
+
+- name: Observe Semaphore timer state
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemctl
+      - --user
+      - "--machine={{ semaphore_account_name }}@.host"
+      - is-active
+      - "{{ item }}"
+  loop:
+    - semaphore-backup.timer
+    - semaphore-transfer.timer
+  changed_when: false
+  when: semaphore_backups_enabled | bool
+
+- name: Observe running container image identities
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/runuser
+      - -u
+      - "{{ semaphore_account_name }}"
+      - --
+      - /usr/bin/podman
+      - inspect
+      - --format
+      - "{{ '{{.ImageDigest}}' }}"
+      - "{{ item.name }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ semaphore_foundation_account.uid }}"
+  loop:
+    - {name: semaphore-postgres, image: "{{ semaphore_postgres_image }}"}
+    - {name: semaphore, image: "{{ semaphore_image }}"}
+  register: semaphore_container_images
+  changed_when: false
+
+- name: Verify running containers use declared immutable images
+  ansible.builtin.assert:
+    that:
+      - item.stdout | trim == item.item.image.split('@')[1]
+    fail_msg: A running Semaphore container does not use its declared image
+  loop: "{{ semaphore_container_images.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Observe effective Semaphore container port mappings
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/runuser
+      - -u
+      - "{{ semaphore_account_name }}"
+      - --
+      - /usr/bin/podman
+      - port
+      - "{{ item }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ semaphore_foundation_account.uid }}"
+  loop:
+    - semaphore
+    - semaphore-postgres
+  register: semaphore_container_ports
+  changed_when: false
+
+- name: Verify effective Semaphore container port mappings
+  ansible.builtin.assert:
+    that:
+      - >-
+        semaphore_container_ports.results[0].stdout_lines
+        == ['3000/tcp -> 127.0.0.1:' ~ (semaphore_backend_port | string)]
+      - semaphore_container_ports.results[1].stdout | trim == ''
+    fail_msg: Semaphore container port publication has drifted
+
+- name: Observe host TCP listeners
+  ansible.builtin.command:
+    argv: [/usr/bin/ss, -ltnH]
+  register: semaphore_tcp_listeners
+  changed_when: false
+
+- name: Verify only the declared loopback backend is published
+  ansible.builtin.assert:
+    that:
+      - semaphore_tcp_listeners.stdout is regex('(?m).*127[.]0[.]0[.]1:' ~ semaphore_backend_port ~ '\\s')
+    fail_msg: Semaphore listener isolation has drifted
+
+- name: Check Semaphore health over loopback
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ semaphore_backend_port }}/api/ping"
+    method: GET
+    status_code: 200
+    return_content: false
+    timeout: 5
+  register: semaphore_health
+  retries: 6
+  delay: 2
+  until: semaphore_health.status == 200
+  changed_when: false

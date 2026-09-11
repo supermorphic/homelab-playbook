@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Semaphore PostgreSQL backup
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+Unit=semaphore-backup.service
+
+[Install]
+WantedBy=timers.target

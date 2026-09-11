@@ -1,0 +1,82 @@
+---
+- name: Reconcile Semaphore service definitions
+  ansible.builtin.import_tasks: definitions.yml
+
+- name: Observe current Semaphore service activity
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemctl
+      - --user
+      - "--machine={{ semaphore_account_name }}@.host"
+      - is-active
+      - "{{ item }}"
+  loop:
+    - semaphore-postgres.service
+    - semaphore.service
+  register: semaphore_service_activity
+  failed_when: false
+  changed_when: false
+
+- name: Start or restart the Semaphore database
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemctl
+      - --user
+      - "--machine={{ semaphore_account_name }}@.host"
+      - "{{ 'restart' if semaphore_service_activity.results[0].rc == 0 else 'start' }}"
+      - semaphore-postgres.service
+  when: >-
+    semaphore_service_activity.results[0].rc != 0
+    or semaphore_quadlets.changed
+    or semaphore_runtime_environments.changed
+  changed_when: true
+
+- name: Start or restart Semaphore after database readiness
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemctl
+      - --user
+      - "--machine={{ semaphore_account_name }}@.host"
+      - "{{ 'restart' if semaphore_service_activity.results[1].rc == 0 else 'start' }}"
+      - semaphore.service
+  when: >-
+    semaphore_service_activity.results[1].rc != 0
+    or semaphore_quadlets.changed
+    or semaphore_runtime_environments.changed
+    or semaphore_ssh_configuration.changed
+    or semaphore_known_hosts.changed
+    or (semaphore_repository_job_wrapper.changed | default(false))
+    or (semaphore_controller_declaration.changed | default(false))
+    or (semaphore_controller_ssh_key.changed | default(false))
+    or (semaphore_identity_helper.changed | default(false))
+  changed_when: true
+
+- name: Observe Semaphore timer activity
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemctl
+      - --user
+      - "--machine={{ semaphore_account_name }}@.host"
+      - is-active
+      - "{{ item }}"
+  loop:
+    - semaphore-backup.timer
+    - semaphore-transfer.timer
+  register: semaphore_timer_activity
+  failed_when: false
+  changed_when: false
+  when: semaphore_backups_enabled | bool
+
+- name: Start Semaphore backup and transfer timers
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemctl
+      - --user
+      - "--machine={{ semaphore_account_name }}@.host"
+      - start
+      - semaphore-backup.timer
+      - semaphore-transfer.timer
+  when: >-
+    semaphore_backups_enabled | bool
+    and (semaphore_timer_activity.results | selectattr('rc', 'ne', 0) | list | length > 0)
+  changed_when: true

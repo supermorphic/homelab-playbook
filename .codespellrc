@@ -1,3 +1,3 @@
 [codespell]
-skip = .git,.ansible,.venv,.tmp,uv.lock
+skip = .git,.ansible,.cache/galaxy,.venv,.tmp,uv.lock
 ignore-words-list = intoto

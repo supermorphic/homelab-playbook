@@ -121,7 +121,7 @@ jobs:
       needs.classify.outputs.depth == 'molecule' ||
       needs.classify.outputs.depth == 'full'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -176,6 +176,12 @@ jobs:
           HOMELAB_MOLECULE_PLATFORM: ${{ matrix.platform }}
           MOLECULE_SELECTOR: ${{ matrix.selector }}
         run: mise run test:molecule -- "$MOLECULE_SELECTOR"
+      - name: Test upstream Semaphore runtime and recovery
+        if: matrix.selector == 'semaphore/default' && matrix.platform == 'debian13'
+        run: |
+          mise run test:semaphore -- compatibility
+          mise run test:semaphore -- fixture
+          mise run test:semaphore -- controller
 
   merge-gate:
     name: merge-gate

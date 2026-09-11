@@ -1,0 +1,50 @@
+---
+- name: Establish independent Semaphore fixture prerequisites
+  hosts: semaphore
+  gather_facts: true
+  become: true
+  vars_files:
+    - vars/main.yml
+  tasks:
+    - name: Provision the disposable foundation account  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.include_role:
+        name: podman_foundation
+      vars:
+        podman_foundation_accounts:
+          - "{{ semaphore_foundation_account }}"
+
+    - name: Establish disposable certificate fixture directory
+      ansible.builtin.file:
+        path: /etc/caddy/tls/semaphore-fixture/current
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Create a run-owned certificate fixture
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - req
+          - -x509
+          - -newkey
+          - rsa:2048
+          - -nodes
+          - -keyout
+          - /etc/caddy/tls/semaphore-fixture/current/privkey.pem
+          - -out
+          - /etc/caddy/tls/semaphore-fixture/current/fullchain.pem
+          - -days
+          - '1'
+          - -subj
+          - /CN=semaphore.example.test
+      args:
+        creates: /etc/caddy/tls/semaphore-fixture/current/fullchain.pem
+      no_log: true
+
+    - name: Restrict the disposable private key
+      ansible.builtin.file:
+        path: /etc/caddy/tls/semaphore-fixture/current/privkey.pem
+        owner: root
+        group: root
+        mode: '0600'

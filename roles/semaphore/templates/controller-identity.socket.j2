@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Semaphore controller identity pipe
+
+[Socket]
+ListenStream=/run/semaphore-identity/age.sock
+SocketUser={{ semaphore_account_name }}
+SocketGroup={{ semaphore_account_name }}
+SocketMode=0600
+DirectoryMode=0750
+Accept=yes
+MaxConnections=8
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

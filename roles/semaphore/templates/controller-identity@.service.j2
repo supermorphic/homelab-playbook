@@ -1,0 +1,23 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Deliver the Semaphore controller identity to its service account
+CollectMode=inactive-or-failed
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/systemd-creds decrypt --name=semaphore-age {{ semaphore_controller_identity_credential_path }} -
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+RuntimeMaxSec=10
+LimitCORE=0
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+UMask=0077

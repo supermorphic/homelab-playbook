@@ -164,7 +164,21 @@ mise run bootstrap
 
 Bootstrap establishes the locked local controller and Galaxy capability. It
 does not authorize playbook execution or install dependencies implicitly during
-a later live operation.
+a later live operation. It reuses a verified Galaxy generation when the complete
+`requirements.yml` content and repository overrides are unchanged. A change to
+`uv.lock` or an override alone does not download Galaxy content. Override changes
+copy the matching verified requirements generation and apply the current files.
+
+By default, Galaxy generations are stored under `.cache/galaxy`. Set
+`HOMELAB_GALAXY_CACHE_DIR` to an absolute persistent directory when disposable
+checkouts must share them. Bootstrap validates the selected roles, collections,
+versions, and overrides before updating the workspace links. A failed candidate
+does not replace the previous selection or its success fingerprint. Use this
+command to explicitly reinstall the current Galaxy requirements:
+
+```text
+mise exec -- uv run --frozen --no-sync python scripts/galaxy_dependencies.py --repair
+```
 
 ### Secret identity bootstrap
 
@@ -218,6 +232,26 @@ This is the repository gateway for direct SOPS operations. It confines SOPS
 identity discovery to the selected retrieval command and defaults to the
 repository Keychain helper. Its effect depends on the SOPS arguments; editing a
 protected inventory file is an operator-owned mutation of that exact local file.
+
+### Semaphore deployment and experiments
+
+`semaphore provision` through the playbook gateway changes the selected host's
+application configuration, services, and persistent backup schedules. It needs
+explicit operator direction for that host and action. `semaphore verify` observes
+existing files, units, containers, and health without repair or probe resources.
+
+`mise run test:semaphore -- unit` runs local tests with synthetic inputs.
+`compatibility`, `fixture`, and `controller` are controlled experiments using
+run-owned containers, storage, and synthetic credentials. They test the upstream
+runtime, the backup/SMB/restore flow, and the bounded repository job respectively.
+The controller experiment uses the disposable Debian image prepared by
+`mise run test:molecule -- semaphore/default`. Experiments must remove only their
+own resources and return failure if execution or cleanup fails.
+
+The `restore` mode requires exact archive and destination selection. Its attended
+mode also needs explicit operator authorization for the selected NAS target and
+temporary recovery resources. A confirmation argument guards execution intent;
+it does not supply authorization. No experiment performs production cutover.
 
 ## Command and failure contracts
 

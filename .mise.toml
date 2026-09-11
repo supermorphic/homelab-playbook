@@ -42,6 +42,10 @@ run = "uv run --frozen --no-sync python -m unittest discover -s tests/secrets -p
 description = "Test TLS policy, publication and local TLS with disposable certificates"
 run = "uv run --frozen --no-sync python -m unittest discover -s tests/tls -p 'test_*.py' -v"
 
+[tasks."test:semaphore"]
+description = "Test Semaphore automation with disposable fixtures"
+run = "uv run --frozen --no-sync python scripts/semaphore/test.py"
+
 [tasks."validate:secrets"]
 description = "Validate encrypted inventory structure without decryption"
 run = "uv run --frozen --no-sync python scripts/secrets/validate.py"
@@ -82,4 +86,8 @@ mise run validate:ansible
 mise run test:molecule -- system_maintenance/default
 mise run test:molecule -- system_maintenance/baseline
 mise run test:molecule -- reverse_proxy/default
+mise run test:molecule -- semaphore/default
+mise run test:semaphore -- compatibility
+mise run test:semaphore -- fixture
+mise run test:semaphore -- controller
 '''

@@ -1,0 +1,25 @@
+[Unit]
+Description=Semaphore PostgreSQL database
+
+[Container]
+ContainerName=semaphore-postgres
+Image={{ semaphore_postgres_image }}
+Network=semaphore.network
+UserNS=keep-id:uid=999,gid=999
+User=999:999
+EnvironmentFile={{ semaphore_state_root }}/credentials/postgres.env
+Volume={{ semaphore_state_root }}/database:/var/lib/postgresql/data:rw,Z
+HealthCmd=pg_isready -U {{ semaphore_database_user }} -d {{ semaphore_database_name }}
+HealthInterval=5s
+HealthTimeout=3s
+HealthRetries=12
+NoNewPrivileges=true
+
+[Service]
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=90
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target

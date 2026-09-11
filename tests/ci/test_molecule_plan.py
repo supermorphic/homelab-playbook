@@ -21,8 +21,12 @@ class MoleculePlanTests(unittest.TestCase):
     def test_selection_table(self):
         maintenance = {"system_maintenance/default", "system_maintenance/baseline"}
         consumers = {"system_maintenance/baseline", "reverse_proxy/default"}
-        all_scenarios = maintenance | consumers
+        all_scenarios = maintenance | consumers | {"semaphore/default"}
         cases = [
+            (["roles/semaphore/tasks/main.yml"], {"semaphore/default"}, "selective"),
+            (["playbooks/semaphore/provision.yml"], {"semaphore/default"}, "selective"),
+            (["roles/semaphore/molecule/default/verify.yml"], {"semaphore/default"}, "selective"),
+            (["scripts/semaphore/restore.py"], all_scenarios, "full"),
             *[
                 ([path], consumers, "selective")
                 for path in (
@@ -79,7 +83,7 @@ class MoleculePlanTests(unittest.TestCase):
             ),
             (
                 ["roles/podman_foundation/tasks/main.yml"],
-                {"system_maintenance/baseline"},
+                {"system_maintenance/baseline", "semaphore/default"},
                 "selective",
             ),
             (
@@ -122,6 +126,21 @@ class MoleculePlanTests(unittest.TestCase):
                 for row in plan["matrix"]["include"]:
                     self.assertTrue(row["reasons"])
 
+    def test_selected_semaphore_dispatches_runtime_modes_after_os_fixture(self):
+        import run_changed
+
+        result = classify.classify_paths(["roles/semaphore/tasks/main.yml"])
+        result["molecule_plan"] = self.plan(result["paths"])
+        commands = run_changed.commands_for(result)
+        self.assertEqual([
+            ["mise", "run", "validate:fast"],
+            ["mise", "run", "validate:ansible"],
+            ["mise", "run", "test:molecule", "--", "semaphore/default"],
+            ["mise", "run", "test:semaphore", "--", "compatibility"],
+            ["mise", "run", "test:semaphore", "--", "fixture"],
+            ["mise", "run", "test:semaphore", "--", "controller"],
+        ], commands)
+
     def test_union_and_reasons_are_deterministic(self):
         paths = [
             "roles/tls_automation/tasks/main.yml",
@@ -145,7 +164,7 @@ class MoleculePlanTests(unittest.TestCase):
             with self.subTest(depth=depth):
                 plan = self.plan(["README.md"], depth)
                 self.assertEqual("full", plan["mode"])
-                self.assertEqual(6, len(plan["matrix"]["include"]))
+                self.assertEqual(8, len(plan["matrix"]["include"]))
 
     def test_unknown_molecule_impact_fails_closed(self):
         import molecule_plan
@@ -153,7 +172,7 @@ class MoleculePlanTests(unittest.TestCase):
         result = {"depth": "molecule", "paths": ["roles/future/tasks/main.yml"]}
         plan = molecule_plan.build_plan(result)
         self.assertEqual("full", plan["mode"])
-        self.assertEqual(6, len(plan["matrix"]["include"]))
+        self.assertEqual(8, len(plan["matrix"]["include"]))
 
     def test_missing_scenario_rule_does_not_inherit_role_mapping(self):
         import molecule_plan
@@ -175,7 +194,7 @@ class MoleculePlanTests(unittest.TestCase):
             )
             plan = molecule_plan.build_plan(result, map_path=path)
             self.assertEqual("full", plan["mode"])
-            self.assertEqual(6, len(plan["matrix"]["include"]))
+            self.assertEqual(8, len(plan["matrix"]["include"]))
 
     def test_invalid_map_falls_back_to_runner_registry(self):
         import molecule_plan
@@ -197,7 +216,7 @@ class MoleculePlanTests(unittest.TestCase):
                         map_path=path,
                     )
                     self.assertEqual("full", plan["mode"])
-                    self.assertEqual(6, len(plan["matrix"]["include"]))
+                    self.assertEqual(8, len(plan["matrix"]["include"]))
 
     def test_exact_paths_override_prefixes_without_matching_other_files(self):
         import molecule_plan
@@ -241,7 +260,7 @@ class MoleculePlanTests(unittest.TestCase):
                     plan = molecule_plan.build_plan(
                         classify.classify_paths(["tests/tls/test_runtime.py"]), map_path=path)
                     self.assertEqual("full", plan["mode"])
-                    self.assertEqual(6, len(plan["matrix"]["include"]))
+                    self.assertEqual(8, len(plan["matrix"]["include"]))
 
     def test_exact_file_cannot_declare_a_new_scenario(self):
         import molecule_plan
@@ -255,7 +274,7 @@ class MoleculePlanTests(unittest.TestCase):
             }]}))
             plan = molecule_plan.build_plan(classify.classify_paths([target]), map_path=path)
             self.assertEqual("full", plan["mode"])
-            self.assertEqual(6, len(plan["matrix"]["include"]))
+            self.assertEqual(8, len(plan["matrix"]["include"]))
 
     def test_merge_gate_checks_plan_completeness(self):
         import merge_gate

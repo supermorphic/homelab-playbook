@@ -40,6 +40,21 @@
       "prefixes": ["roles/reverse_proxy/molecule/default/"],
       "selectors": ["reverse_proxy/default"],
       "reason": "proxy scenario coverage"
+    },
+    {
+      "prefixes": ["roles/semaphore/", "playbooks/semaphore/"],
+      "selectors": ["semaphore/default"],
+      "reason": "Semaphore deployment requires OS definitions and stock runtime coverage"
+    },
+    {
+      "prefixes": ["roles/semaphore/molecule/default/"],
+      "selectors": ["semaphore/default"],
+      "reason": "Semaphore scenario coverage"
+    },
+    {
+      "prefixes": ["roles/podman_foundation/"],
+      "selectors": ["semaphore/default"],
+      "reason": "Semaphore preparation consumes the Podman foundation contract"
     }
   ]
 }

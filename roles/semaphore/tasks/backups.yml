@@ -1,0 +1,39 @@
+---
+- name: Install backup and transfer Quadlets
+  ansible.builtin.template:
+    src: "{{ item.src }}.j2"
+    dest: "{{ semaphore_quadlet_root }}/{{ item.dest }}"
+    owner: root
+    group: "{{ semaphore_account_name }}"
+    mode: '0640'
+  loop:
+    - {src: backup.container, dest: semaphore-backup.container}
+    - {src: transfer.container, dest: semaphore-transfer.container}
+  when: semaphore_backups_enabled | bool
+  register: semaphore_backup_quadlets
+
+- name: Install native backup and transfer timers
+  ansible.builtin.template:
+    src: "{{ item.src }}.j2"
+    dest: "{{ semaphore_user_unit_root }}/{{ item.dest }}"
+    owner: root
+    group: "{{ semaphore_account_name }}"
+    mode: '0640'
+  loop:
+    - {src: backup.timer, dest: semaphore-backup.timer}
+    - {src: transfer.timer, dest: semaphore-transfer.timer}
+  when: semaphore_backups_enabled | bool
+  register: semaphore_backup_timers
+
+- name: Enable native backup and transfer timers for user-manager boot
+  ansible.builtin.file:
+    src: "../{{ item }}"
+    dest: "{{ semaphore_user_unit_root }}/timers.target.wants/{{ item }}"
+    state: link
+    owner: root
+    group: "{{ semaphore_account_name }}"
+  loop:
+    - semaphore-backup.timer
+    - semaphore-transfer.timer
+  when: semaphore_backups_enabled | bool
+  register: semaphore_backup_timer_links

@@ -1,0 +1,10 @@
+Host *
+    StrictHostKeyChecking yes
+    UserKnownHostsFile /var/lib/semaphore/.ssh/known_hosts
+    GlobalKnownHostsFile none
+{% if semaphore_controller_enabled | default(false) %}
+    IdentityFile /etc/semaphore/controller-ssh
+    IdentitiesOnly yes
+{% endif %}
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no

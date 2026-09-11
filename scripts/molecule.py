@@ -92,6 +92,19 @@ REVERSE_PROXY_PLATFORMS = (
 )
 
 
+SEMAPHORE_PLATFORMS = tuple(
+    Platform(
+        name=platform.name,
+        base_image=platform.base_image,
+        image=f"localhost/homelab-playbook-semaphore-{platform.name}:local",
+        container=f"homelab-playbook-semaphore-{platform.name}",
+        container_command=platform.container_command,
+        containerfile=platform.containerfile,
+    )
+    for platform in DEFAULT_PLATFORMS
+)
+
+
 @dataclass(frozen=True)
 class Scenario:
     selector: str
@@ -112,6 +125,12 @@ SCENARIOS: Mapping[str, Scenario] = MappingProxyType({
         role_name="system_maintenance",
         scenario_name="baseline",
         platforms=BASELINE_PLATFORMS,
+    ),
+    "semaphore/default": Scenario(
+        selector="semaphore/default",
+        role_name="semaphore",
+        scenario_name="default",
+        platforms=SEMAPHORE_PLATFORMS,
     ),
     "reverse_proxy/default": Scenario(
         selector="reverse_proxy/default",

@@ -1,0 +1,155 @@
+---
+- name: Inspect required Semaphore paths
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  loop: >-
+    {{ semaphore_verify_required_paths
+       + (semaphore_verify_backup_paths if semaphore_backups_enabled | bool else [])
+       + (semaphore_verify_controller_paths if semaphore_controller_enabled | bool else [])
+       + (semaphore_verify_identity_paths if semaphore_controller_identity_enabled | bool else []) }}
+  vars:
+    semaphore_verify_required_paths:
+      - {path: "{{ semaphore_state_root }}", mode: '0700', owner: "{{ semaphore_foundation_account.uid }}"}
+      - {path: "{{ semaphore_state_root }}/database", mode: '0700', owner: "{{ semaphore_foundation_account.uid }}"}
+      - {path: "{{ semaphore_state_root }}/work", mode: '0700', owner: "{{ semaphore_foundation_account.uid }}"}
+      - {path: "{{ semaphore_state_root }}/tools", mode: '0700', owner: "{{ semaphore_foundation_account.uid }}"}
+      - {path: "{{ semaphore_state_root }}/dependencies", mode: '0700', owner: "{{ semaphore_foundation_account.uid }}"}
+      - {path: "{{ semaphore_state_root }}/backups", mode: '0700', owner: "{{ semaphore_foundation_account.uid }}"}
+      - {path: "{{ semaphore_state_root }}/credentials", mode: '0700', owner: "{{ semaphore_foundation_account.uid }}"}
+      - {path: "{{ semaphore_state_root }}/credentials/semaphore.env", mode: '0600', owner: "{{ semaphore_foundation_account.uid }}"}
+      - {path: "{{ semaphore_state_root }}/credentials/postgres.env", mode: '0600', owner: "{{ semaphore_foundation_account.uid }}"}
+      - {path: "{{ semaphore_state_root }}/credentials/ssh_config", mode: '0640', owner: '0'}
+      - {path: "{{ semaphore_state_root }}/credentials/known_hosts", mode: '0640', owner: '0'}
+      - {path: "{{ semaphore_helper_root }}", mode: '0750', owner: '0'}
+      - {path: "{{ semaphore_quadlet_root }}/semaphore.network", mode: '0640', owner: '0'}
+      - {path: "{{ semaphore_quadlet_root }}/semaphore-postgres.container", mode: '0640', owner: '0'}
+      - {path: "{{ semaphore_quadlet_root }}/semaphore.container", mode: '0640', owner: '0'}
+    semaphore_verify_backup_paths:
+      - {path: "{{ semaphore_state_root }}/credentials/rclone.conf", mode: '0600', owner: "{{ semaphore_foundation_account.uid }}"}
+      - {path: "{{ semaphore_helper_root }}/backup.sh", mode: '0750', owner: '0'}
+      - {path: "{{ semaphore_helper_root }}/transfer.sh", mode: '0750', owner: '0'}
+      - {path: "{{ semaphore_quadlet_root }}/semaphore-backup.container", mode: '0640', owner: '0'}
+      - {path: "{{ semaphore_quadlet_root }}/semaphore-transfer.container", mode: '0640', owner: '0'}
+      - {path: "{{ semaphore_user_unit_root }}/semaphore-backup.timer", mode: '0640', owner: '0'}
+      - {path: "{{ semaphore_user_unit_root }}/semaphore-transfer.timer", mode: '0640', owner: '0'}
+    semaphore_verify_controller_paths:
+      - {path: "{{ semaphore_helper_root }}/repository-job.py", mode: '0750', owner: '0'}
+      - {path: "{{ semaphore_helper_root }}/repository-job.json", mode: '0640', owner: '0'}
+      - {path: "{{ semaphore_helper_root }}/repository-job-api.py", mode: '0750', owner: '0'}
+      - {path: "{{ semaphore_state_root }}/credentials/config/controller-ssh", mode: '0600', owner: "{{ semaphore_foundation_account.uid }}"}
+    semaphore_verify_identity_paths:
+      - {path: "{{ semaphore_helper_root }}/identity-command.py", mode: '0750', owner: '0'}
+  register: semaphore_verified_paths
+
+- name: Verify Semaphore filesystem metadata
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - not item.stat.islnk | default(true)
+      - item.stat.uid | string == item.item.owner | string
+      - item.stat.mode == item.item.mode
+    fail_msg: A required Semaphore path is missing or has drifted metadata
+  loop: "{{ semaphore_verified_paths.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+- name: Verify effective labels for root-owned container inputs
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/matchpathcon
+      - -V
+      - "{{ item }}"
+  loop: "{{ semaphore_container_readonly_inputs }}"
+  vars:
+    semaphore_container_readonly_inputs: >-
+      {{ [semaphore_state_root ~ '/credentials/ssh_config',
+          semaphore_state_root ~ '/credentials/known_hosts']
+         + ([semaphore_helper_root ~ '/backup.sh',
+             semaphore_helper_root ~ '/transfer.sh']
+            if semaphore_backups_enabled | bool else [])
+         + ([semaphore_helper_root ~ '/repository-job.py',
+             semaphore_helper_root ~ '/repository-job.json']
+            if semaphore_controller_enabled | bool else [])
+         + ([semaphore_helper_root ~ '/identity-command.py']
+            if semaphore_controller_identity_enabled | bool else []) }}
+  changed_when: false
+  when:
+    - ansible_facts['os_family'] == 'RedHat'
+    - (ansible_facts['selinux'] | default({})).get('status', 'disabled') == 'enabled'
+
+- name: Inspect Semaphore timer boot links
+  ansible.builtin.stat:
+    path: "{{ semaphore_user_unit_root }}/timers.target.wants/{{ item }}"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  loop:
+    - semaphore-backup.timer
+    - semaphore-transfer.timer
+  register: semaphore_timer_boot_links
+  when: semaphore_backups_enabled | bool
+
+- name: Verify Semaphore timers remain enabled across user-manager restart
+  ansible.builtin.assert:
+    that:
+      - item.stat.islnk | default(false)
+      - item.stat.lnk_source == semaphore_user_unit_root ~ '/' ~ item.item
+    fail_msg: A Semaphore timer boot link is missing or points outside the managed unit directory
+  loop: "{{ semaphore_timer_boot_links.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: semaphore_backups_enabled | bool
+
+- name: Observe effective Semaphore timer schedules
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemctl
+      - --user
+      - "--machine={{ semaphore_account_name }}@.host"
+      - show
+      - "{{ item.name }}"
+      - --property=TimersCalendar
+      - --property=Persistent
+  loop:
+    - {name: semaphore-backup.timer, calendar: '*-*-* 03:00:00'}
+    - {name: semaphore-transfer.timer, calendar: '*-*-* 00,04,08,12,16,20:15:00'}
+  register: semaphore_timer_schedules
+  changed_when: false
+  when: semaphore_backups_enabled | bool
+
+- name: Verify effective Semaphore timer schedules
+  ansible.builtin.assert:
+    that:
+      - item.item.calendar in item.stdout
+      - item.stdout is regex('(?m)^Persistent=yes$')
+    fail_msg: A Semaphore timer schedule or persistent catch-up setting has drifted
+  loop: "{{ semaphore_timer_schedules.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: semaphore_backups_enabled | bool
+
+- name: Observe successful-backup transfer trigger
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemctl
+      - --user
+      - "--machine={{ semaphore_account_name }}@.host"
+      - show
+      - semaphore-backup.service
+      - --property=OnSuccess
+      - --value
+  register: semaphore_backup_success_trigger
+  changed_when: false
+  when: semaphore_backups_enabled | bool
+
+- name: Verify successful backups trigger immediate transfer
+  ansible.builtin.assert:
+    that:
+      - semaphore_backup_success_trigger.stdout_lines == ['semaphore-transfer.service']
+    fail_msg: Successful Semaphore backups no longer trigger immediate transfer
+  when: semaphore_backups_enabled | bool
