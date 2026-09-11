@@ -29,7 +29,7 @@ if ((${#shell_paths[@]} > 0)); then
 fi
 
 uv run --frozen --no-sync codespell
-markdownlint-cli2 '**/*.md' '#.ansible' '#.venv' '#.tmp'
+markdownlint-cli2 '**/*.md' '#.ansible' '#.cache/galaxy' '#.venv' '#.tmp'
 
 tracked_workflows=()
 while IFS= read -r -d '' workflow_file; do

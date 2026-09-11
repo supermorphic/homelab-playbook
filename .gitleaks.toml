@@ -6,6 +6,7 @@ useDefault = true
 [[allowlists]]
 description = "Exclude generated and local dependency directories"
 paths = [
+  '''^\.cache/galaxy(?:/|$)''',
   '''(^|/)\.git(?:/|$)''',
   '''(^|/)\.ansible(?:/|$)''',
   '''(^|/)\.venv(?:/|$)''',
