@@ -320,9 +320,14 @@ class Fixture:
         if outage.returncode == 0:
             raise FixtureFailure("transfer unexpectedly succeeded while SMB was absent")
         self._remember("container", self.samba)
-        self.podman("run", "-d", "--name", self.samba, "--label", self.owner_label, "--network", self.network, "--network-alias", "nas", "--env-file", str(samba_env), "-v", f"{self.root / 'nas'}:/shares/semaphore:rw", SAMBA_IMAGE)
+        # The authenticated SMB account must own the private host bind mount.
+        # Keep the entrypoint root so it can create that account and start smbd.
+        self.podman("run", "-d", "--name", self.samba, "--label", self.owner_label,
+                    "--userns", "keep-id:uid=1000,gid=1000", "--user", "0:0",
+                    "--network", self.network, "--network-alias", "nas", "--env-file", str(samba_env),
+                    "-v", f"{self.root / 'nas'}:/shares/semaphore:rw", SAMBA_IMAGE)
         for _ in range(60):
-            ready = self.podman("run", "--rm", "--network", self.network, "-v", f"{config}:/config/rclone/rclone.conf:ro", self.restore.RCLONE_IMAGE, "lsd", "nas:", check=False)
+            ready = self.podman("run", "--rm", "--network", self.network, "-v", f"{config}:/config/rclone/rclone.conf:ro", self.restore.RCLONE_IMAGE, "lsd", "nas:semaphore", check=False)
             if ready.returncode == 0: break
             time.sleep(1)
         else: raise FixtureFailure("SMB fixture readiness timed out")
