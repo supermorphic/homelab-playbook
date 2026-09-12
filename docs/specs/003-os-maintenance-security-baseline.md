@@ -602,5 +602,4 @@ The current baseline contract is satisfied when:
 | Use the complete current test matrix | Specification 002 defines exactly four Debian rows: maintenance default, complete baseline, reverse proxy default, and Semaphore default. |
 | Keep documentation stable | Existing specification identifiers and paths remain; README files, guides, and subsystem specifications state the Debian 13 contract and link to this platform contract. |
 | Test current behavior | Molecule fixtures and Ansible/CI contracts cover Debian 13 and the exact four-row registry; tests assert current invariants without a permanent forbidden-reference scan. |
-| Update VM examples | Remove Rocky and CentOS entries from `infra/manifest.csv` and replace Rocky examples in `infra/orbs.sh` with Debian 13. Other generic VM examples do not declare managed-host support. |
 | Keep platform scope narrow | No Raspberry Pi behavior is added; generic native ARM64 and AMD64 selection remains. |

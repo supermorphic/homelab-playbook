@@ -424,15 +424,6 @@ declaration. Exact-file entries do not participate in scenario-path matching.
 Rules naming `all` broaden to the complete suite.
 Selections and reasons are deduplicated and emitted in stable registry order.
 
-The complete registry contains exactly these four rows:
-
-| Scenario | Platform |
-| --- | --- |
-| `system_maintenance/default` | `debian13` |
-| `system_maintenance/baseline` | `debian13` |
-| `reverse_proxy/default` | `debian13` |
-| `semaphore/default` | `debian13` |
-
 | Changed input | Scenario selection |
 | --- | --- |
 | Maintenance role | Both maintenance scenarios |
