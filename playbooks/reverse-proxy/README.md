@@ -112,6 +112,14 @@ do not promise automatic installation of every upstream Caddy release.
 Binary upgrades may restart Caddy and briefly interrupt every route;
 configuration rollback is not package rollback.
 
+Caddy requests and starts after `network-online.target`. Some network managers
+reach that target before DHCP supplies every configured address. Failed starts
+therefore retry every 10 seconds, with at most 12 starts in five minutes. A short
+address delay can recover without operator action; repeated immediate failures
+reach the start limit and remain failed. The limit is a rate limit, not a lifetime
+retry count. Explicit service stops do not trigger retries.
+Standalone verification checks this effective startup policy as well as activity.
+
 Configuration changes validate under the service identity before reload and
 preserve the committed boot configuration on failure. A root-owned transaction
 record permits interrupted configuration recovery before systemd starts Caddy.
@@ -130,6 +138,12 @@ certificate condition and rerun provisioning. Failed first activation retains
 the admin-only configuration. If recovery fails, retain its diagnostic and
 inspect the target through the independent administration path; do not delete
 transaction records to bypass the failure.
+
+If startup reaches the retry limit, inspect the Caddy journal and correct the
+reported address, configuration, or certificate problem. Once corrected, an
+authorized `systemctl reset-failed caddy.service` clears the start limit, and
+`systemctl start caddy.service` attempts recovery immediately. Verify the proxy
+and trusted HTTPS afterward. Reboot recovery does not require certificate renewal.
 
 After package maintenance, run proxy verification and a trusted HTTPS check from
 an approved client. Separately check denial from outside the allowed network.

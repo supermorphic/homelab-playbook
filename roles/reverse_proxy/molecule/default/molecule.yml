@@ -19,6 +19,7 @@ platforms:
     container_cap_add:
       - SYS_PTRACE
       - SYS_ADMIN
+      - NET_ADMIN
     container_privileged: false
     container_systemd: always
     restart_policy: always

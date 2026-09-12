@@ -1,4 +1,12 @@
+[Unit]
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300s
+StartLimitBurst=12
+
 [Service]
+Restart=on-failure
+RestartSec=10s
 User=caddy
 Group=caddy
 SupplementaryGroups=

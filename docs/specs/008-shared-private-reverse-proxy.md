@@ -245,6 +245,16 @@ authoritative recovery data.
 
 ## Configuration activation and failure behavior
 
+The managed Caddy unit requests and orders itself after `network-online.target`.
+That target is not proof that a private DHCP address is already assigned. Use
+`Restart=on-failure` with `RestartSec=10s`, `StartLimitIntervalSec=300s`, and
+`StartLimitBurst=12`. This permits recovery after a transient bind failure while
+leaving repeated immediate failures in a failed state after the start budget is
+exhausted. This is a start-rate limit, not a lifetime retry count.
+Explicit stops remain stopped. The observer verifies these effective properties.
+Recovery after correcting a persistent fault can clear the budget with an
+authorized `systemctl reset-failed caddy.service` before starting the service.
+
 Provide one root-owned activation helper used by Ansible. It accepts only the
 managed candidate path and fixed service paths, not arbitrary shell commands.
 Stage candidates on the same filesystem as the managed configuration and use
@@ -361,6 +371,14 @@ adapter from switching to the Caddy user. The early probe verifies effective
 root identity and a successful unprivileged user switch, and the integrated
 driver independently checks its root identity. The remaining sandbox settings
 stay in place; production units retain their explicit service identities.
+The proxy fixtures additionally grant `NET_ADMIN` to add and remove one synthetic
+loopback address inside the container network namespace. The startup regression
+first proves an absent-address bind failure, then adds the address and requires
+automatic recovery with trusted HTTPS. A second persistent failure uses the
+installed retry count and window with only the fixture retry delay shortened;
+it must reach `start-limit-hit`. Cleanup restores configuration, removes the
+temporary address and delay override, clears test failure state, and starts the
+original fixture service. These checks do not perform a physical host reboot.
 These capabilities belong to the rootless test container; the
 managed Caddy service still receives only `CAP_NET_BIND_SERVICE`, and the
 production coordinator restrictions remain unchanged.

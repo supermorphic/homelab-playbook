@@ -623,6 +623,12 @@
             (reverse_proxy_molecule_after_restart.stdout | from_json).body
             == 'fixture host=app.example.test path=/\n'
 
+    - name: Verify recovery from a delayed bind address and finite failure retries
+      ansible.builtin.script:
+        cmd: "files/startup_recovery.py {{ reverse_proxy_molecule_address }}"
+        executable: /usr/bin/python3
+      changed_when: false
+
     - name: Reconcile and diagnose removal of the first route
       block:
         - name: Reconcile the proxy with only the second route  # noqa: var-naming[no-role-prefix]
