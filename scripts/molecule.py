@@ -43,14 +43,6 @@ DEFAULT_PLATFORMS = (
         container_command="/usr/lib/systemd/systemd",
         containerfile=Path("Containerfile.debian13"),
     ),
-    Platform(
-        name="rockylinux9",
-        base_image="docker.io/rockylinux/rockylinux:9",
-        image="localhost/homelab-playbook-system-maintenance-rockylinux9:local",
-        container="homelab-playbook-system-maintenance-rockylinux9",
-        container_command="/usr/lib/systemd/systemd",
-        containerfile=Path("Containerfile.rockylinux9"),
-    ),
 )
 
 BASELINE_PLATFORMS = (
@@ -62,14 +54,6 @@ BASELINE_PLATFORMS = (
         container_command="/usr/lib/systemd/systemd",
         containerfile=Path("Containerfile.debian13"),
     ),
-    Platform(
-        name="rockylinux9",
-        base_image="docker.io/rockylinux/rockylinux:9",
-        image="localhost/homelab-playbook-system-maintenance-baseline-rockylinux9:local",
-        container="homelab-playbook-system-maintenance-baseline-rockylinux9",
-        container_command="/usr/lib/systemd/systemd",
-        containerfile=Path("Containerfile.rockylinux9"),
-    ),
 )
 
 REVERSE_PROXY_PLATFORMS = (
@@ -80,14 +64,6 @@ REVERSE_PROXY_PLATFORMS = (
         container="homelab-playbook-reverse-proxy-debian13",
         container_command="/usr/lib/systemd/systemd",
         containerfile=Path("Containerfile.debian13"),
-    ),
-    Platform(
-        name="rockylinux9",
-        base_image="docker.io/rockylinux/rockylinux:9",
-        image="localhost/homelab-playbook-reverse-proxy-rockylinux9:local",
-        container="homelab-playbook-reverse-proxy-rockylinux9",
-        container_command="/usr/lib/systemd/systemd",
-        containerfile=Path("Containerfile.rockylinux9"),
     ),
 )
 

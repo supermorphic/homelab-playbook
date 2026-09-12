@@ -27,25 +27,6 @@ platforms:
       io.supermorphic.homelab-playbook.repository: homelab-playbook
       io.supermorphic.homelab-playbook.scenario: semaphore/default
       io.supermorphic.homelab-playbook.platform: debian13
-  - name: rockylinux9
-    hostname: semaphore-rockylinux9
-    groups:
-      - semaphore
-    image: localhost/homelab-playbook-semaphore-rockylinux9:local
-    container_name: homelab-playbook-semaphore-rockylinux9
-    container_command: /usr/lib/systemd/systemd
-    container_cap_add:
-      - SYS_PTRACE
-    container_privileged: false
-    container_systemd: always
-    restart_policy: always
-    pull: never
-    user: ansible
-    labels:
-      io.supermorphic.homelab-playbook.repository: homelab-playbook
-      io.supermorphic.homelab-playbook.scenario: semaphore/default
-      io.supermorphic.homelab-playbook.platform: rockylinux9
-
 provisioner:
   name: ansible
   log: true

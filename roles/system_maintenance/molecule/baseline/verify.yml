@@ -14,29 +14,17 @@
            molecule_ephemeral_directory ~ '/controller-key/id_ed25519.pub'
          ) | trim }}
     system_maintenance_molecule_baseline_minimum_packages:
-      Debian:
-        - apparmor
-        - apparmor-profiles
-        - apparmor-utils
-        - auditd
-        - ca-certificates
-        - firewalld
-        - openssh-server
-        - python3
-        - sudo
-        - systemd-timesyncd
-        - unattended-upgrades
-      RedHat:
-        - audit
-        - ca-certificates
-        - chrony
-        - dnf-automatic
-        - firewalld
-        - openssh-server
-        - policycoreutils
-        - python3
-        - selinux-policy-targeted
-        - sudo
+      - apparmor
+      - apparmor-profiles
+      - apparmor-utils
+      - auditd
+      - ca-certificates
+      - firewalld
+      - openssh-server
+      - python3
+      - sudo
+      - systemd-timesyncd
+      - unattended-upgrades
     system_maintenance_molecule_baseline_recurring_full_update_artifacts:
       - /etc/cron.d/homelab-full-update
       - /etc/systemd/system/homelab-full-update.service
@@ -70,7 +58,7 @@
             system_maintenance_molecule_baseline_current_hostname.stdout | trim ==
             'molecule-' ~ inventory_hostname
           - >-
-            system_maintenance_molecule_baseline_timezone.stdout | trim == 'UTC'
+            system_maintenance_molecule_baseline_timezone.stdout | trim == 'Etc/UTC'
 
     - name: Gather independently observable package state
       ansible.builtin.package_facts:
@@ -254,7 +242,7 @@
                  system_maintenance_molecule_baseline_direct_firewall.results,
                  system_maintenance_molecule_baseline_firewall_bindings.stdout,
                  system_maintenance_molecule_baseline_firewall_policies.stdout,
-                 ansible_facts['os_family'], reverse_proxy_client_sources) }}
+                 reverse_proxy_client_sources) }}
       ansible.builtin.assert:
         that:
           - system_maintenance_molecule_baseline_firewall_problems | length == 0
@@ -265,26 +253,13 @@
       ansible.builtin.slurp:
         src: /etc/apparmor/parser.conf
       register: system_maintenance_molecule_baseline_apparmor_configuration
-      when: ansible_facts['os_family'] == 'Debian'
 
-    - name: Read Rocky SELinux configuration evidence
-      ansible.builtin.slurp:
-        src: /etc/selinux/config
-      register: system_maintenance_molecule_baseline_selinux_configuration
-      when: ansible_facts['os_family'] == 'RedHat'
-
-    - name: Verify platform-native MAC and time provider packages
+    - name: Verify Debian MAC and time provider packages
       ansible.builtin.assert:
         that:
-          - >-
-            ('apparmor' in ansible_facts.packages and
-             'systemd-timesyncd' in ansible_facts.packages and
-             system_maintenance_molecule_baseline_apparmor_configuration.content | b64decode | length > 0)
-            if ansible_facts['os_family'] == 'Debian'
-            else
-            ('selinux-policy-targeted' in ansible_facts.packages and
-             'chrony' in ansible_facts.packages and
-             system_maintenance_molecule_baseline_selinux_configuration.content | b64decode is search('SELINUX=enforcing'))
+          - "'apparmor' in ansible_facts.packages"
+          - "'systemd-timesyncd' in ansible_facts.packages"
+          - system_maintenance_molecule_baseline_apparmor_configuration.content | b64decode | length > 0
 
     - name: Read effective journald configuration
       ansible.builtin.command:
@@ -304,30 +279,20 @@
           - "'SystemMaxUse=512M' in system_maintenance_molecule_baseline_journald_configuration.stdout"
           - "'SystemKeepFree=1G' in system_maintenance_molecule_baseline_journald_configuration.stdout"
           - system_maintenance_molecule_baseline_auditd_configuration.content | b64decode | length > 0
-          - "'auditd' in ansible_facts.packages or 'audit' in ansible_facts.packages"
+          - "'auditd' in ansible_facts.packages"
 
     - name: Read Debian unattended-upgrades policy
       ansible.builtin.command:
         argv: [/usr/bin/apt-config, dump]
       register: system_maintenance_molecule_baseline_debian_updater
       changed_when: false
-      when: ansible_facts['os_family'] == 'Debian'
-
-    - name: Read Rocky dnf-automatic policy
-      ansible.builtin.slurp:
-        src: /etc/dnf/automatic.conf
-      register: system_maintenance_molecule_baseline_rocky_updater
-      when: ansible_facts['os_family'] == 'RedHat'
 
     - name: Read native security updater timer configuration
       ansible.builtin.command:
         argv:
           - /usr/bin/systemd-analyze
           - cat-config
-          - >-
-            {{ 'systemd/system/apt-daily-upgrade.timer'
-               if ansible_facts['os_family'] == 'Debian'
-               else 'systemd/system/dnf-automatic.timer' }}
+          - systemd/system/apt-daily-upgrade.timer
       register: system_maintenance_molecule_baseline_updater_timer
       changed_when: false
 
@@ -336,27 +301,17 @@
         argv:
           - /usr/bin/systemctl
           - is-enabled
-          - >-
-            {{ 'apt-daily-upgrade.timer'
-               if ansible_facts['os_family'] == 'Debian'
-               else 'dnf-automatic.timer' }}
+          - apt-daily-upgrade.timer
       register: system_maintenance_molecule_baseline_updater_timer_enabled
       changed_when: false
 
     - name: Verify native security updater policy and timer
       vars:
         system_maintenance_molecule_baseline_updater_problems: >-
-          {{ (system_maintenance_molecule_baseline_debian_updater.stdout
-              | system_maintenance_molecule_baseline_debian_updater_errors(
-                  system_maintenance_molecule_baseline_updater_timer.stdout,
-                  system_maintenance_molecule_baseline_updater_timer_enabled.stdout))
-             if ansible_facts['os_family'] == 'Debian'
-             else
-             (system_maintenance_molecule_baseline_rocky_updater.content
-              | b64decode
-              | system_maintenance_molecule_baseline_rocky_updater_errors(
-                  system_maintenance_molecule_baseline_updater_timer.stdout,
-                  system_maintenance_molecule_baseline_updater_timer_enabled.stdout)) }}
+          {{ system_maintenance_molecule_baseline_debian_updater.stdout
+             | system_maintenance_molecule_baseline_debian_updater_errors(
+                 system_maintenance_molecule_baseline_updater_timer.stdout,
+                 system_maintenance_molecule_baseline_updater_timer_enabled.stdout) }}
       ansible.builtin.assert:
         that:
           - system_maintenance_molecule_baseline_updater_problems | length == 0
@@ -364,9 +319,8 @@
     - name: Verify baseline packages and the Caddy package source
       ansible.builtin.assert:
         that:
-          - system_maintenance_molecule_baseline_minimum_packages[ansible_facts['os_family']] | difference(ansible_facts.packages.keys()) | length == 0
+          - system_maintenance_molecule_baseline_minimum_packages | difference(ansible_facts.packages.keys()) | length == 0
           - "'caddy' in ansible_facts.packages"
-          - "('epel-release' in ansible_facts.packages) == (ansible_facts['os_family'] == 'RedHat')"
           - "'fail2ban' not in ansible_facts.packages"
 
     - name: Inspect recurring full update timer and cron artifacts
@@ -503,7 +457,7 @@
   ansible.builtin.import_playbook: ../../../../playbooks/os/verify.yml
   vars:
     host_identity_hostname: "molecule-{{ inventory_hostname }}"
-    host_identity_timezone: UTC
+    host_identity_timezone: Etc/UTC
     os_baseline_verify_runtime_controls: false
     security_baseline_authorized_keys:
       - >-

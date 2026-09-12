@@ -30,8 +30,8 @@ specifications record design decisions and integration contracts.
 - [001 — Agentic development modernization](specs/001-agentic-development-modernization.md)
   — Defines the repository's agentic workflow, safety controls, and validation
   architecture.
-- [002 — Multi-OS Molecule validation](specs/002-multi-os-molecule-validation.md)
-  — Defines deterministic Debian and Rocky Linux container validation.
+- [002 — Debian Molecule validation](specs/002-multi-os-molecule-validation.md)
+  — Defines deterministic Debian 13 container validation.
 - [003 — OS maintenance and security baseline](specs/003-os-maintenance-security-baseline.md)
   — Defines supported host maintenance, security policy, verification, and
   reboot behavior.

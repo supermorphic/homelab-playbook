@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import copy
 import importlib.util
-import os
 import subprocess
 import sys
 import tempfile
-import types
 import unittest
-from unittest import mock
 from pathlib import Path
 
 import yaml
@@ -268,366 +265,6 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
                         root,
                     )
 
-    def rocky_fixture(self, root: Path) -> dict[str, object]:
-        repo_dir = root / "etc/dnf/authoritative.repos.d"
-        repo_dir.mkdir(parents=True)
-        repo_file = repo_dir / "rocky.repo"
-        repo_file.touch()
-        key = root / "etc/pki/rpm-gpg/RPM-GPG-KEY-Rocky-9"
-        key.parent.mkdir(parents=True)
-        key.touch()
-        return {
-            "gpgcheck": True,
-            "localpkg_gpgcheck": True,
-            "reposdir": ["/etc/dnf/authoritative.repos.d"],
-            "tsflags": ["nodocs"],
-            "repos": [
-                {
-                    "id": "baseos",
-                    "enabled": True,
-                    "gpgcheck": True,
-                    "gpgkey": [
-                        "file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Rocky-9"
-                    ],
-                    "repofile": "/etc/dnf/authoritative.repos.d/rocky.repo",
-                }
-            ],
-        }
-
-    def add_epel_fixture(
-        self,
-        root: Path,
-        effective: dict[str, object],
-    ) -> Path:
-        marker = root / "var/lib/homelab-reverse-proxy/managed"
-        marker.parent.mkdir(parents=True)
-        marker.write_text("managed by homelab-playbook\n", encoding="utf-8")
-        marker.chmod(0o600)
-        key = root / "etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-9"
-        key.touch()
-        repo_dir = root / "etc/dnf/authoritative.repos.d"
-        repositories = effective["repos"]
-        assert isinstance(repositories, list)
-        for repository_id, filename in (
-            ("epel", "epel.repo"),
-            ("epel-cisco-openh264", "epel-cisco-openh264.repo"),
-        ):
-            repo_file = repo_dir / filename
-            repo_file.touch()
-            repositories.append(
-                {
-                    "id": repository_id,
-                    "enabled": True,
-                    "gpgcheck": True,
-                    "gpgkey": ["file:///etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-9"],
-                    "repofile": f"/etc/dnf/authoritative.repos.d/{filename}",
-                }
-            )
-        return marker
-
-    def marker_identity(self, uid: int = 0, gid: int = 0):
-        real_fstat = os.fstat
-
-        def identified(descriptor: int):
-            observed = real_fstat(descriptor)
-            fields = list(observed)
-            fields[4] = uid
-            fields[5] = gid
-            return os.stat_result(fields)
-
-        return mock.patch.object(os, "fstat", side_effect=identified)
-
-    def test_rocky_accepts_effective_distribution_repository_policy(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            effective = self.rocky_fixture(root)
-            self.repository_trust.validate_rocky_configuration(effective, root)
-
-    def test_rocky_accepts_exact_role_owned_epel_repositories(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            effective = self.rocky_fixture(root)
-            self.add_epel_fixture(root, effective)
-            with self.marker_identity():
-                self.repository_trust.validate_rocky_configuration(effective, root)
-
-    def test_rocky_rejects_epel_without_exact_caddy_ownership_marker(self) -> None:
-        for mutation in (
-            "absent",
-            "wrong mode",
-            "wrong uid",
-            "wrong gid",
-            "wrong content",
-            "symlink",
-            "hardlink",
-            "fifo",
-        ):
-            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                effective = self.rocky_fixture(root)
-                marker = self.add_epel_fixture(root, effective)
-                uid = gid = 0
-                if mutation == "absent":
-                    marker.unlink()
-                elif mutation == "wrong mode":
-                    marker.chmod(0o640)
-                elif mutation == "wrong uid":
-                    uid = 1000
-                elif mutation == "wrong gid":
-                    gid = 1000
-                elif mutation == "wrong content":
-                    marker.write_text("managed by homelab-playbook!", encoding="utf-8")
-                elif mutation == "symlink":
-                    target = marker.with_name("managed-target")
-                    marker.rename(target)
-                    marker.symlink_to(target)
-                elif mutation == "hardlink":
-                    os.link(marker, marker.with_name("managed-link"))
-                else:
-                    marker.unlink()
-                    os.mkfifo(marker, 0o600)
-                with self.marker_identity(uid, gid), self.assertRaises(ValueError):
-                    self.repository_trust.validate_rocky_configuration(effective, root)
-
-    def test_rocky_rejects_epel_id_key_and_signature_drift(self) -> None:
-        mutations = {
-            "EPEL signed by Rocky": lambda value, _root: value["repos"][1].update(
-                gpgkey=["file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Rocky-9"]
-            ),
-            "Rocky signed by EPEL": lambda value, _root: value["repos"][0].update(
-                gpgkey=["file:///etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-9"]
-            ),
-            "unknown EPEL ID": lambda value, _root: value["repos"][1].update(
-                id="epel-testing"
-            ),
-            "case-changed EPEL ID": lambda value, _root: value["repos"][1].update(
-                id="EPEL"
-            ),
-            "missing EPEL key": lambda _value, root: (
-                root / "etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-9"
-            ).unlink(),
-            "EPEL signature bypass": lambda value, _root: value["repos"][1].update(
-                gpgcheck=False
-            ),
-        }
-        for label, mutate in mutations.items():
-            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                effective = self.rocky_fixture(root)
-                self.add_epel_fixture(root, effective)
-                mutate(effective, root)
-                with self.marker_identity(), self.assertRaises(ValueError):
-                    self.repository_trust.validate_rocky_configuration(effective, root)
-
-    def test_rocky_rejects_signature_bypasses_and_non_authoritative_files(
-        self,
-    ) -> None:
-        mutations = {
-            "global gpgcheck off": lambda value: value.update(gpgcheck=False),
-            "local package gpgcheck off": lambda value: value.update(
-                localpkg_gpgcheck=False
-            ),
-            "inherited gpgcheck off": lambda value: value["repos"][0].update(
-                gpgcheck=False
-            ),
-            "nocrypto": lambda value: value.update(tsflags=["nocrypto"]),
-            "outside reposdir": lambda value: value["repos"][0].update(
-                repofile="/etc/yum.repos.d/rocky.repo"
-            ),
-            "non-distribution repository": lambda value: value["repos"][0].update(
-                id="third-party"
-            ),
-            "non-distribution key": lambda value: value["repos"][0].update(
-                gpgkey=["file:///etc/pki/rpm-gpg/THIRD-PARTY"]
-            ),
-        }
-        for label, mutate in mutations.items():
-            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                effective = self.rocky_fixture(root)
-                mutate(effective)
-                with self.assertRaises(ValueError):
-                    self.repository_trust.validate_rocky_configuration(
-                        effective,
-                        root,
-                    )
-
-    def test_rocky_collects_plugin_mutation_after_repository_loading(self) -> None:
-        events: list[str] = []
-
-        class FakeSubstitutions(dict[str, str]):
-            def update_from_etc(self, _installroot: str) -> None:
-                self["releasever"] = "9"
-
-        class FakeConfiguration:
-            def __init__(self) -> None:
-                self.reposdir = ["/etc/dnf/authoritative.repos.d"]
-                self.tsflags = ["nodocs"]
-                self.gpgcheck = True
-                self.localpkg_gpgcheck = True
-                self.substitutions = FakeSubstitutions()
-
-            def read(self) -> None:
-                events.append("read-config")
-
-            def prepend_installroot(self, _option: str) -> None:
-                return None
-
-        class FakeRepository:
-            id = "baseos"
-            enabled = True
-            gpgcheck = True
-            gpgkey = ["file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Rocky-9"]
-            repofile = "/etc/dnf/authoritative.repos.d/rocky.repo"
-
-        class FakeRepositories:
-            def __init__(self) -> None:
-                self.repository = FakeRepository()
-
-            def all(self) -> list[FakeRepository]:
-                return [self.repository]
-
-        class FakeBase:
-            def __init__(self) -> None:
-                self.conf = FakeConfiguration()
-                self.repos = FakeRepositories()
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_args: object) -> None:
-                return None
-
-            def setup_loggers(self) -> None:
-                events.append("setup-loggers")
-
-            def init_plugins(
-                self,
-                disabled: set[str],
-                enabled: set[str],
-            ) -> None:
-                self.assert_empty_plugin_overrides(disabled, enabled)
-                events.append("init-plugins")
-
-            @staticmethod
-            def assert_empty_plugin_overrides(
-                disabled: set[str],
-                enabled: set[str],
-            ) -> None:
-                if disabled or enabled:
-                    raise AssertionError("unexpected plugin override")
-
-            def pre_configure_plugins(self) -> None:
-                events.append("pre-configure-plugins")
-
-            def read_all_repos(self) -> None:
-                events.append("read-repositories")
-
-            def configure_plugins(self) -> None:
-                events.append("configure-plugins")
-                self.repos.repository.gpgcheck = False
-
-        fake_dnf = types.SimpleNamespace(Base=FakeBase)
-        with mock.patch.dict(sys.modules, {"dnf": fake_dnf}):
-            effective = self.repository_trust._collect_rocky_configuration()
-
-        self.assertEqual(
-            [
-                "read-config",
-                "setup-loggers",
-                "init-plugins",
-                "pre-configure-plugins",
-                "read-repositories",
-                "configure-plugins",
-            ],
-            events,
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            fixture = self.rocky_fixture(root)
-            effective["reposdir"] = fixture["reposdir"]
-            with self.assertRaises(ValueError):
-                self.repository_trust.validate_rocky_configuration(effective, root)
-
-    def test_rocky_collector_preserves_disabled_global_and_inherited_repo_trust(
-        self,
-    ) -> None:
-        class FakeSubstitutions(dict[str, str]):
-            def update_from_etc(self, _installroot: str) -> None:
-                self["releasever"] = "9"
-
-        class FakeConfiguration:
-            def __init__(self) -> None:
-                self.reposdir = ["/etc/dnf/authoritative.repos.d"]
-                self.tsflags = ["nodocs"]
-                self.gpgcheck = False
-                self.localpkg_gpgcheck = False
-                self.substitutions = FakeSubstitutions()
-
-            def read(self) -> None:
-                return None
-
-            def prepend_installroot(self, _option: str) -> None:
-                return None
-
-        class FakeRepository:
-            id = "baseos"
-            enabled = True
-            gpgkey = ["file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Rocky-9"]
-            repofile = "/etc/dnf/authoritative.repos.d/rocky.repo"
-
-            def __init__(self, gpgcheck: bool) -> None:
-                self.gpgcheck = gpgcheck
-
-        class FakeRepositories:
-            def __init__(self) -> None:
-                self.repository: FakeRepository | None = None
-
-            def all(self) -> list[FakeRepository]:
-                if self.repository is None:
-                    raise AssertionError("repositories were not loaded")
-                return [self.repository]
-
-        class FakeBase:
-            def __init__(self) -> None:
-                self.conf = FakeConfiguration()
-                self.repos = FakeRepositories()
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_args: object) -> None:
-                return None
-
-            def setup_loggers(self) -> None:
-                return None
-
-            def init_plugins(
-                self,
-                _disabled: set[str],
-                _enabled: set[str],
-            ) -> None:
-                return None
-
-            def pre_configure_plugins(self) -> None:
-                return None
-
-            def read_all_repos(self) -> None:
-                self.repos.repository = FakeRepository(self.conf.gpgcheck)
-
-            def configure_plugins(self) -> None:
-                return None
-
-        fake_dnf = types.SimpleNamespace(Base=FakeBase)
-        with mock.patch.dict(sys.modules, {"dnf": fake_dnf}):
-            effective = self.repository_trust._collect_rocky_configuration()
-
-        self.assertIs(effective["gpgcheck"], False)
-        self.assertIs(effective["localpkg_gpgcheck"], False)
-        self.assertIs(effective["repos"][0]["gpgcheck"], False)
-        with self.assertRaises(ValueError):
-            self.repository_trust.validate_rocky_configuration(effective)
-
 
 class FirewallPolicyTests(unittest.TestCase):
     @classmethod
@@ -673,22 +310,13 @@ class FirewallPolicyTests(unittest.TestCase):
         ]
 
     @staticmethod
-    def expected_policy(os_family: str = "Debian") -> str:
+    def expected_policy() -> str:
         rules = [
             "neighbour-advertisement",
             "neighbour-solicitation",
             "redirect",
             "router-advertisement",
         ]
-        if os_family == "RedHat":
-            rules.extend(
-                (
-                    "mld-listener-done",
-                    "mld-listener-query",
-                    "mld-listener-report",
-                    "mld2-listener-report",
-                )
-            )
         return "\n".join(
             [
                 "allow-host-ipv6",
@@ -848,17 +476,6 @@ class FirewallPolicyTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(
-            [],
-            self.controls.security_baseline_firewall_global_surface_errors(
-                "homelab\n  interfaces: eth0\n  sources:\n",
-                self.global_direct_results(),
-                self.expected_policy("RedHat"),
-                "eth0",
-                False,
-                "RedHat",
-            ),
-        )
 
     def test_global_firewall_preflight_precedes_zone_and_service_mutation(
         self,
@@ -1386,7 +1003,7 @@ SystemMaxUse=128M
             if task["name"] == "Install audit service with vendor rules"
         )
         self.assertEqual(
-            {"Debian": "auditd", "RedHat": "audit"},
+            {"Debian": "auditd"},
             audit["vars"]["security_baseline_audit_packages"],
         )
         validate, install = audit["block"]
@@ -1398,19 +1015,6 @@ SystemMaxUse=128M
             "{{ security_baseline_audit_packages[ansible_facts['os_family']] }}",
             install["ansible.builtin.package"]["name"],
         )
-
-    def test_rocky_selinux_install_owns_targeted_policy_configuration(self) -> None:
-        tasks = load_tasks("roles/security_baseline/tasks/mac.yml")
-        install = next(
-            task
-            for task in tasks
-            if task["name"] == "Install Rocky SELinux packages"
-        )
-        self.assertEqual(
-            ["policycoreutils", "selinux-policy-targeted"],
-            install["ansible.builtin.package"]["name"],
-        )
-        self.assertEqual("ansible_facts['os_family'] == 'RedHat'", install["when"])
 
 
 if __name__ == "__main__":

@@ -67,29 +67,6 @@
     policy_rc_d: 101
   when: ansible_facts['distribution'] == 'Debian'
 
-- name: Install signed EPEL repository on Rocky Linux
-  ansible.builtin.dnf:
-    name: epel-release
-    state: present
-  when: ansible_facts['distribution'] == 'Rocky'
-
-- name: Install Rocky reverse proxy runtime dependencies
-  ansible.builtin.dnf:
-    name:
-      - ca-certificates
-      - iproute
-      - openssl
-      - shadow-utils
-      - util-linux
-    state: present
-  when: ansible_facts['distribution'] == 'Rocky'
-
-- name: Install Rocky Linux distribution Caddy
-  ansible.builtin.dnf:
-    name: caddy
-    state: present
-  when: ansible_facts['distribution'] == 'Rocky'
-
 - name: Read package-created Caddy account
   ansible.builtin.command:
     argv: [/usr/bin/getent, passwd, caddy]
@@ -146,9 +123,7 @@
       - "'caddy' in reverse_proxy_identity_groups.stdout.split()"
       - >-
         reverse_proxy_identity_groups.stdout.split()
-        | difference(['caddy', 'www-data']
-                     if ansible_facts['distribution'] == 'Debian'
-                     else ['caddy'])
+        | difference(['caddy', 'www-data'])
         | length == 0
     fail_msg: >-
       The package-created Caddy account is incompatible with the dedicated

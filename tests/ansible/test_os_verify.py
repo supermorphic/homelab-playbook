@@ -138,7 +138,6 @@ class StandaloneOsVerifyTests(unittest.TestCase):
 
         prohibited_modules = {
             "ansible.builtin.apt",
-            "ansible.builtin.dnf",
             "ansible.builtin.package",
             "ansible.builtin.reboot",
             "ansible.builtin.service",

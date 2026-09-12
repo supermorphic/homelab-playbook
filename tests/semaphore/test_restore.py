@@ -79,6 +79,98 @@ class FixtureContractTests(unittest.TestCase):
         self.assertEqual("bash", payloads["template"]["app"])
         self.assertFalse(payloads["template"]["allow_parallel_tasks"])
 
+    def test_source_task_failure_reports_recent_output_without_fixture_secrets(self) -> None:
+        fixture_module = load_fixture()
+        run = fixture_module.Fixture(
+            "semaphore-20260910T031500Z-Ab12", Path("unused-destination")
+        )
+        run._prepare_files()
+        self.addCleanup(run.temp.cleanup)
+        generated_private_value = run.settings["SEMAPHORE_ADMIN_PASSWORD"]
+        run._api = mock.Mock(
+            side_effect=[
+                {"id": 17, "status": "error"},
+                [{"task_id": 17, "output": "old output must be excluded"}]
+                + [
+                    {"task_id": 17, "output": f"task context {index}"}
+                    for index in range(19)
+                ]
+                + [
+                    {
+                        "task_id": 17,
+                        "output": (
+                            "fatal: could not resolve fixture-target with "
+                            f"{generated_private_value}"
+                        ),
+                    },
+                ],
+            ]
+        )
+
+        with self.assertRaises(fixture_module.FixtureFailure) as raised:
+            run._wait_task(3, 17)
+
+        message = str(raised.exception)
+        self.assertIn("source task failed: error", message)
+        self.assertIn("fatal: could not resolve fixture-target", message)
+        self.assertIn("<redacted>", message)
+        self.assertNotIn(generated_private_value, message)
+        self.assertNotIn("old output must be excluded", message)
+        run._api.assert_has_calls(
+            [
+                mock.call("GET", "/api/project/3/tasks/17"),
+                mock.call("GET", "/api/project/3/tasks/17/output"),
+            ]
+        )
+
+    def test_source_task_failure_bounds_reported_output(self) -> None:
+        fixture_module = load_fixture()
+        run = fixture_module.Fixture(
+            "semaphore-20260910T031500Z-Ab12", Path("unused-destination")
+        )
+        run._api = mock.Mock(
+            side_effect=[
+                {"id": 17, "status": "failed"},
+                [
+                    {
+                        "task_id": 17,
+                        "output": "excluded-prefix-" + ("x" * 5000) + "-terminal",
+                    }
+                ],
+            ]
+        )
+
+        with self.assertRaises(fixture_module.FixtureFailure) as raised:
+            run._wait_task(3, 17)
+
+        message = str(raised.exception)
+        self.assertNotIn("excluded-prefix", message)
+        self.assertIn("-terminal", message)
+        self.assertLess(len(message), 4200)
+
+    def test_source_task_failure_survives_unavailable_or_malformed_output(self) -> None:
+        fixture_module = load_fixture()
+        unavailable_results = (
+            fixture_module.FixtureFailure("output API request failed"),
+            ValueError("output API returned malformed JSON"),
+            {"output": "unexpected object"},
+        )
+        for unavailable in unavailable_results:
+            with self.subTest(unavailable=type(unavailable).__name__):
+                run = fixture_module.Fixture(
+                    "semaphore-20260910T031500Z-Ab12",
+                    Path("unused-destination"),
+                )
+                run._api = mock.Mock(
+                    side_effect=[{"id": 17, "status": "stopped"}, unavailable]
+                )
+
+                with self.assertRaises(fixture_module.FixtureFailure) as raised:
+                    run._wait_task(3, 17)
+
+                self.assertIn("source task failed: stopped", str(raised.exception))
+                self.assertIn("task output unavailable", str(raised.exception))
+
     def test_restore_download_can_join_only_the_fixture_smb_network(self) -> None:
         restore = load_restore()
         fields = restore.Options._fields

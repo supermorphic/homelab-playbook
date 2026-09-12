@@ -2,10 +2,8 @@
 
 Issue: [#2 Bootstrap NUC #4 Debian host with Ansible](https://github.com/supermorphic/homelab-playbook/issues/2)
 
-## Status and supersession
-
-The managed-host design remains current. [Specification 005](005-sops-age-secrets.md)
-supersedes its Ansible Vault storage and interactive password workflow. The
+[Specification 005](005-sops-age-secrets.md) supersedes the Ansible Vault
+storage and interactive password workflow described below. The
 implementation sequence records the original rollout and is historical.
 
 ## Purpose
@@ -239,8 +237,7 @@ effective timezone through the already pinned `community.general` collection.
 It uses the supported operating system's existing timezone database and adds no
 new Galaxy dependency or convenience package.
 
-The role supports the complete-baseline Debian 13 and Rocky Linux 9 contract,
-although this initiative activates only Debian 13. It remains independent of
+The role supports the complete-baseline Debian 13 contract. It remains independent of
 NUC-specific hardware and future application roles.
 
 `os provision` runs host identity after bootstrap has established Python and
@@ -317,8 +314,7 @@ Offline evidence includes:
   structure and public recipient metadata;
 - all OS playbooks target `os_managed` and preserve their current lifecycle and
   safety controls;
-- the complete-baseline Molecule scenario uses `os_managed` on Debian 13 and
-  Rocky Linux 9;
+- the complete-baseline Molecule scenario uses `os_managed` on Debian 13;
 - host-identity configuration converges idempotently and the independent
   verifier detects hostname or timezone drift;
 - the complete provisioning role order applies identity before baseline
@@ -328,7 +324,7 @@ Offline evidence includes:
   onboarding commands while the source-adjacent OS README remains a brief
   subsystem description.
 
-Molecule may use synthetic hostnames, the `UTC` timezone, and generated
+Molecule may use synthetic hostnames, the `Etc/UTC` timezone, and generated
 disposable SSH keys. It must not read the production protected file or contact
 `nuc4`. Container checks prove file, command, task-order, and idempotence
 contracts only. They do not prove a physical hostname transition across boot,
@@ -388,8 +384,8 @@ Issue #2 is complete when:
    complete desired authorized-key and private management-source sets, remains
    opaque to agents and CI, and passes non-decrypting SOPS metadata validation;
 5. no production Pi-hole variable or Vault file remains in active inventory;
-6. `host_identity` configures static hostname and timezone idempotently on both
-   complete-baseline test platforms without a new dependency or target package;
+6. `host_identity` configures static hostname and timezone idempotently on
+   the Debian 13 complete-baseline test platform without a new dependency or target package;
 7. the existing verifier independently detects hostname and timezone drift
    after provisioning and maintenance, and through the standalone `os verify`
    playbook;

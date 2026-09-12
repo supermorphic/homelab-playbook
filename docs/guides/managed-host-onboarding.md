@@ -1,6 +1,6 @@
 # Managed host onboarding
 
-Use this guide to add an installed Debian 13 or Rocky Linux 9 host to the
+Use this guide to add an installed Debian 13 host to the
 repository's `os_managed` inventory and operating-system baseline. The host
 must already have a trusted initial administration path. Ansible does not
 install the operating system or create the authority that lets it become root.
@@ -283,15 +283,13 @@ reported cause and rerun `os provision`; do not use `os maintain` to finish an
 incomplete onboarding.
 
 Native security updates and explicit full maintenance are separate. Debian
-uses `unattended-upgrades` for Debian Security origins. Rocky Linux uses
-`dnf-automatic` with `upgrade_type = security`. Native security-update reboots
+uses `unattended-upgrades` for Debian Security origins. Native security-update reboots
 are independent of the explicit playbook reboot path. The repository defines
 no host-local recurring full-update timer or cron job.
 
 Unless inventory changes the defaults, native security updates run daily at
 `04:00` with no random delay. Debian reboots at `04:30` when
 `/var/run/reboot-required` exists, including when a user remains logged in.
-Rocky Linux uses the native `when-needed` reboot behavior.
 
 A separate automation controller can schedule later full maintenance. The
 controller host remains subject to its own native security-update policy, so it
@@ -328,7 +326,7 @@ than an exhaustive drift inventory. Correct the reported cause and use an
 authorized provisioning run when baseline state needs reconciliation.
 
 Failure evidence remains in systemd failed-unit state, persistent journald,
-auditd, and APT or DNF history. A future automation-controller task can add its
+auditd, and APT history. A future automation-controller task can add its
 own result, but a host that does not return cannot report its own failure. This
 repository does not add a host-local health daemon, aggregate result file,
 dead-man monitor, remote log forwarding, or notification transport.

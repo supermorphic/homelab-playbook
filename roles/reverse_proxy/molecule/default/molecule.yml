@@ -28,25 +28,6 @@ platforms:
       io.supermorphic.homelab-playbook.repository: homelab-playbook
       io.supermorphic.homelab-playbook.scenario: reverse_proxy/default
       io.supermorphic.homelab-playbook.platform: debian13
-  - name: rockylinux9
-    hostname: reverse-proxy-rockylinux9
-    groups:
-      - reverse_proxy
-    image: localhost/homelab-playbook-reverse-proxy-rockylinux9:local
-    container_name: homelab-playbook-reverse-proxy-rockylinux9
-    container_command: /usr/lib/systemd/systemd
-    container_cap_add:
-      - SYS_PTRACE
-      - SYS_ADMIN
-    container_privileged: false
-    container_systemd: always
-    restart_policy: always
-    pull: never
-    user: ansible
-    labels:
-      io.supermorphic.homelab-playbook.repository: homelab-playbook
-      io.supermorphic.homelab-playbook.scenario: reverse_proxy/default
-      io.supermorphic.homelab-playbook.platform: rockylinux9
 
 provisioner:
   name: ansible

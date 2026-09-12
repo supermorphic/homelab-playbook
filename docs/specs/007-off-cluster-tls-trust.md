@@ -2,7 +2,6 @@
 
 Issue: [#5](https://github.com/supermorphic/homelab-playbook/issues/5)
 
-Status: hybrid topology and architecture approved with review refinements below.
 The guides describe operator procedures. Host automation is implemented by the
 `tls_automation` role and `tls` playbooks. Issue #25 supplied the host Caddy
 deployment. Issue #5 owns its TLS adapter and integration; the private device
@@ -72,7 +71,8 @@ The implementation uses pinned lego 5.4.1, a dedicated non-login
 host service account, and a systemd timer. Ansible manages installation,
 configuration, permissions, and units. Pin an exact release and verified artifact
 checksum for each supported architecture; never fetch a floating latest binary
-at runtime. Use the repository's Debian 13 and Rocky Linux 9 baseline.
+at runtime. Use the repository's Debian 13 baseline from
+[Specification 003](003-os-maintenance-security-baseline.md).
 
 Alternatives considered:
 
@@ -80,7 +80,7 @@ Alternatives considered:
   cross-account file publication and host reload coordination for a short-lived
   client with no inbound listener.
 - A host Certbot installation offers familiar renewal hooks but adds a Python
-  client/plugin dependency set across both supported distributions.
+  client/plugin dependency set on Debian 13.
 - A host lego process keeps the client and Cloudflare provider in one pinned
   artifact and integrates directly with systemd. Select this for the initial
   implementation; do not make Caddy an ACME credential owner.
@@ -350,7 +350,7 @@ metadata, and arguments. Verify that the issuer cannot write coordinator policy
 or published generations and that no such input changes the fixed privileged
 operation. Exercise pending publication retry after issuance failure.
 
-For host Caddy, bounded registered disposable Debian and Rocky tests publish a
+For host Caddy, bounded registered disposable Debian tests publish a
 replacement generation, force one reload, and check the new served fingerprint.
 Roll back and check the previous fingerprint. Include first publication,
 failed first publication with unrelated routes, interrupted recovery, concurrent
@@ -360,7 +360,7 @@ Bounded local TLS servers prove served-certificate checks; no Cloudflare token,
 production ACME request, or inventory host is available to CI.
 
 Run the required depth selected by `mise run ci:changed`; role and unit changes
-must also prove Debian/Rocky behavior through the registered disposable tests.
+must also prove Debian behavior through the registered disposable tests.
 Synthetic tests do not prove live issuance, UniFi automatic renewal, modem UI
 compatibility, or physical host recovery.
 

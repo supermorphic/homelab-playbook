@@ -1,7 +1,7 @@
 # Shared private reverse proxy
 
 These playbooks manage distribution-packaged Caddy as a host systemd service on
-Debian 13 and Rocky Linux 9. They target `reverse_proxy` through the
+Debian 13. They target `reverse_proxy` through the
 canonical `mise run playbook` gateway. Establish the
 [OS baseline](../../docs/guides/managed-host-onboarding.md) and controller
 [SOPS setup](../../docs/guides/sops-secrets.md) before using them.
@@ -103,11 +103,10 @@ backends remain reachable by other local accounts.
 
 ## Update and recovery boundaries
 
-Install Caddy with `state: present` from Debian's distribution repository or
-EPEL on Rocky. Do not pin its version, hold the package, or run `caddy upgrade`.
-Existing OS maintenance upgrades packages. Daily Debian updates follow Debian
-Security policy; Rocky selects updates classified as security by repository
-metadata. Full OS maintenance includes ordinary package updates. These policies
+Install Caddy with `state: present` from Debian's distribution repository. Do
+not pin its version, hold the package, or run `caddy upgrade`. Existing OS
+maintenance upgrades packages. Daily updates follow Debian Security policy.
+Full OS maintenance includes ordinary package updates. These policies
 do not promise automatic installation of every upstream Caddy release.
 
 Binary upgrades may restart Caddy and briefly interrupt every route;

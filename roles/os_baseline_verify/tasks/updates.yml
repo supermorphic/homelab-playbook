@@ -26,34 +26,12 @@
     fail_msg: Debian automatic updates are not restricted to the configured security policy
   when: ansible_facts['os_family'] == 'Debian'
 
-- name: Read Rocky automatic DNF configuration
-  ansible.builtin.slurp:
-    src: /etc/dnf/automatic.conf
-  register: os_baseline_verify_rocky_updater_configuration
-  when: ansible_facts['os_family'] == 'RedHat'
-
-- name: Verify Rocky security-only updater configuration
-  vars:
-    os_baseline_verify_rocky_updater: >-
-      {{ os_baseline_verify_rocky_updater_configuration.content | b64decode | os_baseline_verify_ini_values }}
-  ansible.builtin.assert:
-    that:
-      - os_baseline_verify_rocky_updater.commands.upgrade_type == 'security'
-      - os_baseline_verify_rocky_updater.commands.download_updates == 'yes'
-      - os_baseline_verify_rocky_updater.commands.apply_updates == 'yes'
-      - os_baseline_verify_rocky_updater.commands.reboot == ('when-needed' if system_maintenance_native_reboot_enabled | bool else 'never')
-      - os_baseline_verify_rocky_updater.emitters.emit_via == 'stdio'
-    fail_msg: Rocky automatic updates are not restricted to the configured security policy
-  when: ansible_facts['os_family'] == 'RedHat'
-
 - name: Read native security update timer enablement
   ansible.builtin.command:
     argv:
       - /usr/bin/systemctl
       - is-enabled
-      - >-
-        {{ 'apt-daily-upgrade.timer' if ansible_facts['os_family'] == 'Debian'
-           else 'dnf-automatic.timer' }}
+      - apt-daily-upgrade.timer
   register: os_baseline_verify_updater_timer
   changed_when: false
   when: os_baseline_verify_runtime_controls | bool
@@ -63,10 +41,7 @@
     argv:
       - /usr/bin/systemd-analyze
       - cat-config
-      - >-
-        {{ 'systemd/system/apt-daily-upgrade.timer'
-           if ansible_facts['os_family'] == 'Debian'
-           else 'systemd/system/dnf-automatic.timer' }}
+      - systemd/system/apt-daily-upgrade.timer
   register: os_baseline_verify_updater_timer_configuration
   changed_when: false
 
@@ -102,12 +77,6 @@
     fail_msg: dpkg reports packages requiring repair
   when: ansible_facts['os_family'] == 'Debian'
 
-- name: Check Rocky package manager health
-  ansible.builtin.command:
-    argv: [/usr/bin/dnf, check]
-  changed_when: false
-  when: ansible_facts['os_family'] == 'RedHat'
-
 - name: Read Debian reboot-required marker
   ansible.builtin.stat:
     path: /var/run/reboot-required
@@ -118,19 +87,6 @@
   ansible.builtin.set_fact:
     os_baseline_reboot_required: "{{ os_baseline_verify_debian_reboot_marker.stat.exists }}"  # noqa var-naming[no-role-prefix] - Required public fact.
   when: ansible_facts['os_family'] == 'Debian'
-
-- name: Read Rocky reboot-required state
-  ansible.builtin.command:
-    argv: [/usr/bin/dnf, needs-restarting, -r]
-  register: os_baseline_verify_rocky_reboot_state
-  changed_when: false
-  failed_when: os_baseline_verify_rocky_reboot_state.rc not in [0, 1]
-  when: ansible_facts['os_family'] == 'RedHat'
-
-- name: Record Rocky reboot-required state
-  ansible.builtin.set_fact:
-    os_baseline_reboot_required: "{{ os_baseline_verify_rocky_reboot_state.rc == 1 }}"  # noqa var-naming[no-role-prefix] - Required public fact.
-  when: ansible_facts['os_family'] == 'RedHat'
 
 - name: Report reboot-required state
   ansible.builtin.debug:

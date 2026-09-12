@@ -247,17 +247,6 @@ Unattended-Upgrade::Origins-Pattern "";
 Unattended-Upgrade::Origins-Pattern:: "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
 """
         self.assertEqual("0", self.controls.os_baseline_verify_apt_policy(apt)["scalar"]["APT::Periodic::Update-Package-Lists"])
-        dnf = """\
-[commands]
-upgrade_type = security
-download_updates = yes
-apply_updates = yes
-reboot = when-needed
-upgrade_type = default
-[emitters]
-emit_via = stdio
-"""
-        self.assertEqual("default", self.controls.os_baseline_verify_ini_values(dnf)["commands"]["upgrade_type"])
 
     def test_verifier_owns_management_interface_discovery_script(self) -> None:
         script = REPOSITORY_ROOT / "roles/os_baseline_verify/files/discover_management_interface.py"

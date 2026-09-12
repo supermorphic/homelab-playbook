@@ -313,37 +313,7 @@
         owner: root
         group: root
         mode: '0644'
-      register: reverse_proxy_molecule_debian_ca
-      when: ansible_facts.os_family == 'Debian'
-
-    - name: Refresh the Debian trust store
-      ansible.builtin.command:
-        argv:
-          - update-ca-certificates
-      when:
-        - ansible_facts.os_family == 'Debian'
-        - reverse_proxy_molecule_debian_ca is changed
-      changed_when: true
-
-    - name: Install the disposable CA in the Rocky trust store
-      ansible.builtin.copy:
-        remote_src: true
-        src: "{{ reverse_proxy_molecule_fixture_root }}/ca.pem"
-        dest: /etc/pki/ca-trust/source/anchors/reverse-proxy-molecule.pem
-        owner: root
-        group: root
-        mode: '0644'
-      register: reverse_proxy_molecule_rocky_ca
-      when: ansible_facts.os_family == 'RedHat'
-
-    - name: Refresh the Rocky trust store
-      ansible.builtin.command:
-        argv:
-          - update-ca-trust
-      when:
-        - ansible_facts.os_family == 'RedHat'
-        - reverse_proxy_molecule_rocky_ca is changed
-      changed_when: true
+      notify: Refresh the Debian trust store
 
     - name: Install the disposable protocol programs
       ansible.builtin.copy:
@@ -385,3 +355,10 @@
         daemon_reload: "{{ reverse_proxy_molecule_backend_unit is changed }}"
         enabled: true
         state: started
+
+  handlers:
+    - name: Refresh the Debian trust store
+      ansible.builtin.command:
+        argv:
+          - update-ca-certificates
+      changed_when: true

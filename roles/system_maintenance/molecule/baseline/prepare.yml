@@ -10,14 +10,8 @@
         test "$(id -un)" = ansible
         sudo -n true
         . /etc/os-release
-        case "${ID}" in
-          debian) ! command -v python3 >/dev/null 2>&1 ;;
-          rocky)
-            test ! -x /usr/bin/python3
-            test -x /usr/libexec/platform-python
-            ;;
-          *) exit 64 ;;
-        esac
+        test "${ID}" = debian
+        ! command -v python3 >/dev/null 2>&1
       args:
         executable: /bin/sh
       changed_when: false

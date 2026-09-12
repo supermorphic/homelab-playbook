@@ -1,7 +1,7 @@
 # Podman foundation playbooks
 
-These playbooks establish reusable rootless Podman capability on Debian 13 and
-Rocky Linux 9 hosts that already have the OS baseline. They target
+These playbooks establish reusable rootless Podman capability on Debian 13 hosts
+that already have the OS baseline. They target
 `podman` through the canonical `mise run playbook` gateway.
 
 - `provision.yml` installs official distribution prerequisites, reconciles
@@ -92,7 +92,7 @@ console or rescue path available independently of services on this host.
 ## Development evidence
 
 The registered `system_maintenance/baseline` Molecule scenario exercises the
-foundation with two synthetic accounts on both supported distributions. It
+foundation with two synthetic accounts on Debian 13. It
 checks idempotence, permission separation, the installed Quadlet generator,
 and drift detection. These checks do not prove a rootless application container
 can run on production, survive physical boot, or enforce runner network and

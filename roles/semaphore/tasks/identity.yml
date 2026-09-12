@@ -2,7 +2,7 @@
 - name: Require a supported controller identity platform and fixed credential path
   ansible.builtin.assert:
     that:
-      - ansible_facts['os_family'] in ['Debian', 'RedHat']
+      - ansible_facts['distribution'] == 'Debian' and ansible_facts['distribution_major_version'] == '13'
       - semaphore_controller_identity_credential_path == '/etc/semaphore/controller-age.cred'
     fail_msg: >-
       Controller identity deployment requires a supported host and the fixed
@@ -60,10 +60,6 @@
   ansible.builtin.command: /usr/bin/systemd-creds --version
   changed_when: false
 
-- name: Install the application-specific Rocky identity socket policy
-  ansible.builtin.include_tasks: identity-selinux.yml
-  when: ansible_facts['os_family'] == 'RedHat'
-
 - name: Install identity socket directory boot declaration
   ansible.builtin.copy:
     dest: /etc/tmpfiles.d/semaphore-identity.conf
@@ -79,12 +75,6 @@
     owner: root
     group: "{{ semaphore_account_name }}"
     mode: '0750'
-
-- name: Apply the dedicated Rocky identity socket directory label
-  ansible.builtin.command: /usr/sbin/restorecon -Rv /run/semaphore-identity
-  register: semaphore_identity_restorecon
-  changed_when: semaphore_identity_restorecon.stdout | length > 0
-  when: ansible_facts['os_family'] == 'RedHat'
 
 - name: Install controller identity system units
   ansible.builtin.template:

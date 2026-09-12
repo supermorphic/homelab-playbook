@@ -3,11 +3,9 @@
 
 from __future__ import annotations
 
-import os
 import pathlib
 import re
 import shlex
-import stat
 import subprocess
 import sys
 import urllib.parse
@@ -31,16 +29,6 @@ DEBIAN_SOURCE_BYPASSES = {
     "allow-weak",
     "allow-downgrade-to-insecure",
 }
-ROCKY_REPOSITORY_KEYS = {
-    repository_id: "/etc/pki/rpm-gpg/RPM-GPG-KEY-Rocky-9"
-    for repository_id in ("baseos", "appstream", "extras", "crb")
-}
-CADDY_EPEL_REPOSITORY_KEYS = {
-    repository_id: "/etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-9"
-    for repository_id in ("epel", "epel-cisco-openh264")
-}
-CADDY_MANAGED_MARKER = "/var/lib/homelab-reverse-proxy/managed"
-CADDY_MANAGED_MARKER_CONTENT = b"managed by homelab-playbook\n"
 TRUE_VALUES = {"1", "yes", "true", "on"}
 
 
@@ -217,165 +205,19 @@ def validate_debian_configuration(apt_config_text: str, root: pathlib.Path = pat
         raise ValueError("APT has no enabled distribution source")
 
 
-def _path_is_in_reposdir(path: str, reposdirs: list[str], root: pathlib.Path) -> bool:
-    candidate = _rooted(root, path).resolve()
-    return any(candidate.is_relative_to(_rooted(root, directory).resolve()) for directory in reposdirs)
-
-
-def _is_exact_caddy_marker(metadata: os.stat_result) -> bool:
-    return (
-        stat.S_ISREG(metadata.st_mode)
-        and stat.S_IMODE(metadata.st_mode) == 0o600
-        and metadata.st_uid == 0
-        and metadata.st_gid == 0
-        and metadata.st_nlink == 1
-        and metadata.st_size == len(CADDY_MANAGED_MARKER_CONTENT)
-    )
-
-
-def _caddy_owns_epel(root: pathlib.Path) -> bool:
-    """Accept the fixed Caddy marker without following or blocking on unsafe files."""
-    marker = _rooted(root, CADDY_MANAGED_MARKER)
-    try:
-        descriptor = os.open(
-            marker,
-            os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
-        )
-    except OSError:
-        return False
-
-    try:
-        before = os.fstat(descriptor)
-        if not _is_exact_caddy_marker(before):
-            return False
-        content = os.read(descriptor, len(CADDY_MANAGED_MARKER_CONTENT) + 1)
-        after = os.fstat(descriptor)
-        stable_fields = (
-            "st_dev",
-            "st_ino",
-            "st_mode",
-            "st_nlink",
-            "st_uid",
-            "st_gid",
-            "st_size",
-            "st_mtime_ns",
-            "st_ctime_ns",
-        )
-        return (
-            _is_exact_caddy_marker(after)
-            and all(getattr(before, field) == getattr(after, field) for field in stable_fields)
-            and content == CADDY_MANAGED_MARKER_CONTENT
-        )
-    except OSError:
-        return False
-    finally:
-        os.close(descriptor)
-
-
-def validate_rocky_configuration(
-    effective: Mapping[str, object],
-    root: pathlib.Path = pathlib.Path("/"),
-) -> None:
-    """Validate DNF's inherited repository objects and authoritative locations."""
-    if effective.get("gpgcheck") is not True:
-        raise ValueError("effective DNF package signature checking is disabled")
-    if effective.get("localpkg_gpgcheck") is not True:
-        raise ValueError("effective DNF local package signature checking is disabled")
-    reposdirs = [str(value) for value in effective.get("reposdir", [])]
-    if not reposdirs:
-        raise ValueError("DNF has no effective repository directory")
-    tsflags = {str(value).lower() for value in effective.get("tsflags", [])}
-    if "nocrypto" in tsflags:
-        raise ValueError("effective DNF configuration disables cryptographic checks")
-
-    repositories = [
-        value
-        for value in effective.get("repos", [])
-        if isinstance(value, Mapping) and bool(value.get("enabled"))
-    ]
-    if not repositories:
-        raise ValueError("DNF has no enabled distribution repository")
-    caddy_owns_epel = _caddy_owns_epel(root)
-    for repository in repositories:
-        repository_id = str(repository.get("id", ""))
-        expected_key = ROCKY_REPOSITORY_KEYS.get(repository_id.lower())
-        if expected_key is None and caddy_owns_epel:
-            expected_key = CADDY_EPEL_REPOSITORY_KEYS.get(repository_id)
-        if expected_key is None:
-            raise ValueError("enabled DNF repository is not an approved repository")
-        if repository.get("gpgcheck") is not True:
-            raise ValueError("effective DNF repository package signature checking is disabled")
-        repofile = str(repository.get("repofile", ""))
-        if not repofile or not _path_is_in_reposdir(repofile, reposdirs, root):
-            raise ValueError("enabled DNF repository is outside effective reposdir")
-        keys = [str(value) for value in repository.get("gpgkey", [])]
-        if not keys:
-            raise ValueError("enabled DNF repository has no approved repository key")
-        for key in keys:
-            parsed = urllib.parse.urlparse(key)
-            if parsed.scheme != "file" or parsed.netloc or parsed.path != expected_key:
-                raise ValueError("enabled DNF repository does not use its approved key")
-            if not _rooted(root, parsed.path).is_file():
-                raise ValueError("configured approved repository key is absent")
-
-
-def _collect_rocky_configuration() -> dict[str, object]:
-    import dnf  # pylint: disable=import-outside-toplevel
-
-    with dnf.Base() as base:
-        base.conf.read()
-        base.conf.debuglevel = 0
-        base.conf.assumeyes = True
-        base.conf.sslverify = True
-        base.conf.installroot = "/"
-        base.conf.substitutions.update_from_etc("/")
-        if base.conf.substitutions.get("releasever") is None:
-            base.conf.substitutions["releasever"] = ""
-        for option in ("cachedir", "logdir", "persistdir"):
-            base.conf.prepend_installroot(option)
-        base.conf.clean_requirements_on_remove = False
-        base.conf.install_weak_deps = True
-
-        base.setup_loggers()
-        base.init_plugins(set(), set())
-        base.pre_configure_plugins()
-        base.read_all_repos()
-        base.configure_plugins()
-        repositories = []
-        for repository in base.repos.all():
-            repositories.append(
-                {
-                    "id": str(repository.id),
-                    "enabled": bool(repository.enabled),
-                    "gpgcheck": bool(repository.gpgcheck),
-                    "gpgkey": [str(value) for value in repository.gpgkey],
-                    "repofile": str(repository.repofile),
-                }
-            )
-        return {
-            "gpgcheck": bool(base.conf.gpgcheck),
-            "localpkg_gpgcheck": bool(base.conf.localpkg_gpgcheck),
-            "reposdir": [str(value) for value in base.conf.reposdir],
-            "tsflags": [str(value) for value in base.conf.tsflags],
-            "repos": repositories,
-        }
-
 
 def main() -> int:
-    if len(sys.argv) != 2 or sys.argv[1] not in {"Debian", "RedHat"}:
-        print("usage: validate_repository_trust.py Debian|RedHat", file=sys.stderr)
+    if len(sys.argv) != 2 or sys.argv[1] != "Debian":
+        print("usage: validate_repository_trust.py Debian", file=sys.stderr)
         return 2
     try:
-        if sys.argv[1] == "Debian":
-            apt_config = subprocess.run(
-                ["/usr/bin/apt-config", "dump"],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout
-            validate_debian_configuration(apt_config)
-        else:
-            validate_rocky_configuration(_collect_rocky_configuration())
+        apt_config = subprocess.run(
+            ["/usr/bin/apt-config", "dump"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        validate_debian_configuration(apt_config)
     except (OSError, subprocess.SubprocessError, ValueError) as error:
         print(f"repository trust validation failed: {error}", file=sys.stderr)
         return 1

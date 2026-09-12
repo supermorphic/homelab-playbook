@@ -133,14 +133,6 @@ class SemaphoreTemplateTests(unittest.TestCase):
             mount = next(line for line in application.splitlines() if f"/{name}:" in line)
             self.assertTrue(mount.endswith(":ro"), mount)
 
-        configuration = yaml.safe_load((ROLE / "tasks/configuration.yml").read_text())
-        labels = next(
-            task
-            for task in configuration
-            if task["name"] == "Declare root-owned container-readable Semaphore inputs"
-        )
-        self.assertEqual("container_file_t", labels["community.general.sefcontext"]["setype"])
-
     def test_long_running_units_restart_and_wait_for_database(self) -> None:
         application = self.render("semaphore.container.j2")
         database = self.render("postgres.container.j2")

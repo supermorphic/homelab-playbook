@@ -197,16 +197,7 @@ def os_baseline_verify_firewall_global_surface_errors(
         "redirect",
         "router-advertisement",
     ]
-    if os_family == "RedHat":
-        policy_rules.extend(
-            (
-                "mld-listener-done",
-                "mld-listener-query",
-                "mld-listener-report",
-                "mld2-listener-report",
-            )
-        )
-    elif os_family != "Debian":
+    if os_family != "Debian":
         raise ValueError("firewalld policy platform is unsupported")
     expected_policy = [
         "allow-host-ipv6",
@@ -255,23 +246,6 @@ def os_baseline_verify_journald_values(text: str) -> dict[str, str]:
     return values
 
 
-def os_baseline_verify_ini_values(text: str) -> dict[str, dict[str, str]]:
-    """Parse INI text with section-aware, last-assignment precedence."""
-    values: dict[str, dict[str, str]] = {}
-    section = ""
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith(("#", ";")):
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            section = line[1:-1]
-            values.setdefault(section, {})
-        elif section and "=" in line:
-            key, value = line.split("=", 1)
-            values[section][key.strip()] = value.strip()
-    return values
-
-
 def os_baseline_verify_apt_policy(text: str) -> dict[str, object]:
     """Parse `apt-config dump` output and reject non-exact origin lists."""
     stripped = "\n".join(line.split("//", 1)[0] for line in text.splitlines())
@@ -306,17 +280,6 @@ def os_baseline_verify_timer_values(text: str) -> dict[str, object]:
     return values
 
 
-def os_baseline_verify_assignments(text: str) -> dict[str, str]:
-    """Return uncommented key/value assignments with last-value precedence."""
-    values: dict[str, str] = {}
-    for raw in text.splitlines():
-        line = raw.strip()
-        if line and not line.startswith(("#", ";")) and "=" in line:
-            key, value = line.split("=", 1)
-            values[key.strip()] = value.strip()
-    return values
-
-
 def os_baseline_verify_apparmor_profile_names(paths: object) -> list[str]:
     """Map package-owned AppArmor profile filenames to status name forms."""
     if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
@@ -341,9 +304,7 @@ class FilterModule:
             "os_baseline_verify_firewall_state_from_results": os_baseline_verify_firewall_state_from_results,
             "os_baseline_verify_firewall_global_surface_errors": os_baseline_verify_firewall_global_surface_errors,
             "os_baseline_verify_journald_values": os_baseline_verify_journald_values,
-            "os_baseline_verify_ini_values": os_baseline_verify_ini_values,
             "os_baseline_verify_apt_policy": os_baseline_verify_apt_policy,
             "os_baseline_verify_timer_values": os_baseline_verify_timer_values,
-            "os_baseline_verify_assignments": os_baseline_verify_assignments,
             "os_baseline_verify_apparmor_profile_names": os_baseline_verify_apparmor_profile_names,
         }

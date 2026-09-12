@@ -128,7 +128,6 @@ class PackageInstallationTests(unittest.TestCase):
         debian = named_task(
             tasks, "Install Debian reverse proxy runtime dependencies"
         )
-        rocky = named_task(tasks, "Install Rocky reverse proxy runtime dependencies")
 
         self.assertEqual(
             {
@@ -143,21 +142,7 @@ class PackageInstallationTests(unittest.TestCase):
             },
             debian["ansible.builtin.apt"],
         )
-        self.assertEqual(
-            {
-                "name": [
-                    "ca-certificates",
-                    "iproute",
-                    "openssl",
-                    "shadow-utils",
-                    "util-linux",
-                ],
-                "state": "present",
-            },
-            rocky["ansible.builtin.dnf"],
-        )
         self.assertEqual("ansible_facts['distribution'] == 'Debian'", debian["when"])
-        self.assertEqual("ansible_facts['distribution'] == 'Rocky'", rocky["when"])
 
     def test_filesystem_safety_runs_before_package_install(self) -> None:
         tasks = load_tasks("install.yml")
@@ -187,21 +172,6 @@ class PackageInstallationTests(unittest.TestCase):
         )
         self.assertEqual("ansible_facts['distribution'] == 'Debian'", task["when"])
 
-    def test_rocky_install_uses_signed_epel_and_distribution_caddy(self) -> None:
-        tasks = load_tasks("install.yml")
-        epel = named_task(tasks, "Install signed EPEL repository on Rocky Linux")
-        caddy = named_task(tasks, "Install Rocky Linux distribution Caddy")
-
-        self.assertEqual(
-            {"name": "epel-release", "state": "present"},
-            epel["ansible.builtin.dnf"],
-        )
-        self.assertEqual(
-            {"name": "caddy", "state": "present"},
-            caddy["ansible.builtin.dnf"],
-        )
-        self.assertEqual("ansible_facts['distribution'] == 'Rocky'", epel["when"])
-        self.assertEqual("ansible_facts['distribution'] == 'Rocky'", caddy["when"])
 
     def test_reprovision_never_stops_or_restarts_healthy_caddy(self) -> None:
         for path in (ROLE_ROOT / "tasks").glob("*.yml"):
@@ -685,7 +655,6 @@ class ObservationalVerificationTests(unittest.TestCase):
         mutation_modules = {
             "ansible.builtin.apt",
             "ansible.builtin.copy",
-            "ansible.builtin.dnf",
             "ansible.builtin.file",
             "ansible.builtin.package",
             "ansible.builtin.systemd_service",

@@ -88,7 +88,7 @@ def containerfile_installed_packages(content: str) -> list[str]:
     for run_command in containerfile_run_commands(content):
         for command in shell_command_segments(run_command):
             for index, manager in enumerate(command):
-                if manager not in {"apt-get", "dnf"}:
+                if manager != "apt-get":
                     continue
                 try:
                     package_start = command.index("install", index + 1) + 1
@@ -101,7 +101,7 @@ def containerfile_installed_packages(content: str) -> list[str]:
 
     if not installed_packages:
         raise AssertionError(
-            "Containerfile must install packages with apt-get or dnf"
+            "Containerfile must install packages with apt-get"
         )
     return installed_packages
 
@@ -117,7 +117,6 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             "cleanup.yml",
             "destroy.yml",
             "Containerfile.debian13",
-            "Containerfile.rockylinux9",
             "backend.py",
             "diagnose.py",
             "probe.py",
@@ -160,10 +159,6 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             "debian13": (
                 "localhost/homelab-playbook-reverse-proxy-debian13:local",
                 "homelab-playbook-reverse-proxy-debian13",
-            ),
-            "rockylinux9": (
-                "localhost/homelab-playbook-reverse-proxy-rockylinux9:local",
-                "homelab-playbook-reverse-proxy-rockylinux9",
             ),
         }
         platforms = {
@@ -219,10 +214,6 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             "debian13": (
                 "localhost/homelab-playbook-system-maintenance-debian13:local",
                 "homelab-playbook-system-maintenance-debian13",
-            ),
-            "rockylinux9": (
-                "localhost/homelab-playbook-system-maintenance-rockylinux9:local",
-                "homelab-playbook-system-maintenance-rockylinux9",
             ),
         }
         platforms = {
@@ -375,12 +366,7 @@ class MoleculeScenarioContractTests(unittest.TestCase):
         debian_policy = tasks["Assert Debian native security maintenance"][
             "ansible.builtin.assert"
         ]["that"]
-        rocky_policy = tasks["Assert Rocky native security maintenance"][
-            "ansible.builtin.assert"
-        ]["that"]
         self.assertIn("'unattended-upgrades' in ansible_facts.packages", debian_policy)
-        self.assertIn("'dnf-automatic' in ansible_facts.packages", rocky_policy)
-        self.assertIn("'epel-release' not in ansible_facts.packages", rocky_policy)
 
     def test_containerfiles_use_maintained_bases(self) -> None:
         expected_containerfiles = {
@@ -388,11 +374,6 @@ class MoleculeScenarioContractTests(unittest.TestCase):
                 "FROM docker.io/library/debian:13",
                 ["dbus", "python3", "systemd"],
                 "RUN apt-get update && apt-get install --yes --no-install-recommends tree\n",
-            ),
-            "Containerfile.rockylinux9": (
-                "FROM docker.io/rockylinux/rockylinux:9",
-                ["dbus-daemon", "python3", "systemd"],
-                "RUN dnf install --assumeyes tree\n",
             ),
         }
         for (
@@ -428,16 +409,12 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             "cleanup.yml",
             "destroy.yml",
             "Containerfile.debian13",
-            "Containerfile.rockylinux9",
         ):
             with self.subTest(name=name):
                 self.assertTrue((BASELINE_SCENARIO_DIRECTORY / name).is_file())
 
         configuration = load_baseline_yaml("molecule.yml")
-        expected_hostnames = {
-            "debian13": "molecule-debian13",
-            "rockylinux9": "molecule-rockylinux9",
-        }
+        expected_hostnames = {"debian13": "molecule-debian13"}
         self.assertEqual(
             expected_hostnames,
             {
@@ -510,7 +487,6 @@ class MoleculeScenarioContractTests(unittest.TestCase):
     def test_baseline_containerfiles_preserve_the_installer_boundary(self) -> None:
         expected_bases = {
             "Containerfile.debian13": "FROM docker.io/library/debian:13",
-            "Containerfile.rockylinux9": "FROM docker.io/rockylinux/rockylinux:9",
         }
         for name, base in expected_bases.items():
             with self.subTest(name=name):
@@ -530,14 +506,7 @@ class MoleculeScenarioContractTests(unittest.TestCase):
         debian = (BASELINE_SCENARIO_DIRECTORY / "Containerfile.debian13").read_text(
             encoding="utf-8"
         )
-        rocky = (BASELINE_SCENARIO_DIRECTORY / "Containerfile.rockylinux9").read_text(
-            encoding="utf-8"
-        )
         self.assertNotIn("python3", debian)
-        self.assertIn("python3", rocky)
-        self.assertIn("rm -f /usr/bin/python3", rocky)
-        self.assertNotIn("/usr/libexec/platform-python", rocky.split("rm -f", 1)[1])
-        self.assertIn("chmod 0400 /etc/shadow", rocky)
 
     def test_baseline_generates_disposable_keys_and_imports_production_provisioning(
         self,
@@ -564,7 +533,7 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             "molecule-{{ inventory_hostname }}",
             variables["host_identity_hostname"],
         )
-        self.assertEqual("UTC", variables["host_identity_timezone"])
+        self.assertEqual("Etc/UTC", variables["host_identity_timezone"])
         self.assertEqual(["10.0.0.0/8"], variables["security_baseline_management_sources"])
         proxy_task = next(
             task
@@ -661,7 +630,7 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             [
                 "system_maintenance_molecule_baseline_static_hostname.stdout | trim == 'molecule-' ~ inventory_hostname",
                 "system_maintenance_molecule_baseline_current_hostname.stdout | trim == 'molecule-' ~ inventory_hostname",
-                "system_maintenance_molecule_baseline_timezone.stdout | trim == 'UTC'",
+                "system_maintenance_molecule_baseline_timezone.stdout | trim == 'Etc/UTC'",
             ],
             [
                 " ".join(expression.split())
@@ -872,7 +841,6 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             == ["/usr/bin/systemctl", "is-enabled"]
         )
         self.assertIn("apt-daily-upgrade.timer", str(enabled))
-        self.assertIn("dnf-automatic.timer", str(enabled))
         assertion = next(
             task
             for task in tasks
@@ -886,12 +854,7 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             "system_maintenance_molecule_baseline_debian_updater_errors",
             normalized_problems,
         )
-        self.assertIn(
-            "system_maintenance_molecule_baseline_rocky_updater_errors",
-            normalized_problems,
-        )
         self.assertIn("debian_updater.stdout", normalized_problems)
-        self.assertIn("rocky_updater.content | b64decode", normalized_problems)
         self.assertIn("updater_timer.stdout", normalized_problems)
         self.assertIn("updater_timer_enabled.stdout", normalized_problems)
         self.assertEqual(

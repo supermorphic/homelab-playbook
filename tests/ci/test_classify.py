@@ -637,10 +637,10 @@ class ClassifierCliTests(unittest.TestCase):
         self.assertEqual(head, payload["head_sha"])
         self.assertFalse(payload["include_worktree"])
         self.assertEqual("selective", payload["molecule_plan"]["mode"])
-        self.assertEqual(4, len(payload["molecule_plan"]["matrix"]["include"]))
+        self.assertEqual(2, len(payload["molecule_plan"]["matrix"]["include"]))
         summary_text = summary.read_text()
         for expected in (base, head, "reverse_proxy/default", "debian13",
-                         "rockylinux9", "roles/reverse_proxy/tasks/new.yml"):
+                         "roles/reverse_proxy/tasks/new.yml"):
             self.assertIn(expected, summary_text)
 
     def tearDown(self) -> None:

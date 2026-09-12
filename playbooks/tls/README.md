@@ -216,7 +216,7 @@ The previous `/var/lib/homelab-tls/published` layout is not migrated silently:
 nonempty state or an old pending journal blocks provisioning for operator recovery.
 
 The registered `system_maintenance/baseline` Molecule scenario installs real
-admin-only Caddy and disabled TLS on disposable Debian 13 and Rocky Linux 9 hosts.
+admin-only Caddy and disabled TLS on disposable Debian 13 hosts.
 It checks identity isolation, file metadata, parsed units, missing-credential
 rejection, manual-start waiting, and the runtime with distribution Python and
 cryptography. The `reverse_proxy/default` scenario covers integrated certificate

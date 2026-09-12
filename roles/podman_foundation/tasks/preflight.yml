@@ -4,7 +4,6 @@
     that:
       - >-
         (ansible_facts['distribution'] == 'Debian' and ansible_facts['distribution_major_version'] == '13')
-        or (ansible_facts['distribution'] == 'Rocky' and ansible_facts['distribution_major_version'] == '9')
       - ansible_facts['service_mgr'] == 'systemd'
       - ansible_user | default('') == 'ansible'
       - ansible_password is not defined
