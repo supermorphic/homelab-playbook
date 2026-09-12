@@ -376,7 +376,8 @@ loopback address inside the container network namespace. The startup regression
 first proves an absent-address bind failure, then adds the address and requires
 automatic recovery with trusted HTTPS. A second persistent failure uses the
 installed retry count and window with only the fixture retry delay shortened;
-it must reach `start-limit-hit`. Cleanup restores configuration, removes the
+it must stop retrying at the configured limit, with no running process and a
+journal record confirming that the start limit was reached. Cleanup restores configuration, removes the
 temporary address and delay override, clears test failure state, and starts the
 original fixture service. These checks do not perform a physical host reboot.
 These capabilities belong to the rootless test container; the

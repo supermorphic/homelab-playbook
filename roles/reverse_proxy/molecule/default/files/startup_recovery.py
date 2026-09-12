@@ -21,6 +21,7 @@ def properties():
     return dict(line.split("=", 1) for line in run(
         "systemctl", "show", "caddy.service", "-p", "ActiveState", "-p", "Result",
         "-p", "NRestarts", "-p", "RestartUSec", "-p", "StartLimitBurst",
+        "-p", "SubState", "-p", "MainPID",
     ).stdout.splitlines())
 
 
@@ -75,10 +76,23 @@ def main():
         run("systemctl", "daemon-reload")
         run("systemctl", "reset-failed", "caddy.service")
         run("systemctl", "start", "caddy.service", check=False)
-        exhausted = wait_for(lambda state: state["Result"] == "start-limit-hit",
+        # systemd may retain Result=exit-code after refusing an automatic restart.
+        # Prove the service stopped retrying, independently of that result label.
+        exhausted = wait_for(lambda state: state["ActiveState"] == "failed"
+                             and state["SubState"] == "failed"
+                             and state["NRestarts"] == "12",
                              "Persistent bind failure did not exhaust the retry budget")
-        assert exhausted["ActiveState"] == "failed"
+        assert exhausted["MainPID"] == "0"
         assert exhausted["StartLimitBurst"] == "12"
+        log = run("journalctl", "-u", "caddy.service", "-n", "25", "--no-pager", "-o", "cat").stdout
+        assert "Start request repeated too quickly." in log
+        # Observe for ten fixture retry intervals to reject a transient failure.
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            state = properties()
+            assert all(state[key] == exhausted[key]
+                       for key in ("ActiveState", "SubState", "NRestarts", "MainPID"))
+            time.sleep(0.1)
         print("PASS: persistent bind failure stops at the installed retry limit")
     finally:
         run("systemctl", "stop", "caddy.service")
