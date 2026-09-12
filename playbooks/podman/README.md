@@ -2,7 +2,7 @@
 
 These playbooks establish reusable rootless Podman capability on Debian 13 and
 Rocky Linux 9 hosts that already have the OS baseline. They target
-`podman_hosts` through the canonical `mise run playbook` gateway.
+`podman` through the canonical `mise run playbook` gateway.
 
 - `provision.yml` installs official distribution prerequisites, reconciles
   explicitly declared service identities and directories, and verifies them.
@@ -13,9 +13,9 @@ Both actions require the existing key-only `ansible` account with passwordless
 sudo. Provisioning includes verification; a second verify run is optional and
 useful for later drift checks. Neither action deploys application containers.
 
-The production account list is empty. Later service initiatives declare their
-own accounts and add secret-free, root-owned Quadlets. No service uses the
-administrative `ansible` account as its runtime identity.
+Production declares `svc-semaphore` in the `nuc4` host variables. Service
+initiatives declare their own accounts and add secret-free, root-owned Quadlets.
+No service uses the administrative `ansible` account as its runtime identity.
 
 Use the [root README command reference](../../README.md#podman-foundation-commands)
 for operator commands. See

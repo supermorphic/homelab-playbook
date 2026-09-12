@@ -197,9 +197,10 @@ issue; later roles own their concrete Quadlet templates.
 
 Expose `podman provision` and `podman verify` through the existing
 `mise run playbook -- <playbook> <action> <inventory> [ansible-args...]` gateway.
-Use an explicit `podman_hosts` group, initially containing `nuc4`, with an empty
-account declaration list. Adding that inventory membership does not execute
-against the host.
+Use an explicit `podman` group containing `nuc4`. Group defaults declare no
+accounts; host variables declare application allocations, including
+`svc-semaphore` on `nuc4`. Adding inventory membership does not execute against
+the host.
 
 `provision` reconciles the foundation after the existing OS baseline and
 includes verification. It processes one host at a time and repeats platform,

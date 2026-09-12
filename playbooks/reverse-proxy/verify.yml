@@ -1,6 +1,6 @@
 ---
 - name: Verify the shared private reverse proxy without repair
-  hosts: reverse_proxy_hosts
+  hosts: reverse_proxy
   serial: 1
   any_errors_fatal: true
   gather_facts: false

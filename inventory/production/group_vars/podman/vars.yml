@@ -1,0 +1,3 @@
+---
+# Service accounts use explicit identity allocations in host variables.
+podman_foundation_accounts: []

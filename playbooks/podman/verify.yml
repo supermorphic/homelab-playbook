@@ -1,6 +1,6 @@
 ---
 - name: Verify the Podman and Quadlet foundation without repair
-  hosts: podman_hosts
+  hosts: podman
   serial: 1
   any_errors_fatal: true
   gather_facts: false

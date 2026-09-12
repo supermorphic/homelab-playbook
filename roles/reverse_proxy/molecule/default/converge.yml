@@ -1,6 +1,6 @@
 ---
 - name: Converge reverse proxy role with two routes
-  hosts: reverse_proxy_hosts
+  hosts: reverse_proxy
   gather_facts: true
   become: true
   vars:
