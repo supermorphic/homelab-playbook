@@ -209,6 +209,16 @@ class SystemdRestrictionTests(unittest.TestCase):
         cls.unit = configparser.ConfigParser(strict=False)
         cls.unit.read_file(io.StringIO(cls.rendered))
 
+    def test_startup_waits_for_network_and_retries_with_a_finite_budget(self) -> None:
+        unit = dict(self.unit.items("Unit")) if self.unit.has_section("Unit") else {}
+        service = self.unit["Service"]
+        self.assertIn("network-online.target", unit.get("wants", "").split())
+        self.assertIn("network-online.target", unit.get("after", "").split())
+        self.assertEqual("on-failure", service["Restart"])
+        self.assertEqual("10s", service["RestartSec"])
+        self.assertEqual("300s", unit["startlimitintervalsec"])
+        self.assertEqual("12", unit["startlimitburst"])
+
     def test_unit_runs_caddy_with_minimum_required_capability(self) -> None:
         service = self.unit["Service"]
 
@@ -694,6 +704,12 @@ class ObservationalVerificationTests(unittest.TestCase):
                 "--property=ReadWritePaths",
                 "--property=ExecStartPre",
                 "--property=ExecReload",
+                "--property=Wants",
+                "--property=After",
+                "--property=Restart",
+                "--property=RestartUSec",
+                "--property=StartLimitIntervalUSec",
+                "--property=StartLimitBurst",
             ],
             unit["ansible.builtin.command"]["argv"],
         )
