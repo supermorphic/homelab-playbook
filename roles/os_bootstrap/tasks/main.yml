@@ -14,13 +14,6 @@
         sudo -n apt-get update
         sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install --yes python3
         ;;
-      rocky)
-        if rpm -q python3 >/dev/null 2>&1; then
-          sudo -n dnf reinstall --assumeyes python3
-        else
-          sudo -n dnf install --assumeyes python3
-        fi
-        ;;
       *) exit 64 ;;
     esac
     printf 'HOMELAB_PYTHON_INSTALLED\n'
@@ -43,11 +36,9 @@
         that:
           - >-
             (ansible_facts['distribution'] == 'Debian' and
-             ansible_facts['distribution_major_version'] == '13') or
-            (ansible_facts['distribution'] == 'Rocky' and
-             ansible_facts['distribution_major_version'] == '9')
+             ansible_facts['distribution_major_version'] == '13')
         fail_msg: >-
-          complete provisioning supports Debian 13 and Rocky Linux 9 only
+          complete provisioning supports Debian 13 only
 
     - name: Recheck non-interactive sudo
       ansible.builtin.command:

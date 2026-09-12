@@ -1,11 +1,10 @@
 ---
-- name: Assert the host uses the supported operating system family
+- name: Assert the host uses Debian 13
   ansible.builtin.assert:
     that:
-    - ansible_facts['os_family'] in ['Debian', 'RedHat']
+    - ansible_facts['distribution'] == 'Debian' and ansible_facts['distribution_major_version'] == '13'
     fail_msg: >-
-      system-maintenance does not support operating-system family
-      received {{ ansible_facts['os_family'] }}
+      system maintenance supports Debian 13 only
 
 - name: Run the explicit full update
   ansible.builtin.import_tasks: full-update.yml

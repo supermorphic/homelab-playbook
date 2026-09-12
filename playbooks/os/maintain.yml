@@ -33,11 +33,9 @@
         that:
           - >-
             (ansible_facts['distribution'] == 'Debian' and
-             ansible_facts['distribution_major_version'] == '13') or
-            (ansible_facts['distribution'] == 'Rocky' and
-             ansible_facts['distribution_major_version'] == '9')
+             ansible_facts['distribution_major_version'] == '13')
         fail_msg: >-
-          os maintenance supports Debian 13 and Rocky Linux 9 only
+          os maintenance supports Debian 13 only
 
     - name: Validate complete-platform verification inputs
       ansible.builtin.assert:
@@ -73,8 +71,7 @@
     - name: Combine maintenance reboot requirements
       ansible.builtin.set_fact:
         os_reboot_required: >-
-          {{ (system_maintenance_reboot_required | default(false) | bool)
-             or (security_baseline_reboot_required | default(false) | bool) }}
+          {{ system_maintenance_reboot_required | default(false) | bool }}
 
     - name: Reboot after maintenance when required
       ansible.builtin.reboot:

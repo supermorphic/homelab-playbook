@@ -18,10 +18,10 @@
     - name: Validate complete provisioning platform support
       ansible.builtin.assert:
         that:
-          - ansible_facts['os_family'] in ['Debian', 'RedHat']
+          - ansible_facts['distribution'] == 'Debian' and ansible_facts['distribution_major_version'] == '13'
         fail_msg: >-
           os provision does not support {{ ansible_facts['os_family'] }} because its
-          complete security baseline supports only Debian and RedHat
+          complete security baseline supports only Debian 13
 
     - name: Validate complete provisioning security baseline inputs
       ansible.builtin.assert:
@@ -69,8 +69,7 @@
     - name: Combine provisioning reboot requirements
       ansible.builtin.set_fact:
         os_reboot_required: >-
-          {{ (system_maintenance_reboot_required | default(false) | bool)
-             or (security_baseline_reboot_required | default(false) | bool) }}
+          {{ system_maintenance_reboot_required | default(false) | bool }}
 
     - name: Reboot after complete provisioning when required
       ansible.builtin.reboot:

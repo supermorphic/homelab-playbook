@@ -1,6 +1,7 @@
 # Specification 003: OS maintenance and security baseline
 
-Issue: [#13 Establish a maintainable OS maintenance and security baseline](https://github.com/supermorphic/homelab-playbook/issues/13)
+Issues: [#13 Establish a maintainable OS maintenance and security baseline](https://github.com/supermorphic/homelab-playbook/issues/13)
+and [#40 Remove Rocky Linux support](https://github.com/supermorphic/homelab-playbook/issues/40)
 
 ## Purpose
 
@@ -15,10 +16,16 @@ configuring those applications. It replaces the current composition of broad
 third-party bootstrap and security roles with narrow repository-owned policy
 and focused maintained mechanisms.
 
+Issue #40 narrows the current managed-host contract to Debian 13. It removes the
+unused Rocky Linux implementation and its validation paths while preserving the
+existing Debian behavior. Related contracts remain in [Specification 002](002-multi-os-molecule-validation.md),
+[Specification 004](004-managed-host-onboarding.md), [Specification 006](006-podman-quadlet-foundation.md),
+[Specification 007](007-off-cluster-tls-trust.md), [Specification 008](008-shared-private-reverse-proxy.md),
+and [Specification 009](009-semaphore-infrastructure-automation.md).
+
 ## Governing decisions
 
-1. Debian 13 and Rocky Linux 9 are the complete-provisioning platforms. Debian
-   13 is the primary production platform.
+1. Debian 13 is the only complete-provisioning platform.
 2. A target must already provide a key-only `ansible` account with working
    passwordless sudo. Automation never falls back to root login, a password
    prompt, or broader credentials.
@@ -27,14 +34,13 @@ and focused maintained mechanisms.
 4. `willshersystems.sshd` implements OpenSSH configuration. Repository roles
    own accounts, sudo, firewall, mandatory access control, time, logging, and
    package-maintenance policy.
-5. firewalld provides one firewall mechanism across Debian and Rocky. Time
-   synchronization uses each platform's default client: `systemd-timesyncd` on
-   Debian and chrony on Rocky.
-6. SELinux remains enforcing on Rocky. AppArmor remains enforcing on Debian.
+5. firewalld provides the host firewall mechanism. Time synchronization uses
+   Debian's `systemd-timesyncd` client.
+6. AppArmor remains enforcing.
 7. Native operating-system tools install security updates and perform required
    security-update reboots. The repository does not add a reboot coordinator.
 8. Routine full system updates run through an Ansible maintenance playbook.
-   Issue #4 will schedule that playbook through Semaphore UI; no host-local
+   Recurring Semaphore maintenance scheduling remains deferred; no host-local
    recurring full-update timer or cron job is added here.
 9. Persistent journald, auditd, native updater records, and systemd unit state
     are the durable failure signals. Verification remains an Ansible operation;
@@ -60,12 +66,12 @@ and focused maintained mechanisms.
 - native automatic-update schedules and required security-update reboots;
 - a scheduler-neutral full-maintenance playbook;
 - repository-owned SSH policy implemented through `willshersystems.sshd`;
-- firewalld, SELinux or AppArmor, platform-native time synchronization,
+- firewalld, AppArmor, platform-native time synchronization,
   persistent journald, and auditd;
 - read-only effective-state verification reusable after provisioning, after an
-  Ansible-controlled reboot, through a standalone operator action, and from a
-  future Semaphore schedule;
-- complete-composition Molecule coverage for Debian 13 and Rocky Linux 9.
+  Ansible-controlled reboot, through a standalone operator action, and from the
+  manually triggered Semaphore verification job;
+- complete-composition Molecule coverage for Debian 13.
 
 ### Excluded
 
@@ -89,16 +95,27 @@ and focused maintained mechanisms.
 
 ## Supported platform contract
 
-| Capability | Debian 13 | Rocky Linux 9 |
-| --- | --- | --- |
-| Complete provisioning | yes | yes |
-| Explicit full package update | yes | yes |
-| Native automatic security updates | yes | yes |
-| Complete access and hardening policy | yes | yes |
-| Complete-composition Molecule coverage | yes | yes |
-| Maintenance-role Molecule coverage | yes | yes |
+| Capability | Debian 13 |
+| --- | --- |
+| Complete provisioning | yes |
+| Explicit full package update | yes |
+| Native automatic security updates | yes |
+| Complete access and hardening policy | yes |
+| Complete-composition Molecule coverage | yes |
+| Maintenance-role Molecule coverage | yes |
 
-Complete-baseline playbooks reject every unsupported family before mutation.
+Complete-baseline playbooks reject every unsupported distribution or release
+before mutation.
+
+The Debian-only transition removes the unused Red Hat-family bootstrap,
+maintenance, repository-trust, updater, time-service, firewall-policy,
+mandatory-access-control, and verification branches. It also removes their
+task files, templates, variables, helper exports, and result references when no
+Debian consumer remains. The transition retains Debian APT trust,
+`unattended-upgrades`, reboot scheduling, AppArmor, firewalld, SSH policy,
+auditd, `systemd-timesyncd`, and the exact Caddy ownership marker used by later
+proxy operations. It does not add Raspberry Pi behavior or change the generic
+native ARM64 and AMD64 test architecture support.
 
 ## Provisioning lifecycle
 
@@ -106,11 +123,10 @@ Complete provisioning uses one host-sized batch and the following order:
 
 1. Connect as the existing `ansible` account without fact gathering or
    privilege escalation.
-2. Read `/etc/os-release` and verify that the target is Debian 13 or Rocky
-   Linux 9.
+2. Read `/etc/os-release` and verify that the target is Debian 13.
 3. Verify the expected account, an available `sudo` command, non-interactive
    `sudo -n` success, and a usable package-manager configuration.
-4. Install only the minimum Python runtime through a platform-specific raw
+4. Install only the minimum Python runtime through the Debian raw bootstrap
    command when Python is absent.
 5. Reset the Ansible connection, gather facts, and repeat the platform and
    privilege assertions with normal modules.
@@ -147,12 +163,13 @@ The only repository-managed administrative login is `ansible`. The account has
 a home directory, an interactive shell needed for Ansible operation, and a
 locked password. SSH is its normal access path.
 
-Authorized public keys are an explicit, non-empty Vault-backed or
+Authorized public keys are an explicit, non-empty SOPS-encrypted or
 operator-supplied inventory list. Key values do not appear in public inventory,
 fixtures, logs, or documentation. Each controller has a separate key:
 
 - the operator workstation private key remains on the workstation; and
-- Issue #4 adds a different Semaphore private key and its public counterpart.
+- Semaphore uses a separate controller key under
+  [Specification 009](009-semaphore-infrastructure-automation.md).
 
 The repository never stores private key material and stores no plaintext public
 key material. Rotation uses an add-verify-remove sequence so the active key is
@@ -182,7 +199,8 @@ private key.
 
 `willshersystems.sshd` is pinned to `v0.34.0`. The repository supplies the
 complete selected policy through a drop-in and disables the role's firewall and
-SELinux integration.
+SELinux integration through the explicit `sshd_manage_selinux: false` dependency
+input.
 
 The effective policy:
 
@@ -196,7 +214,7 @@ The effective policy:
 - explicitly renders and verifies TCP port 22, rejects a management connection
   on any other port before access mutation, and does not bind to a
   Tailscale-specific address;
-- leaves algorithm selection to the distribution and RHEL system crypto policy;
+- leaves algorithm selection to Debian's distribution policy;
   and
 - uses platform service management without replacing vendor unit files.
 
@@ -209,20 +227,10 @@ administrative path. An invalid candidate never triggers a reload.
 
 ## Repository and package policy
 
-Only enabled, signature-verified Debian or Rocky distribution repositories are
-part of the baseline. The implementation preserves APT signature verification
-and DNF repository GPG checks. It does not import third-party signing keys or
-enable EPEL by default. Later roles must own and justify any additional
+Only enabled, signature-verified official Debian repositories are part of the
+baseline. The implementation preserves APT signature verification and does not
+import third-party signing keys. Later roles must own and justify any additional
 repository.
-
-The managed Caddy role is the approved Rocky exception. Maintenance accepts
-the standard `epel` and `epel-cisco-openh264` repositories only when the existing
-`/var/lib/homelab-reverse-proxy/managed` ownership marker is a regular `root:root`
-`0600` file with one link and the exact managed content. These repositories must
-use the local `RPM-GPG-KEY-EPEL-9` key; Rocky repositories must still use their
-Rocky 9 key. Global and per-repository signature checks remain mandatory.
-An absent or invalid ownership marker does not authorize EPEL, and enabled
-testing, debug, source, next, or other repository IDs are not accepted.
 
 Debian sources select the package-owned Debian archive keyring explicitly.
 Before trust validation, provisioning adds that restriction to official Debian
@@ -238,7 +246,7 @@ The baseline package set contains only packages required for:
 - OpenSSH;
 - firewalld;
 - the platform-native time synchronization client;
-- SELinux or AppArmor;
+- AppArmor;
 - auditd and persistent system logging;
 - native automatic security updates; and
 - certificates and platform support required by those mechanisms.
@@ -259,16 +267,14 @@ the baseline does not reduce the available rollback set.
 
 ### Native security updates
 
-Debian uses `unattended-upgrades` with Debian Security origins only. Rocky uses
-`dnf-automatic` with `upgrade_type = security` and `reboot = when-needed`.
-Both native timers run daily at an inventory-configurable maintenance time.
+Debian uses `unattended-upgrades` with Debian Security origins only. Its native
+timer runs daily at an inventory-configurable maintenance time.
 Timer configuration is explicit and bounded so vendor random delay cannot move
 work outside the intended window.
 
-Debian automatic reboot is enabled when `/var/run/reboot-required` exists,
-including when a user remains logged in. Rocky delegates the reboot decision to
-DNF's native `when-needed` behavior. A host-specific schedule can stagger hosts
-without adding a cross-platform reboot coordinator.
+Automatic reboot is enabled when `/var/run/reboot-required` exists, including
+when a user remains logged in. A host-specific schedule can stagger hosts
+without adding a reboot coordinator.
 
 This policy also applies to the NUC that will run Semaphore. A native
 security-update reboot is acceptable because Semaphore did not initiate it.
@@ -305,15 +311,17 @@ does not reconcile baseline configuration and is not a completion stage for a
 failed provisioning run. Native security-only updates continue independently
 between scheduled maintenance runs.
 
-Issue #4 will create the recurring Semaphore schedule and task template. It
-will also decide how the Semaphore host itself receives a full update without
-allowing Semaphore to reboot its own host. This specification adds no recurring
-full-update systemd timer or cron entry.
+Recurring Semaphore maintenance schedules remain deferred.
+[Specification 009](009-semaphore-infrastructure-automation.md) provides a
+manually triggered verification job and excludes automatic infrastructure
+maintenance schedules. A future scheduling design must also address full updates
+to the Semaphore host without making its recovery depend on Semaphore. This
+specification adds no recurring full-update systemd timer or cron entry.
 
 ## Firewall policy
 
-firewalld is installed and enabled on Debian and Rocky. It uses nftables through
-the distribution packages and owns the baseline host firewall on both systems.
+firewalld is installed and enabled on Debian. It uses nftables through the
+distribution packages and owns the baseline host firewall.
 
 The baseline:
 
@@ -339,32 +347,24 @@ removes ICMP blocks and ICMP-block inversion in both states.
 
 fail2ban is not installed. Under a private-source, key-only SSH policy it adds
 little protection while introducing another privileged daemon, dynamic ban
-state, possible lockout, and an EPEL dependency on Rocky. A later public
-exposure design must reassess both source restrictions and rate-limiting
-controls.
+state, and possible lockout. A later public exposure design must reassess both
+source restrictions and rate-limiting controls.
 
 ## Mandatory access control
 
-Rocky requires SELinux targeted policy in enforcing mode. Debian requires
-AppArmor enabled with distribution-supplied profiles loaded in enforce mode.
-The baseline does not layer both systems on one platform and does not create
-speculative application profiles.
-
-A transition from SELinux disabled state can require boot configuration,
-filesystem relabeling, and reboot. Provisioning detects that state and performs
-the required reboot as part of the controlled transition. It never changes
-directly from disabled to an unverified enforcing runtime state. Later
-application roles own any labels or profiles required by their resources and
-must not disable platform enforcement to resolve a denial.
+Debian requires AppArmor enabled with distribution-supplied profiles loaded in
+enforce mode. The baseline does not create speculative application profiles.
+Later application roles own any profiles required by their resources and must
+not disable platform enforcement to resolve a denial.
 
 Container tests assert packages, configuration, and task decisions but do not
 claim that an unprivileged container proves host-kernel enforcement.
 
 ## Time synchronization and local logging
 
-Time synchronization uses the operating system's default client:
-`systemd-timesyncd` on Debian and chrony on Rocky. The baseline ensures that
-the selected package and service are present and enabled, but it does not
+Time synchronization uses Debian's default `systemd-timesyncd` client. The
+baseline ensures that the selected package and service are present and enabled,
+but it does not
 replace distribution or DHCP-provided time sources.
 
 The repository does not expose a time-source override in this initiative and
@@ -382,8 +382,8 @@ initiative does not add a broad syscall or filesystem-watch profile that could
 create excessive logging or interfere with later container workloads.
 
 Remote forwarding and notification credentials are outside this initiative.
-Issue #4 may use Semaphore's supported task notifications, and a later external
-monitor may deliver availability failures to the operator's selected service.
+A separate notification design may use Semaphore's supported task notifications
+or an external availability monitor.
 
 ## Verification and failure signals
 
@@ -391,8 +391,8 @@ The repository provides a reusable, read-only Ansible verification task set. It
 runs after complete provisioning and every Ansible-controlled reboot. A
 standalone `os verify` action performs connection and privilege preflight,
 gathers fresh facts, and invokes the same task set without package updates,
-repairs, service restarts, or reboots. Issue #4 can schedule the same task set
-after native maintenance windows.
+repairs, service restarts, or reboots. The manual Semaphore verification job
+uses the same task set under Specification 009.
 
 The verifier owns its expected-policy interface. Provisioning and maintenance
 pass the required authorized-key and management-source inputs explicitly.
@@ -416,7 +416,7 @@ Verification checks:
   and forwarding policy;
 - firewalld service enablement, default policy, private port-22 SSH allowance,
   and matching runtime and permanent state, including ICMP block surfaces;
-- SELinux or AppArmor effective enforcement and AppArmor next-boot enablement;
+- AppArmor effective enforcement and next-boot enablement;
 - platform-native time-client health and effective clock synchronization;
 - persistent journal availability and auditd active and next-boot service
   health;
@@ -431,8 +431,8 @@ failure evidence durable:
 - systemd retains failed unit state;
 - journald retains service, update, and boot detail;
 - auditd retains structured security records;
-- APT and DNF retain update results and history; and
-- Semaphore will retain the result of tasks it starts.
+- APT retains update results and history; and
+- Semaphore retains the result of tasks it starts.
 
 A host that never returns cannot report its own failure. External availability
 or dead-man monitoring remains a follow-on requirement and is not replaced by
@@ -440,17 +440,16 @@ Semaphore running on that same host.
 
 ## Dependency decisions
 
-| Dependency | Current repository pin | Selected decision | Reason |
+| Dependency | Current repository pin | Decision | Reason |
 | --- | --- | --- | --- |
-| `robertdebock.bootstrap` | `7.1.5` | remove; do not upgrade to `7.1.7` | The repository needs a narrow Python bootstrap with an explicit pre-existing sudo contract. The newer role assumes root execution and does not remove that authority boundary. |
-| `geerlingguy.security` | `3.0.0` | remove; do not upgrade to `3.0.2` | It couples SSH, sudo, fail2ban, and automatic updates while not implementing the complete selected host policy. |
-| `willshersystems.sshd` | absent | add at `v0.34.0` | It supports Debian 13 and EL 9, validates configuration before reload, and handles platform OpenSSH service behavior without owning repository policy. |
-| `ansible.posix` | absent | add at `2.2.2` | It supplies focused maintained modules for POSIX platform mechanisms such as firewalld and SELinux and supports the pinned controller. |
-| `devsec.hardening` | absent | do not add at `10.6.0` | Its OS and SSH roles apply a much broader policy surface than this baseline has evaluated. |
+| `robertdebock.bootstrap` | absent | keep repository-owned bootstrap | The repository needs a narrow Python bootstrap with an explicit pre-existing sudo contract. |
+| `geerlingguy.security` | absent | keep repository-owned security policy | The baseline separates SSH, sudo, firewall, and automatic-update mechanisms under one explicit host policy. |
+| `willshersystems.sshd` | `v0.34.0` | retain | It supports Debian 13, validates configuration before reload, and handles platform OpenSSH service behavior without owning repository policy. |
+| `ansible.posix` | `2.2.2` | retain | It supplies focused maintained modules for POSIX platform mechanisms such as firewalld and supports the pinned controller. |
+| `devsec.hardening` | absent | do not add | Its OS and SSH roles apply a much broader policy surface than this baseline has evaluated. |
 
-Dependency removal occurs only after replacement behavior has executable
-coverage in the complete composition. No dependency is upgraded solely to be
-removed in the same initiative.
+Repository-owned replacement behavior has executable coverage in the complete
+composition. Dependency removal requires that coverage to remain intact.
 
 ## Role and playbook boundaries
 
@@ -469,15 +468,16 @@ The implementation keeps four clear responsibilities:
 
 `playbooks/os/provision.yml` composes these responsibilities in the lifecycle
 defined above. A separate OS maintenance playbook exposes full update and
-post-update verification for direct workstation and future Semaphore use.
+post-update verification for direct workstation execution. Recurring Semaphore
+maintenance remains deferred.
 `playbooks/os/verify.yml` exposes the same effective-state checks independently
 without invoking either mutating lifecycle.
 `mise run playbook` remains the only repository playbook execution interface.
 
 ## Testing and evidence
 
-Issue #13 validates complete Debian and Rocky composition using the same
-rootless, unprivileged Podman worker model.
+The baseline validates complete Debian composition using the rootless,
+unprivileged Podman worker model defined by [Specification 002](002-multi-os-molecule-validation.md).
 
 Executable evidence includes:
 
@@ -512,7 +512,7 @@ not claim evidence for:
 
 - an actual reboot and reconnection;
 - persistence across a physical boot;
-- SELinux or AppArmor kernel enforcement;
+- AppArmor kernel enforcement;
 - firewall runtime enforcement or reachability from a real management network;
 - host clock synchronization or external NTP reachability;
 - audit-kernel event collection;
@@ -532,7 +532,7 @@ verification result becomes pull-request CI evidence.
    non-essential packages.
 5. Add the reusable verification task set and scheduler-neutral maintenance
    playbook.
-6. Compose and validate complete Debian and Rocky provisioning.
+6. Compose and validate complete Debian provisioning.
 7. Remove `robertdebock.bootstrap` and `geerlingguy.security` only after the
    complete composition proves their selected replacement behavior.
 8. Update operator documentation and run all change-directed validation.
@@ -542,10 +542,10 @@ dependency removal from creating an untested access or update gap.
 
 ## Acceptance criteria
 
-Issue #13 is complete when:
+The current baseline contract is satisfied when:
 
-1. complete provisioning rejects every platform except Debian 13 and Rocky
-   Linux 9 before mutation;
+1. complete provisioning rejects every platform except Debian 13 before
+   mutation, including from the raw bootstrap path before Python is available;
 2. bootstrap succeeds through an existing key-only `ansible` account with
    passwordless sudo, installs only missing Python capability, and has no root
    or password fallback;
@@ -558,14 +558,14 @@ Issue #13 is complete when:
 5. firewalld denies unsolicited inbound and forwarded traffic and permits SSH
    only from explicit private management sources in matching runtime and
    permanent state;
-6. SELinux is configured enforcing on Rocky and AppArmor enforcing on Debian,
-   with container evidence limited to what the container can prove;
-7. `systemd-timesyncd` is enabled on Debian, chrony is enabled on Rocky, and
-   effective clock synchronization is verifiable on both platforms;
+6. AppArmor is configured enforcing, with container evidence limited to what
+   the container can prove;
+7. `systemd-timesyncd` is enabled and effective clock synchronization is
+   verifiable;
 8. persistent journald and vendor-default auditd retain local update, boot,
    service, and security failure evidence;
-9. Debian and Rocky install security updates daily through native tools and
-   perform native required reboots in an explicit maintenance window;
+9. Debian installs security updates daily through native tools and performs
+   required reboots in an explicit maintenance window;
 10. no host-local recurring full-update schedule exists, and the full
     maintenance playbook remains directly runnable and suitable for a future
     Semaphore schedule;
@@ -576,8 +576,31 @@ Issue #13 is complete when:
 13. `robertdebock.bootstrap` and `geerlingguy.security` are absent only after
     replacement coverage passes, while `willshersystems.sshd` and
     `ansible.posix` are exactly pinned;
-14. complete Debian and Rocky Molecule composition passes converge,
+14. complete Debian Molecule composition passes converge,
     deterministic-task idempotence, and independent verification;
-15. no test contacts inventory hosts, reads Vault material, performs a real
-    reboot, or overstates container evidence; and
-16. repository-required change-directed validation passes before publication.
+15. no test contacts inventory hosts, reads protected inventory values, performs a real
+    reboot, or overstates container evidence;
+16. repository-required change-directed validation passes before publication;
+17. no obsolete Red Hat-family role, scenario, package, template, helper, or
+    task-result branch remains, and no permanent forbidden-reference test is
+    added;
+18. the four Debian 13 Molecule rows defined by Specification 002 cover the
+    maintenance default, complete baseline, reverse proxy, and Semaphore
+    scenarios.
+
+### Issue #40 acceptance mapping
+
+| Requirement | Current contract |
+| --- | --- |
+| Support one managed-host OS | Debian 13 is the sole complete-provisioning and maintenance platform. |
+| Reject unsupported hosts safely | Raw bootstrap and fact-based preflight reject non-Debian or non-version-13 targets before package or configuration mutation. |
+| Remove obsolete implementation | Red Hat-family role tasks, templates, variables, helper branches, and result references have no retained contract. |
+| Preserve Debian behavior | APT trust, unattended security updates, conditional reboot, AppArmor, firewalld, SSH, auditd, time synchronization, Podman identities, Caddy safeguards, and Semaphore credential permissions remain required. |
+| Narrow application roles | Podman, TLS, reverse proxy, and Semaphore preflights require Debian 13; Caddy uses Debian packages and Semaphore has no platform-specific labeling path. |
+| Retain required dependencies | `ansible.posix` remains for Debian firewalld and authorized keys; `community.general` remains for host timezone configuration; its explicit inventory-filtering dependency and all SSH, Podman, SOPS, TLS, and application dependencies remain. |
+| Preserve useful generic behavior | Native ARM64 and AMD64 selection and generic lifecycle, cleanup, timing, and impact behavior remain supported. |
+| Use the complete current test matrix | Specification 002 defines exactly four Debian rows: maintenance default, complete baseline, reverse proxy default, and Semaphore default. |
+| Keep documentation stable | Existing specification identifiers and paths remain; README files, guides, and subsystem specifications state the Debian 13 contract and link to this platform contract. |
+| Test current behavior | Molecule fixtures and Ansible/CI contracts cover Debian 13 and the exact four-row registry; tests assert current invariants without a permanent forbidden-reference scan. |
+| Update VM examples | Remove Rocky and CentOS entries from `infra/manifest.csv` and replace Rocky examples in `infra/orbs.sh` with Debian 13. Other generic VM examples do not declare managed-host support. |
+| Keep platform scope narrow | No Raspberry Pi behavior is added; generic native ARM64 and AMD64 selection remains. |

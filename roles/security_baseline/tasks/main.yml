@@ -1,21 +1,15 @@
 ---
-- name: Initialize security baseline reboot state
-  ansible.builtin.set_fact:
-    security_baseline_reboot_required: false
-
 - name: Validate security baseline execution inputs
   ansible.builtin.assert:
     that:
       - >-
         (ansible_facts['distribution'] == 'Debian' and
-         ansible_facts['distribution_major_version'] == '13') or
-        (ansible_facts['distribution'] == 'Rocky' and
-         ansible_facts['distribution_major_version'] == '9')
+         ansible_facts['distribution_major_version'] == '13')
       - ansible_user | default('') == 'ansible'
       - security_baseline_authorized_keys | length > 0
       - security_baseline_management_sources | length > 0
     fail_msg: >-
-      security baseline requires Debian 13 or Rocky Linux 9, an ansible
+      security baseline requires Debian 13, an ansible
       connection user, authorized controller keys, and management sources
   no_log: true
 

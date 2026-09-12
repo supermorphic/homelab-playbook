@@ -108,7 +108,6 @@ def system_maintenance_molecule_baseline_firewall_errors(
     direct_results: object,
     binding_text: object,
     policy_text: object,
-    os_family: object,
     https_sources: object = (),
 ) -> list[str]:
     """Return exact permanent firewall policy differences."""
@@ -168,23 +167,12 @@ def system_maintenance_molecule_baseline_firewall_errors(
             if separator and field in {"interfaces", "sources"} and values.split():
                 errors.append("zone-bindings")
                 break
-    if os_family not in {"Debian", "RedHat"}:
-        raise ValueError("firewall policy platform is unsupported")
     policy_rules = [
         "neighbour-advertisement",
         "neighbour-solicitation",
         "redirect",
         "router-advertisement",
     ]
-    if os_family == "RedHat":
-        policy_rules.extend(
-            (
-                "mld-listener-done",
-                "mld-listener-query",
-                "mld-listener-report",
-                "mld2-listener-report",
-            )
-        )
     expected_policy = [
         "allow-host-ipv6",
         "priority: -15000",
@@ -277,49 +265,10 @@ def system_maintenance_molecule_baseline_debian_updater_errors(
     return [*errors, *_timer_errors(timer_configuration, timer_enabled)]
 
 
-def _ini_values(text: object) -> dict[str, dict[str, str]]:
-    if not isinstance(text, str):
-        raise ValueError("DNF configuration must be text")
-    values: dict[str, dict[str, str]] = {}
-    section = ""
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith(("#", ";")):
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            section = line[1:-1]
-            values.setdefault(section, {})
-        elif section and "=" in line:
-            key, value = line.split("=", 1)
-            values[section][key.strip()] = value.strip()
-    return values
-
-
-def system_maintenance_molecule_baseline_rocky_updater_errors(
-    dnf_configuration: object,
-    timer_configuration: object,
-    timer_enabled: object,
-) -> list[str]:
-    """Return exact Rocky native security updater policy differences."""
-    values = _ini_values(dnf_configuration)
-    expected = {
-        "commands": {
-            "upgrade_type": "security",
-            "download_updates": "yes",
-            "apply_updates": "yes",
-            "reboot": "never",
-        },
-        "emitters": {"emit_via": "stdio"},
-    }
-    errors = [] if values == expected else ["dnf-policy"]
-    return [*errors, *_timer_errors(timer_configuration, timer_enabled)]
-
-
 class FilterModule:
     def filters(self) -> dict[str, object]:
         return {
             "system_maintenance_molecule_baseline_sshd_errors": system_maintenance_molecule_baseline_sshd_errors,
             "system_maintenance_molecule_baseline_firewall_errors": system_maintenance_molecule_baseline_firewall_errors,
             "system_maintenance_molecule_baseline_debian_updater_errors": system_maintenance_molecule_baseline_debian_updater_errors,
-            "system_maintenance_molecule_baseline_rocky_updater_errors": system_maintenance_molecule_baseline_rocky_updater_errors,
         }

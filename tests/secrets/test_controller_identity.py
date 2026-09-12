@@ -259,54 +259,6 @@ print("systemd activation, socket restart, and unrelated uid rejection passed")
             cleanup = subprocess.run(["podman", "rm", "--force", name], capture_output=True, timeout=60)
             self.assertEqual(0, cleanup.returncode, "disposable identity container cleanup failed")
 
-    @unittest.skipUnless(os.environ.get("SEMAPHORE_IDENTITY_SELINUX_TEST_IMAGE"),
-                         "requires an explicit Rocky policy compiler fixture")
-    def test_selinux_policy_compiles_without_broadening_stock_containers(self):
-        policy_root = ROOT / "roles/semaphore/files"
-        name = "semaphore-identity-policy-" + uuid.uuid4().hex
-        self.addCleanup(self.remove_container, name)
-        self.assertTrue((policy_root / "semaphore_controller.te").is_file(), "controller policy missing")  # codespell:ignore te
-        fixture = r'''
-import json, pathlib, subprocess, sys, tempfile
-payload = json.load(sys.stdin)
-def run(command, **kwargs):
-    result = subprocess.run(command, capture_output=True, timeout=240, **kwargs)
-    if result.returncode:
-        sys.exit(result.stderr.decode(errors="replace") + result.stdout.decode(errors="replace"))
-    return result
-run(["dnf", "-y", "install", "selinux-policy-devel", "container-selinux", "setools-console"])
-with tempfile.TemporaryDirectory(prefix="policy-") as directory:
-    for suffix, content in payload.items():
-        pathlib.Path(directory, "semaphore_controller." + suffix).write_text(content)
-    run(["make", "-f", "/usr/share/selinux/devel/Makefile", "semaphore_controller.pp"], cwd=directory)
-    # -N updates only this container's policy store; never load the host kernel policy.
-    run(["semodule", "-N", "-i", str(pathlib.Path(directory, "semaphore_controller.pp"))])
-    policy = sorted(pathlib.Path("/etc/selinux/targeted/policy").glob("policy.*"))[-1]
-    def allowed(source, target, kind, permission):
-        return run(["sesearch", "-A", "-s", source, "-t", target, "-c", kind,
-                    "-p", permission, str(policy)]).stdout.strip()
-    if not allowed("semaphore_controller_t", "init_t", "unix_stream_socket", "connectto"):
-        sys.exit("controller socket connection missing")
-    if not allowed("semaphore_controller_t", "semaphore_age_runtime_t", "sock_file", "write"):
-        sys.exit("controller named socket access missing")
-    if allowed("container_t", "semaphore_age_runtime_t", "sock_file", "write"):
-        sys.exit("stock container gained identity access")
-    if allowed("container_t", "init_t", "unix_stream_socket", "connectto"):
-        sys.exit("stock container unexpectedly has host socket connection access")
-    context = run(["matchpathcon", "-n", "/run/semaphore-identity/age.sock"]).stdout
-    if b":semaphore_age_runtime_t:" not in context:
-        sys.exit("socket pathname does not resolve to the dedicated label")
-print("compiled policy grants only controller identity socket access")
-'''
-        payload = {suffix: (policy_root / ("semaphore_controller." + suffix)).read_text()
-                   for suffix in ("te", "fc")}  # codespell:ignore te
-        result = subprocess.run([
-            "podman", "run", "--rm", "--name", name, "-i", "--entrypoint=python3",
-            os.environ["SEMAPHORE_IDENTITY_SELINUX_TEST_IMAGE"], "-c", fixture,
-        ], input=json.dumps(payload).encode(), capture_output=True, timeout=300)
-        self.assertEqual(0, result.returncode, result.stderr.decode(errors="replace"))
-        self.assertIn(b"compiled policy grants only controller", result.stdout)
-
 
 if __name__ == "__main__":
     unittest.main()

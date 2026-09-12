@@ -116,7 +116,7 @@ class MoleculePlanTests(unittest.TestCase):
                     {
                         (selector, platform)
                         for selector in selectors
-                        for platform in ("debian13", "rockylinux9")
+                        for platform in ("debian13",)
                     },
                     {
                         (row["selector"], row["platform"])
@@ -164,7 +164,7 @@ class MoleculePlanTests(unittest.TestCase):
             with self.subTest(depth=depth):
                 plan = self.plan(["README.md"], depth)
                 self.assertEqual("full", plan["mode"])
-                self.assertEqual(8, len(plan["matrix"]["include"]))
+                self.assertEqual(4, len(plan["matrix"]["include"]))
 
     def test_unknown_molecule_impact_fails_closed(self):
         import molecule_plan
@@ -172,7 +172,7 @@ class MoleculePlanTests(unittest.TestCase):
         result = {"depth": "molecule", "paths": ["roles/future/tasks/main.yml"]}
         plan = molecule_plan.build_plan(result)
         self.assertEqual("full", plan["mode"])
-        self.assertEqual(8, len(plan["matrix"]["include"]))
+        self.assertEqual(4, len(plan["matrix"]["include"]))
 
     def test_missing_scenario_rule_does_not_inherit_role_mapping(self):
         import molecule_plan
@@ -194,7 +194,7 @@ class MoleculePlanTests(unittest.TestCase):
             )
             plan = molecule_plan.build_plan(result, map_path=path)
             self.assertEqual("full", plan["mode"])
-            self.assertEqual(8, len(plan["matrix"]["include"]))
+            self.assertEqual(4, len(plan["matrix"]["include"]))
 
     def test_invalid_map_falls_back_to_runner_registry(self):
         import molecule_plan
@@ -216,7 +216,7 @@ class MoleculePlanTests(unittest.TestCase):
                         map_path=path,
                     )
                     self.assertEqual("full", plan["mode"])
-                    self.assertEqual(8, len(plan["matrix"]["include"]))
+                    self.assertEqual(4, len(plan["matrix"]["include"]))
 
     def test_exact_paths_override_prefixes_without_matching_other_files(self):
         import molecule_plan
@@ -233,7 +233,7 @@ class MoleculePlanTests(unittest.TestCase):
             result = classify.classify_paths([target])
             plan = molecule_plan.build_plan(result, map_path=path)
             self.assertEqual("selective", plan["mode"])
-            self.assertEqual(4, len(plan["matrix"]["include"]))
+            self.assertEqual(2, len(plan["matrix"]["include"]))
             path.write_text(json.dumps({"rules": list(reversed(rules))}))
             self.assertEqual(plan, molecule_plan.build_plan(result, map_path=path))
             for other in (target + ".bak", "tests/tls/test_policy.py"):
@@ -260,7 +260,7 @@ class MoleculePlanTests(unittest.TestCase):
                     plan = molecule_plan.build_plan(
                         classify.classify_paths(["tests/tls/test_runtime.py"]), map_path=path)
                     self.assertEqual("full", plan["mode"])
-                    self.assertEqual(8, len(plan["matrix"]["include"]))
+                    self.assertEqual(4, len(plan["matrix"]["include"]))
 
     def test_exact_file_cannot_declare_a_new_scenario(self):
         import molecule_plan
@@ -274,7 +274,7 @@ class MoleculePlanTests(unittest.TestCase):
             }]}))
             plan = molecule_plan.build_plan(classify.classify_paths([target]), map_path=path)
             self.assertEqual("full", plan["mode"])
-            self.assertEqual(8, len(plan["matrix"]["include"]))
+            self.assertEqual(4, len(plan["matrix"]["include"]))
 
     def test_merge_gate_checks_plan_completeness(self):
         import merge_gate
@@ -293,9 +293,9 @@ class MoleculePlanTests(unittest.TestCase):
             ("full", json.dumps(valid)),
             ("fast", json.dumps(valid)),
         ]
-        one_platform = json.loads(json.dumps(valid))
-        one_platform["matrix"]["include"].pop()
-        cases.append(("molecule", json.dumps(one_platform)))
+        malformed_row = json.loads(json.dumps(valid))
+        del malformed_row["matrix"]["include"][0]["platform"]
+        cases.append(("molecule", json.dumps(malformed_row)))
         duplicate = json.loads(json.dumps(valid))
         duplicate["matrix"]["include"].append(duplicate["matrix"]["include"][0])
         cases.append(("molecule", json.dumps(duplicate)))

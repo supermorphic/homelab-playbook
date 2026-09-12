@@ -66,35 +66,3 @@
             'Unattended-Upgrade::Automatic-Reboot "false";'
             in system_maintenance_molecule_debian_configuration.stdout
       when: inventory_hostname == 'debian13'
-
-    - name: Read Rocky automatic-update configuration
-      ansible.builtin.slurp:
-        src: /etc/dnf/automatic.conf
-      register: system_maintenance_molecule_rocky_configuration
-      when: inventory_hostname == 'rockylinux9'
-
-    - name: Read Rocky security-update timer state
-      ansible.builtin.command:
-        argv:
-          - /usr/bin/systemctl
-          - is-enabled
-          - dnf-automatic.timer
-      register: system_maintenance_molecule_rocky_timer
-      changed_when: false
-      when: inventory_hostname == 'rockylinux9'
-
-    - name: Assert Rocky native security maintenance
-      ansible.builtin.assert:
-        that:
-          - ansible_facts['os_family'] == 'RedHat'
-          - "'dnf-automatic' in ansible_facts.packages"
-          - system_maintenance_molecule_rocky_timer.stdout | trim == 'enabled'
-          - >-
-            system_maintenance_molecule_rocky_configuration.content |
-            b64decode is regex('(?m)^upgrade_type = security$')
-          - >-
-            system_maintenance_molecule_rocky_configuration.content |
-            b64decode is regex('(?m)^reboot = never$')
-          - >-
-            'epel-release' not in ansible_facts.packages
-      when: inventory_hostname == 'rockylinux9'

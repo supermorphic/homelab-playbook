@@ -2,10 +2,6 @@
 
 Issue: [#3 Establish NUC #4 Podman and Quadlet foundation](https://github.com/supermorphic/homelab-playbook/issues/3)
 
-Status: Implementation design. The operator approved the separate-account
-model, explicit identity allocation, and inclusion of standalone OS verification
-in issue #3. This document is not evidence of live deployment.
-
 ## Purpose and scope
 
 Establish the reusable host capability and conventions for
@@ -19,8 +15,9 @@ Quadlets, or application credentials. Later service issues instantiate the
 foundation with explicit account declarations and service-specific files.
 Synthetic accounts and Quadlets may exist in bounded disposable tests only.
 
-The foundation remains separate from the OS baseline. Debian 13 and Rocky
-Linux 9 retain their existing baseline contract. Podman prerequisites use
+The foundation remains separate from the OS baseline defined by
+[Specification 003](003-os-maintenance-security-baseline.md). Debian 13 is the
+supported platform. Podman prerequisites use
 official distribution packages; unsupported capabilities fail explicitly.
 No additional Galaxy collection is required merely to write Quadlet files.
 

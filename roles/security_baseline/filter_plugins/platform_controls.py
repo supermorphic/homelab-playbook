@@ -154,16 +154,7 @@ def _expected_firewalld_policy_lines(os_family: str) -> list[str]:
         "redirect",
         "router-advertisement",
     ]
-    if os_family == "RedHat":
-        rules.extend(
-            (
-                "mld-listener-done",
-                "mld-listener-query",
-                "mld-listener-report",
-                "mld2-listener-report",
-            )
-        )
-    elif os_family != "Debian":
+    if os_family != "Debian":
         raise ValueError("firewalld policy platform is unsupported")
     return [
         "allow-host-ipv6",

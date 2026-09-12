@@ -9,8 +9,8 @@ This supersedes specification 001's Vault decision and specification 004's
 interactive Vault workflow. Preserve public variables, variable names, inventory
 boundaries, roles, and the `mise run playbook` operator interface.
 
-The operator approved a dedicated repository identity, independent future
-controller identities, Keychain retrieval, and a complete one-way migration.
+Use a dedicated repository identity, independent future controller identities,
+Keychain retrieval, and a complete one-way migration.
 Do not reuse the `homelab-talos` identity. No managed host changes are required.
 
 ## Loading and dependency contract

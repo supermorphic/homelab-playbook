@@ -131,12 +131,10 @@ In these examples, each environment override applies only to the command it
 prefixes. On your Mac, normal `mise run playbook` and `mise run secrets:sops`
 commands already select the repository Keychain helper automatically.
 
-Debian uses the normal host socket permissions. Rocky additionally installs a
-dedicated `semaphore_controller_t` SELinux domain for this application and labels
-the identity socket separately. The policy retains the distribution's container
-confinement and grants this domain access to the host socket service. Offline
-tests exercise systemd activation and compile and inspect the policy; actual
-host enforcement needs operator verification on the selected host.
+Debian uses the normal host socket permissions. The identity socket remains
+accessible only through the dedicated controller boundary. Offline tests
+exercise systemd activation; actual host enforcement needs operator verification
+on the selected host.
 
 Credential enrollment and recipient edits remain explicit operator actions.
 After creating the root-owned private `/etc/semaphore` directory, pipe the

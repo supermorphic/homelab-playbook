@@ -1,17 +1,4 @@
 ---
-- name: Configure Rocky global DNF signature verification
-  community.general.ini_file:
-    path: /etc/dnf/dnf.conf
-    section: main
-    option: "{{ item }}"
-    value: "True"
-    mode: "0644"
-    no_extra_spaces: true
-  loop:
-    - gpgcheck
-    - localpkg_gpgcheck
-  when: ansible_facts['os_family'] == 'RedHat'
-
 - name: Inspect the primary legacy Debian repository source
   ansible.builtin.stat:
     path: /etc/apt/sources.list
@@ -84,18 +71,9 @@
     lock_timeout: 300
   when: ansible_facts['os_family'] == 'Debian'
 
-- name: Install Rocky repository trust and time packages
-  ansible.builtin.dnf:
-    name:
-      - ca-certificates
-      - chrony
-    state: present
-    lock_timeout: 300
-  when: ansible_facts['os_family'] == 'RedHat'
-
 - name: Enable and start platform time synchronization
   ansible.builtin.systemd_service:
-    name: "{{ 'systemd-timesyncd' if ansible_facts['os_family'] == 'Debian' else 'chronyd' }}"
+    name: systemd-timesyncd
     enabled: true
     state: started
   when: security_baseline_apply_time_runtime | bool

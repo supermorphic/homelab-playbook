@@ -154,14 +154,6 @@ class RunnerCliTests(unittest.TestCase):
                         "/usr/lib/systemd/systemd",
                         "Containerfile.debian13",
                     ),
-                    (
-                        "rockylinux9",
-                        "docker.io/rockylinux/rockylinux:9",
-                        "localhost/homelab-playbook-system-maintenance-rockylinux9:local",
-                        "homelab-playbook-system-maintenance-rockylinux9",
-                        "/usr/lib/systemd/systemd",
-                        "Containerfile.rockylinux9",
-                    ),
                 ],
             },
             "system_maintenance/baseline": {
@@ -176,14 +168,6 @@ class RunnerCliTests(unittest.TestCase):
                         "homelab-playbook-system-maintenance-baseline-debian13",
                         "/usr/lib/systemd/systemd",
                         "Containerfile.debian13",
-                    ),
-                    (
-                        "rockylinux9",
-                        "docker.io/rockylinux/rockylinux:9",
-                        "localhost/homelab-playbook-system-maintenance-baseline-rockylinux9:local",
-                        "homelab-playbook-system-maintenance-baseline-rockylinux9",
-                        "/usr/lib/systemd/systemd",
-                        "Containerfile.rockylinux9",
                     ),
                 ],
             },
@@ -200,14 +184,6 @@ class RunnerCliTests(unittest.TestCase):
                         "/usr/lib/systemd/systemd",
                         "Containerfile.debian13",
                     ),
-                    (
-                        "rockylinux9",
-                        "docker.io/rockylinux/rockylinux:9",
-                        "localhost/homelab-playbook-reverse-proxy-rockylinux9:local",
-                        "homelab-playbook-reverse-proxy-rockylinux9",
-                        "/usr/lib/systemd/systemd",
-                        "Containerfile.rockylinux9",
-                    ),
                 ],
             },
         }
@@ -221,12 +197,6 @@ class RunnerCliTests(unittest.TestCase):
                     "localhost/homelab-playbook-semaphore-debian13:local",
                     "homelab-playbook-semaphore-debian13",
                     "/usr/lib/systemd/systemd", "Containerfile.debian13",
-                ),
-                (
-                    "rockylinux9", "docker.io/rockylinux/rockylinux:9",
-                    "localhost/homelab-playbook-semaphore-rockylinux9:local",
-                    "homelab-playbook-semaphore-rockylinux9",
-                    "/usr/lib/systemd/systemd", "Containerfile.rockylinux9",
                 ),
             ],
         }
@@ -326,7 +296,7 @@ class RunnerCliTests(unittest.TestCase):
         labels = runner_module.ownership_labels(selected[0], scenario)
 
         self.assertEqual(
-            ["debian13", "rockylinux9"],
+            ["debian13"],
             [platform.name for platform in selected],
         )
         self.assertEqual(
@@ -391,7 +361,7 @@ class PreflightTests(unittest.TestCase):
             ),
         )
 
-    def test_preflight_uses_native_debian_and_rocky_on_arm(
+    def test_preflight_uses_native_debian_on_arm(
         self,
     ) -> None:
         fake = self.successful_runner(architecture="aarch64")
@@ -401,10 +371,7 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual("podman version 5.6.2", plan.podman_version)
         self.assertEqual("arm64", plan.host_architecture)
         self.assertEqual(
-            {
-                "debian13": "arm64",
-                "rockylinux9": "arm64",
-            },
+            {"debian13": "arm64"},
             plan.requested_architectures,
         )
         self.assertEqual(15.0, fake.calls[-1][2])
@@ -418,10 +385,7 @@ class PreflightTests(unittest.TestCase):
 
                 self.assertEqual("amd64", plan.host_architecture)
                 self.assertEqual(
-                    {
-                        "debian13": "amd64",
-                        "rockylinux9": "amd64",
-                    },
+                    {"debian13": "amd64"},
                     plan.requested_architectures,
                 )
 
@@ -700,7 +664,7 @@ class ContainerOwnershipTests(unittest.TestCase):
     def test_colliding_container_is_never_removed(self) -> None:
         fake = FakeCommandRunner(
             FakeResult(),
-            FakeResult(stdout=self.owned_inspect(platform="rockylinux9")),
+            FakeResult(stdout=self.owned_inspect(platform="other-platform")),
         )
 
         with self.assertRaisesRegex(RuntimeError, "collision"):
@@ -1016,13 +980,6 @@ class ParallelExecutionTests(unittest.TestCase):
                     "homelab-playbook-system-maintenance-debian13",
                     "Containerfile.debian13",
                 ),
-                (
-                    "rockylinux9",
-                    "docker.io/rockylinux/rockylinux:9",
-                    "localhost/homelab-playbook-system-maintenance-rockylinux9:local",
-                    "homelab-playbook-system-maintenance-rockylinux9",
-                    "Containerfile.rockylinux9",
-                ),
             ],
             [
                 (
@@ -1036,14 +993,14 @@ class ParallelExecutionTests(unittest.TestCase):
             ],
         )
 
-    def test_default_selection_runs_both_platforms_on_supported_architectures(
+    def test_default_selection_runs_debian_on_supported_architectures(
         self,
     ) -> None:
         for architecture in ("arm64", "amd64"):
             with self.subTest(architecture=architecture):
                 selected = runner_module.select_platforms({}, architecture)
                 self.assertEqual(
-                    ["debian13", "rockylinux9"],
+                    ["debian13"],
                     [platform.name for platform in selected],
                 )
 
@@ -1052,7 +1009,7 @@ class ParallelExecutionTests(unittest.TestCase):
         if function is None:
             self.fail("runner must provide select_platforms")
 
-        for platform_name in ("debian13", "rockylinux9"):
+        for platform_name in ("debian13",):
             with self.subTest(platform_name=platform_name):
                 selected = function(
                     {"HOMELAB_MOLECULE_PLATFORM": platform_name},
@@ -1083,7 +1040,17 @@ class ParallelExecutionTests(unittest.TestCase):
         function = getattr(runner_module, "run_platforms", None)
         if function is None:
             self.fail("runner must provide run_platforms")
-        platforms = self.registered_platforms()
+        platforms = tuple(
+            runner_module.Platform(
+                name=name,
+                base_image=f"registry.example.invalid/{name}:latest",
+                image=f"localhost/{name}:local",
+                container=f"synthetic-{name}",
+                container_command="/sbin/init",
+                containerfile=Path(f"Containerfile.{name}"),
+            )
+            for name in ("synthetic-a", "synthetic-b")
+        )
         started: set[str] = set()
         started_lock = threading.Lock()
         all_started = threading.Event()
@@ -1100,7 +1067,7 @@ class ParallelExecutionTests(unittest.TestCase):
         results = function(platforms, worker)
 
         self.assertEqual(
-            {"debian13", "rockylinux9"},
+            {"synthetic-a", "synthetic-b"},
             {result.platform for result in results},
         )
 
@@ -1114,18 +1081,29 @@ class ParallelExecutionTests(unittest.TestCase):
         def worker(platform):
             with completed_lock:
                 completed.add(platform.name)
-            status = "test failure" if platform.name == "debian13" else "pass"
+            status = "test failure" if platform.name == "synthetic-a" else "pass"
             return self.platform_result(platform.name, status)
 
-        results = function(self.registered_platforms(), worker)
+        platforms = tuple(
+            runner_module.Platform(
+                name=name,
+                base_image=f"registry.example.invalid/{name}:latest",
+                image=f"localhost/{name}:local",
+                container=f"synthetic-{name}",
+                container_command="/sbin/init",
+                containerfile=Path(f"Containerfile.{name}"),
+            )
+            for name in ("synthetic-a", "synthetic-b")
+        )
+        results = function(platforms, worker)
 
         self.assertEqual(
-            {"debian13", "rockylinux9"},
+            {"synthetic-a", "synthetic-b"},
             completed,
         )
         self.assertEqual(2, len(results))
         failed_result = next(
-            result for result in results if result.platform == "debian13"
+            result for result in results if result.platform == "synthetic-a"
         )
         self.assertFalse(failed_result.success)
 
@@ -1151,10 +1129,7 @@ class OutputTests(unittest.TestCase):
         return runner_module.HostPlan(
             podman_version="podman version 5.6.2",
             host_architecture="arm64",
-            requested_architectures={
-                "debian13": "arm64",
-                "rockylinux9": "arm64",
-            },
+            requested_architectures={"debian13": "arm64"},
         )
 
     def test_subprocess_stream_prefixes_every_combined_output_line(self) -> None:

@@ -1,7 +1,7 @@
 # Semaphore playbooks
 
 These playbooks manage Semaphore and PostgreSQL 17 as rootless containers under
-`svc-semaphore` on Debian 13 and Rocky Linux 9. They use pinned upstream images;
+`svc-semaphore` on Debian 13. They use pinned upstream images;
 the application image is not built in this repository.
 
 `provision.yml` reconciles application storage, protected configuration,

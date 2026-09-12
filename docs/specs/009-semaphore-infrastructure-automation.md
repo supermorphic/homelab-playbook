@@ -2,9 +2,6 @@
 
 Issue: [#4 Semaphore infrastructure automation](https://github.com/supermorphic/homelab-playbook/issues/4)
 
-Status: Approved by the operator. Records the agreed design and implementation
-acceptance requirements; it is not evidence of deployment or live recovery.
-
 ## Purpose and scope
 
 Deploy Semaphore on NUC #4 as the operator interface for infrastructure
@@ -49,7 +46,8 @@ version discovery alone is not compatibility evidence.
 Start the application only after database readiness, with bounded startup waits.
 Use native systemd restart handling for long-running services and finite timeouts
 for one-shot operations. Preserve enforcing platform controls and test volume
-ownership and labels on Debian 13 and Rocky Linux 9.
+ownership on Debian 13 as defined by
+[Specification 003](003-os-maintenance-security-baseline.md).
 
 ## Configuration and credentials
 

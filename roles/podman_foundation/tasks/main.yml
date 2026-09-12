@@ -4,10 +4,7 @@
 
 - name: Install distribution Podman and rootless prerequisites
   ansible.builtin.package:
-    name: >-
-      {{ ['podman', 'uidmap', 'passt', 'dbus-user-session', 'acl']
-         if ansible_facts['os_family'] == 'Debian'
-         else ['podman', 'shadow-utils', 'passt', 'dbus-daemon', 'acl'] }}
+    name: [podman, uidmap, passt, dbus-user-session, acl]  # codespell:ignore passt
     state: present
 
 - name: Verify installed foundation capability

@@ -2,11 +2,8 @@
 
 Issue: [#1 Modernize homelab-playbook for agentic development](https://github.com/supermorphic/homelab-playbook/issues/1)
 
-## Status and supersession
-
-This specification preserves the modernization initiative's historical audit
-and decisions. Later specifications and current source define changed
-subsystems. In particular, [Specification 005](005-sops-age-secrets.md)
+The modernization audit and decisions below provide historical context.
+Later specifications and current source define changed subsystems. In particular, [Specification 005](005-sops-age-secrets.md)
 supersedes the Ansible Vault design with SOPS and age. Vault-specific inventory
 examples and scope statements below are historical unless restated by a later
 specification.
@@ -164,11 +161,10 @@ The maintained production target is deliberately narrow:
 - Debian 13 for general-purpose hosts;
 - Raspberry Pi OS based on Debian for Raspberry Pi hosts.
 
-Debian 13 is the primary production platform. Rocky Linux 9 is the explicitly
-covered secondary platform for repository-owned operating-system maintenance.
+Debian 13 is the only supported general-purpose managed-host platform.
 Unsupported production paths fail clearly rather than silently skip required
-work. The `system_maintenance` role therefore dispatches only its Debian and
-Red Hat-family implementations.
+work. The `system_maintenance` role therefore implements only its Debian 13
+path.
 
 ## Inventory design
 
@@ -746,10 +742,10 @@ The implementation plan must preserve reviewable boundaries:
 The plan may reorder adjacent steps where tests require it, but must not mix
 production deployment into repository modernization.
 
-## Historical acceptance criteria
+## Historical completion criteria
 
-Issue #1 was accepted against these criteria. Its Vault-specific criterion was
-superseded by Specification 005:
+These criteria describe the original completion boundary. Specification 005
+supersedes the Vault-specific criterion:
 
 1. repository responsibilities and current consumers are accurately documented;
 2. Apache License 2.0 replaces GPL-3.0 and repository documentation identifies it;

@@ -13,7 +13,7 @@ Usage: $(basename "$0") [OPTIONS] [ORBNAME1 [ORBNAME2 ...]]
 Creates orbs based on entries in the manifest.csv file.
 
 Arguments:
-  ORBNAME       Optional. NAME (e.g. rocky9, debian12).
+  ORBNAME       Optional. NAME (e.g. debian13, debian12).
                 If omitted, all orbs in the manifest will be processed.
 
 Options:
@@ -22,10 +22,10 @@ Options:
 
 Examples:
   $(basename "$0")                     Recreate all orbs from manifest
-  $(basename "$0") rocky9              Recreate only 'rocky9'
+  $(basename "$0") debian13              Recreate only 'debian13'
   $(basename "$0") debian12 debian13   Recreate specific orbs
   $(basename "$0") --delete            Delete all orbs from manifest
-  $(basename "$0") --delete rocky9     Delete only 'rocky9'
+  $(basename "$0") --delete debian13     Delete only 'debian13'
 EOF
   exit 0
 }

@@ -151,7 +151,6 @@ class FirewallOracleTests(unittest.TestCase):
         configuration: str = "DefaultZone=homelab\n",
         bindings: str = "homelab\n  interfaces:\n  sources:\n",
         policies: str = DEBIAN_FIREWALL_POLICY,
-        os_family: str = "Debian",
     ) -> list[str]:
         return self.controls.system_maintenance_molecule_baseline_firewall_errors(
             configuration,
@@ -159,7 +158,6 @@ class FirewallOracleTests(unittest.TestCase):
             direct,
             bindings,
             policies,
-            os_family,
         )
 
     def test_exact_permanent_firewall_policy_has_no_errors(self) -> None:
@@ -172,7 +170,7 @@ class FirewallOracleTests(unittest.TestCase):
         check = lambda: self.controls.system_maintenance_molecule_baseline_firewall_errors(
             "DefaultZone=homelab\n", zone, direct,
             "homelab\n  interfaces:\n  sources:\n", DEBIAN_FIREWALL_POLICY,
-            "Debian", ["10.20.30.40/32"])
+            ["10.20.30.40/32"])
         self.assertIn("rich-rules", check())
         observed["stdout_lines"].append(
             'rule family="ipv4" source address="10.20.30.40/32" '
@@ -291,17 +289,6 @@ Unattended-Upgrade::Automatic-Reboot-Time "04:30";
 Unattended-Upgrade::Remove-Unused-Dependencies "false";
 """
 
-ROCKY_DNF_POLICY = """\
-[commands]
-upgrade_type = security
-download_updates = yes
-apply_updates = yes
-reboot = never
-
-[emitters]
-emit_via = stdio
-"""
-
 TIMER_POLICY = """\
 [Timer]
 OnCalendar=
@@ -358,33 +345,6 @@ class NativeUpdaterOracleTests(unittest.TestCase):
             ),
         )
 
-    def test_complete_rocky_updater_policy_has_no_errors(self) -> None:
-        self.assertEqual(
-            [],
-            self.controls.system_maintenance_molecule_baseline_rocky_updater_errors(
-                ROCKY_DNF_POLICY,
-                TIMER_POLICY,
-                "enabled",
-            ),
-        )
-
-    def test_each_rocky_policy_mutation_is_rejected(self) -> None:
-        mutations = {
-            "upgrade_type = security": "upgrade_type = default",
-            "download_updates = yes": "download_updates = no",
-            "apply_updates = yes": "apply_updates = no",
-            "reboot = never": "reboot = when-needed",
-            "emit_via = stdio": "emit_via = motd",
-        }
-        for original, replacement in mutations.items():
-            with self.subTest(original=original):
-                errors = self.controls.system_maintenance_molecule_baseline_rocky_updater_errors(
-                    ROCKY_DNF_POLICY.replace(original, replacement),
-                    TIMER_POLICY,
-                    "enabled",
-                )
-                self.assertTrue(errors)
-
     def test_timer_schedule_and_enablement_mutations_are_rejected(self) -> None:
         for timer, enabled, expected in (
             (TIMER_POLICY.replace("04:00:00", "03:00:00"), "enabled", "timer"),
@@ -398,13 +358,7 @@ class NativeUpdaterOracleTests(unittest.TestCase):
                     timer,
                     enabled,
                 )
-                rocky = self.controls.system_maintenance_molecule_baseline_rocky_updater_errors(
-                    ROCKY_DNF_POLICY,
-                    timer,
-                    enabled,
-                )
                 self.assertIn(expected, debian)
-                self.assertIn(expected, rocky)
 
 
 if __name__ == "__main__":

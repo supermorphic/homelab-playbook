@@ -18,9 +18,3 @@
       - security_baseline_maintenance_debian_package_health.stdout | trim == ''
     fail_msg: dpkg reports packages requiring repair; no update was started
   when: ansible_facts['os_family'] == 'Debian'
-
-- name: Check Rocky package manager consistency
-  ansible.builtin.command:
-    argv: [/usr/bin/dnf, check]
-  changed_when: false
-  when: ansible_facts['os_family'] == 'RedHat'

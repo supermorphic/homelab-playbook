@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import configparser
 import ast
+import configparser
 from collections import Counter
 from copy import deepcopy
 import re
@@ -55,23 +55,18 @@ TASK_META_KEYS = {
 }
 
 READ_ONLY_ARGV = {
+    ("/usr/bin/systemctl", "is-enabled", "apt-daily-upgrade.timer"),
+    ("/usr/bin/systemd-analyze", "cat-config", "systemd/system/apt-daily-upgrade.timer"),
     ("sudo", "-n", "true"),
-    ("/usr/sbin/getenforce",),
     ("/usr/sbin/aa-status", "--enabled"),
     ("/usr/sbin/aa-status", "--json"),
-    ("/usr/bin/chronyc", "tracking"),
-    ("/usr/bin/chronyc", "sources"),
     ("/usr/bin/apt-config", "dump"),
     ("/usr/bin/dpkg", "--audit"),
     ("/usr/bin/dpkg-query", "-L", "apparmor", "apparmor-profiles"),
-    ("/usr/bin/dnf", "check"),
-    ("/usr/bin/dnf", "needs-restarting", "-r"),
     ("/usr/bin/systemd-analyze", "cat-config", "systemd/journald.conf"),
     ("/usr/bin/systemctl", "is-enabled", "systemd-timesyncd.service"),
     ("/usr/bin/systemctl", "is-active", "systemd-timesyncd.service"),
     ("/usr/bin/timedatectl", "show", "--property=NTPSynchronized", "--value"),
-    ("/usr/bin/systemctl", "is-enabled", "chronyd.service"),
-    ("/usr/bin/systemctl", "is-active", "chronyd.service"),
     ("/usr/bin/systemctl", "is-active", "auditd"),
     ("/usr/bin/hostnamectl", "--static"),
     ("/usr/bin/hostnamectl", "--transient"),
@@ -96,19 +91,6 @@ READ_ONLY_ARGV_TEMPLATES = {
     "{{ ['/usr/bin/firewall-cmd', item] }}",
     "{{ ['/usr/bin/firewall-offline-cmd', '--direct', item] }}",
     "{{ ['/usr/bin/firewall-cmd', '--direct', item] }}",
-    "{{ ['/usr/bin/systemctl', 'is-enabled',\n    {{ 'apt-daily-upgrade.timer' if ansible_facts['os_family'] == 'Debian'\n       else 'dnf-automatic.timer' }}] }}",
-    "{{ ['/usr/bin/systemd-analyze', 'cat-config',\n    {{ 'systemd/system/apt-daily-upgrade.timer'\n       if ansible_facts['os_family'] == 'Debian'\n       else 'systemd/system/dnf-automatic.timer' }}] }}",
-}
-
-READ_ONLY_ARGV_DYNAMIC_LISTS = {
-    (
-        "/usr/bin/systemctl", "is-enabled",
-        "{{ 'apt-daily-upgrade.timer' if ansible_facts['os_family'] == 'Debian'\n   else 'dnf-automatic.timer' }}",
-    ),
-    (
-        "/usr/bin/systemd-analyze", "cat-config",
-        "{{ 'systemd/system/apt-daily-upgrade.timer'\n   if ansible_facts['os_family'] == 'Debian'\n   else 'systemd/system/dnf-automatic.timer' }}",
-    ),
 }
 
 FIREWALL_ZONE_READS = [
@@ -215,7 +197,7 @@ def assert_read_only_command(task: dict[str, object], command: object) -> None:
             READ_ONLY_SSHD_CONTEXT.split()
         ):
             raise AssertionError(f"sshd connection context is not exact: {argv}")
-    elif not isinstance(argv, list) or tuple(argv) not in READ_ONLY_ARGV | READ_ONLY_ARGV_DYNAMIC_LISTS:
+    elif not isinstance(argv, list) or tuple(argv) not in READ_ONLY_ARGV:
         raise AssertionError(f"command argv is not allowlisted: {argv}")
     if task.get("changed_when") is not False:
         raise AssertionError("verifier command must declare changed_when: false")
@@ -257,8 +239,7 @@ def assert_observational_verifier_task(task: dict[str, object]) -> None:
         assert_observational_script(REPOSITORY_ROOT / "roles/os_baseline_verify/files" / str(script["cmd"]).split()[0])
 
 
-COMBINED_REBOOT_EXPRESSION = """{{ (system_maintenance_reboot_required | default(false) | bool)
-or (security_baseline_reboot_required | default(false) | bool) }}"""
+REBOOT_EXPRESSION = "{{ system_maintenance_reboot_required | default(false) | bool }}"
 
 
 def normalize_expression(value: object) -> str:
@@ -327,7 +308,7 @@ def assert_logging_task_ownership(tasks: list[dict[str, object]]) -> None:
         raise AssertionError("journald template destination is not exact")
 
     audit = next(task for task in tasks if task["name"] == "Install audit service with vendor rules")
-    expected_audit_packages = {"Debian": "auditd", "RedHat": "audit"}
+    expected_audit_packages = {"Debian": "auditd"}
     if audit.get("vars") != {"security_baseline_audit_packages": expected_audit_packages}:
         raise AssertionError("audit package mapping is not exact")
     if [task_module(task) for task in audit.get("block", [])] != [
@@ -380,14 +361,14 @@ def unique_fact_task_index(tasks: list[dict[str, object]], fact: str) -> int:
     return matches[0]
 
 
-def assert_combined_reboot_fact(task: dict[str, object]) -> None:
+def assert_reboot_fact(task: dict[str, object]) -> None:
     facts = task.get("ansible.builtin.set_fact")
     if not isinstance(facts, dict) or set(facts) != {"os_reboot_required"}:
         raise AssertionError("reboot combination must set only os_reboot_required")
     if normalize_expression(facts["os_reboot_required"]) != normalize_expression(
-        COMBINED_REBOOT_EXPRESSION
+        REBOOT_EXPRESSION
     ):
-        raise AssertionError("reboot combination must OR both default-false boolean facts")
+        raise AssertionError("reboot state must use the default-false maintenance boolean fact")
 
 
 def assert_reboot_result_is_recorded(
@@ -560,7 +541,7 @@ class SourceContractTests(unittest.TestCase):
             {"name": "system_maintenance", "tasks_from": "reboot-state.yml"},
         )
         combine = unique_fact_task_index(provisioning_pre, "os_reboot_required")
-        assert_combined_reboot_fact(provisioning_pre[combine])
+        assert_reboot_fact(provisioning_pre[combine])
         reboot = unique_task_index(
             provisioning_pre,
             "ansible.builtin.reboot",
@@ -650,9 +631,8 @@ class SourceContractTests(unittest.TestCase):
         ]["that"]
         self.assertEqual(1, len(maintenance_platform_contract))
         self.assertIn("ansible_facts['distribution'] == 'Debian'", maintenance_platform_contract[0])
-        self.assertIn("ansible_facts['distribution'] == 'Rocky'", maintenance_platform_contract[0])
         self.assertEqual(
-            "os maintenance supports Debian 13 and Rocky Linux 9 only",
+            "os maintenance supports Debian 13 only",
             normalize_expression(
                 maintenance_platform_preflight["ansible.builtin.assert"]["fail_msg"]
             ),
@@ -707,7 +687,7 @@ class SourceContractTests(unittest.TestCase):
         maintenance_combine = unique_fact_task_index(
             maintenance_pre, "os_reboot_required"
         )
-        assert_combined_reboot_fact(maintenance_pre[maintenance_combine])
+        assert_reboot_fact(maintenance_pre[maintenance_combine])
         maintenance_reboot = unique_task_index(
             maintenance_pre,
             "ansible.builtin.reboot",
@@ -805,10 +785,10 @@ class SourceContractTests(unittest.TestCase):
         )
         bad_combination = deepcopy(provision[1]["pre_tasks"][combined_index])
         bad_combination["ansible.builtin.set_fact"]["os_reboot_required"] = (
-            COMBINED_REBOOT_EXPRESSION.replace("\nor ", "\nand ")
+            REBOOT_EXPRESSION.replace("default(false)", "default(true)")
         )
         with self.assertRaises(AssertionError):
-            assert_combined_reboot_fact(bad_combination)
+            assert_reboot_fact(bad_combination)
 
         for play in (provision[1], maintenance_document[0]):
             pre_tasks = play["pre_tasks"]
@@ -874,6 +854,8 @@ class SourceContractTests(unittest.TestCase):
         """Full maintenance must stop before updating unsupported family members."""
         unsupported = (
             {"os_family": "Debian", "distribution": "Debian", "distribution_major_version": "12"},
+            {"os_family": "Debian", "distribution": "Debian", "distribution_major_version": "14"},
+            {"os_family": "RedHat", "distribution": "Rocky", "distribution_major_version": "9"},
             {"os_family": "RedHat", "distribution": "RedHat", "distribution_major_version": "9"},
         )
         for facts in unsupported:
@@ -902,7 +884,7 @@ class SourceContractTests(unittest.TestCase):
                 output = result.stdout + result.stderr
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(
-                    "maintenance supports Debian 13 and Rocky Linux 9 only",
+                    "maintenance supports Debian 13 only",
                     output,
                 )
 
@@ -918,7 +900,7 @@ class SourceContractTests(unittest.TestCase):
         identity = normalize_expression(tasks[0]["ansible.builtin.raw"])
         privilege = normalize_expression(tasks[1]["ansible.builtin.raw"])
         self.assertIn('test "$(id -un)" = ansible', identity)
-        self.assertIn("debian:13|rocky:9*", identity)
+        self.assertIn("debian:13", identity)
         self.assertIn("command -v sudo", privilege)
         self.assertIn("sudo -n true", privilege)
         for task in tasks:
@@ -931,7 +913,6 @@ class SourceContractTests(unittest.TestCase):
                 "Verify effective distribution repository trust",
                 "Check Debian package manager consistency",
                 "Require consistent Debian package manager state",
-                "Check Rocky package manager consistency",
             ],
             [task["name"] for task in tasks],
         )
@@ -945,8 +926,7 @@ class SourceContractTests(unittest.TestCase):
             ["security_baseline_maintenance_debian_package_health.stdout | trim == ''"],
             tasks[2]["ansible.builtin.assert"]["that"],
         )
-        self.assertEqual(["/usr/bin/dnf", "check"], tasks[3]["ansible.builtin.command"]["argv"])
-        for task in (tasks[1], tasks[3]):
+        for task in (tasks[1],):
             self.assertIs(task["changed_when"], False)
             self.assertNotIn("failed_when", task)
 
@@ -1043,11 +1023,8 @@ class SourceContractTests(unittest.TestCase):
                 }
             )
         for argv in (
-            ["/usr/bin/systemctl", "restart", "chronyd.service"],
             ["/usr/bin/systemctl", "enable", "systemd-timesyncd.service"],
             ["/usr/bin/timedatectl", "set-ntp", "true"],
-            ["/usr/bin/chronyc", "makestep"],
-            ["/usr/bin/chronyc", "burst", "4/4"],
         ):
             with self.subTest(argv=argv):
                 with self.assertRaises(AssertionError):
@@ -1400,7 +1377,7 @@ class SourceContractTests(unittest.TestCase):
             if "ansible.builtin.import_role" in task
         ]
         self.assertEqual(
-            ["ansible_facts['os_family'] in ['Debian', 'RedHat']"],
+            ["ansible_facts['distribution'] == 'Debian' and ansible_facts['distribution_major_version'] == '13'"],
             platform_preflight["ansible.builtin.assert"]["that"],
         )
         self.assertTrue(imported_role_indices)
@@ -1424,7 +1401,7 @@ class SourceContractTests(unittest.TestCase):
                 "--start-at-task",
                 "Validate complete provisioning platform support",
                 "--extra-vars",
-                '{"ansible_become": false, "ansible_facts": {"os_family": "Archlinux"}}',
+                '{"ansible_become": false, "ansible_facts": {"os_family": "Archlinux", "distribution": "Archlinux", "distribution_major_version": "rolling"}}',
             ],
             cwd=REPOSITORY_ROOT,
             check=False,
@@ -1490,7 +1467,7 @@ class SourceContractTests(unittest.TestCase):
             )
 
     def test_system_maintenance_dispatches_supported_operating_systems(self) -> None:
-        """Debian and RedHat hosts must resolve to maintained task files."""
+        """Debian 13 hosts must resolve to maintained task files."""
         tasks = load_tasks("roles/system_maintenance/tasks/main.yml")
         first_task = tasks[0]
 
@@ -1499,11 +1476,10 @@ class SourceContractTests(unittest.TestCase):
             first_task["ansible.builtin.assert"],
             {
                 "that": [
-                    "ansible_facts['os_family'] in ['Debian', 'RedHat']"
+                    "ansible_facts['distribution'] == 'Debian' and ansible_facts['distribution_major_version'] == '13'"
                 ],
                 "fail_msg": (
-                    "system-maintenance does not support operating-system family "
-                    "received {{ ansible_facts['os_family'] }}"
+                    "system maintenance supports Debian 13 only"
                 ),
             },
         )
@@ -1512,7 +1488,7 @@ class SourceContractTests(unittest.TestCase):
             ["full-update.yml", "automatic-updates.yml", "reboot-state.yml"],
         )
         task_directory = REPOSITORY_ROOT / "roles/system_maintenance/tasks"
-        for os_family in ("Debian", "RedHat"):
+        for os_family in ("Debian",):
             for task_file in (
                 f"setup-{os_family}.yml",
                 f"automatic-updates-{os_family}.yml",
@@ -1528,7 +1504,7 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual(
             [
                 "system_maintenance_configure_automatic_updates | bool",
-                "ansible_facts['os_family'] in ['Debian', 'RedHat']",
+                "ansible_facts['os_family'] == 'Debian'",
             ],
             automatic_updates["when"],
         )
@@ -1536,7 +1512,7 @@ class SourceContractTests(unittest.TestCase):
             "roles/system_maintenance/tasks/reboot-state.yml"
         )[0]
         self.assertEqual(
-            "ansible_facts['os_family'] in ['Debian', 'RedHat']",
+            "ansible_facts['os_family'] == 'Debian'",
             reboot_state["when"],
         )
 
@@ -1564,23 +1540,15 @@ class SourceContractTests(unittest.TestCase):
                 f"missing prepare-cifs-storage tasks for {os_family}",
             )
 
-    def test_system_maintenance_never_reboots_or_reduces_kernel_retention(
+    def test_system_maintenance_never_reboots(
         self,
     ) -> None:
         task_paths = [
             "roles/system_maintenance/tasks/setup-Debian.yml",
-            "roles/system_maintenance/tasks/setup-RedHat.yml",
         ]
         tasks = [task for path in task_paths for task in load_tasks(path)]
 
         self.assertFalse(any("ansible.builtin.reboot" in task for task in tasks))
-        self.assertFalse(
-            any(
-                task.get("community.general.ini_file", {}).get("option")
-                == "installonly_limit"
-                for task in tasks
-            )
-        )
 
     def test_security_baseline_access_inputs_fail_closed(self) -> None:
         defaults = load_yaml_documents(
@@ -1839,21 +1807,13 @@ class SourceContractTests(unittest.TestCase):
             converge["vars"]["os_baseline_verify_sshd_connection_context"],
         )
 
-    def test_platform_mac_policy_does_not_mix_frameworks(self) -> None:
+    def test_platform_mac_policy_uses_debian_apparmor(self) -> None:
         tasks = load_tasks("roles/security_baseline/tasks/mac.yml")
-        selinux = next(
-            task
-            for task in tasks
-            if task.get("ansible.posix.selinux", {}).get("state") == "enforcing"
-        )
         apparmor = next(
             task
             for task in tasks
             if task["name"] == "Install Debian AppArmor packages"
         )
-        self.assertEqual("targeted", selinux["ansible.posix.selinux"]["policy"])
-        self.assertEqual("enforcing", selinux["ansible.posix.selinux"]["state"])
-        self.assertIn("ansible_facts['os_family'] == 'RedHat'", selinux["when"])
         self.assertIn("ansible_facts['os_family'] == 'Debian'", apparmor["when"])
 
     def test_logging_uses_persistent_bounded_journal(self) -> None:
@@ -1888,10 +1848,8 @@ class SourceContractTests(unittest.TestCase):
         tasks = load_tasks("roles/security_baseline/tasks/pre-update.yml")
         tasks_by_name = {task["name"]: task for task in tasks}
         self.assertIn("Install Debian repository trust and time packages", tasks_by_name)
-        self.assertIn("Install Rocky repository trust and time packages", tasks_by_name)
         self.assertIn("Enable and start platform time synchronization", tasks_by_name)
         debian = tasks_by_name["Install Debian repository trust and time packages"]
-        rocky = tasks_by_name["Install Rocky repository trust and time packages"]
         runtime = tasks_by_name["Enable and start platform time synchronization"]
 
         self.assertEqual(
@@ -1901,13 +1859,7 @@ class SourceContractTests(unittest.TestCase):
         self.assertEqual("ansible_facts['os_family'] == 'Debian'", debian["when"])
         self.assertNotIn("security_baseline_apply_time_runtime", str(debian))
         self.assertEqual(
-            {"name": ["ca-certificates", "chrony"], "state": "present", "lock_timeout": 300},
-            rocky["ansible.builtin.dnf"],
-        )
-        self.assertEqual("ansible_facts['os_family'] == 'RedHat'", rocky["when"])
-        self.assertNotIn("security_baseline_apply_time_runtime", str(rocky))
-        self.assertEqual(
-            "{{ 'systemd-timesyncd' if ansible_facts['os_family'] == 'Debian' else 'chronyd' }}",
+            "systemd-timesyncd",
             runtime["ansible.builtin.systemd_service"]["name"],
         )
         self.assertEqual("security_baseline_apply_time_runtime | bool", runtime["when"])
@@ -1921,15 +1873,10 @@ class SourceContractTests(unittest.TestCase):
             "Read Debian time service enablement": ["/usr/bin/systemctl", "is-enabled", "systemd-timesyncd.service"],
             "Read Debian time service activity": ["/usr/bin/systemctl", "is-active", "systemd-timesyncd.service"],
             "Read Debian time synchronization state": ["/usr/bin/timedatectl", "show", "--property=NTPSynchronized", "--value"],
-            "Read Rocky time service enablement": ["/usr/bin/systemctl", "is-enabled", "chronyd.service"],
-            "Read Rocky time service activity": ["/usr/bin/systemctl", "is-active", "chronyd.service"],
-            "Read Rocky chrony tracking state": ["/usr/bin/chronyc", "tracking"],
-            "Read Rocky chrony source state": ["/usr/bin/chronyc", "sources"],
         }
 
         self.assertNotIn("when", package_evidence)
         self.assertIn("systemd-timesyncd", str(package_evidence))
-        self.assertIn("chrony", str(package_evidence))
         for name, argv in expected_commands.items():
             with self.subTest(name=name):
                 self.assertIn(name, tasks_by_name)
@@ -1937,7 +1884,7 @@ class SourceContractTests(unittest.TestCase):
                 self.assertEqual(argv, task["ansible.builtin.command"]["argv"])
                 self.assertIs(False, task["changed_when"])
                 self.assertEqual(
-                    ["os_baseline_verify_runtime_controls | bool", "ansible_facts['os_family'] == 'Debian'" if "Debian" in name else "ansible_facts['os_family'] == 'RedHat'"],
+                    ["os_baseline_verify_runtime_controls | bool", "ansible_facts['os_family'] == 'Debian'"],
                     task["when"],
                 )
 
@@ -2029,16 +1976,13 @@ class SourceContractTests(unittest.TestCase):
     def test_system_maintenance_managed_packages_are_minimal(self) -> None:
         task_paths = (
             "roles/system_maintenance/tasks/setup-Debian.yml",
-            "roles/system_maintenance/tasks/setup-RedHat.yml",
             "roles/system_maintenance/tasks/automatic-updates-Debian.yml",
-            "roles/system_maintenance/tasks/automatic-updates-RedHat.yml",
         )
         managed_packages = {}
         for path in task_paths:
             for task in load_tasks(path):
                 for module in (
                     "ansible.builtin.apt",
-                    "ansible.builtin.dnf",
                 ):
                     arguments = task.get(module, {})
                     package = arguments.get("name")
@@ -2051,9 +1995,7 @@ class SourceContractTests(unittest.TestCase):
 
         self.assertEqual(
             {
-                "Install package-management utilities": "dnf-plugins-core",
                 "Install the native APT security updater": "unattended-upgrades",
-                "Install the native DNF security updater": "dnf-automatic",
             },
             managed_packages,
         )
@@ -2075,16 +2017,6 @@ class SourceContractTests(unittest.TestCase):
             True,
         )
 
-    def test_rocky_native_reboot_template_coerces_string_booleans(self) -> None:
-        for provided, expected in (("false", "never"), ("true", "when-needed")):
-            with self.subTest(provided=provided):
-                rendered = render_ansible_template(
-                    "roles/system_maintenance/templates/dnf-automatic.conf.j2",
-                    {"system_maintenance_native_reboot_enabled": provided},
-                )
-                configuration = configparser.ConfigParser()
-                configuration.read_string(rendered)
-                self.assertEqual(expected, configuration["commands"]["reboot"])
 
     def test_system_maintenance_configures_native_security_updater_mechanisms(
         self,
@@ -2094,11 +2026,6 @@ class SourceContractTests(unittest.TestCase):
                 "module": "ansible.builtin.apt",
                 "package": "unattended-upgrades",
                 "timer": "apt-daily-upgrade.timer",
-            },
-            "RedHat": {
-                "module": "ansible.builtin.dnf",
-                "package": "dnf-automatic",
-                "timer": "dnf-automatic.timer",
             },
         }
         for os_family, contract in platform_contracts.items():
@@ -2160,21 +2087,11 @@ class SourceContractTests(unittest.TestCase):
             apt_origins,
         )
 
-        dnf_policy = render_ansible_template(
-            "roles/system_maintenance/templates/dnf-automatic.conf.j2",
-            {"system_maintenance_native_reboot_enabled": "true"},
-        )
-        dnf_config = configparser.ConfigParser()
-        dnf_config.read_string(dnf_policy)
-        self.assertEqual("security", dnf_config["commands"]["upgrade_type"])
-        self.assertEqual("yes", dnf_config["commands"]["download_updates"])
-        self.assertEqual("yes", dnf_config["commands"]["apply_updates"])
 
     def test_system_maintenance_idempotence_skips_only_live_upgrades(self) -> None:
         """Live upgrades must run during converge but not strict idempotence."""
         imported_task_files = [
             "setup-Debian.yml",
-            "setup-RedHat.yml",
         ]
         playbook = [
             {
@@ -2229,7 +2146,6 @@ class SourceContractTests(unittest.TestCase):
 
         live_upgrade_tasks = [
             "Update package cache and upgrade all packages",
-            "Fully update installed packages",
         ]
         for task_name in live_upgrade_tasks:
             with self.subTest(task_name=task_name):
@@ -2238,7 +2154,6 @@ class SourceContractTests(unittest.TestCase):
 
         stable_tasks = [
             "Autoremove unused packages",
-            "Install package-management utilities",
         ]
         for task_name in stable_tasks:
             with self.subTest(task_name=task_name):

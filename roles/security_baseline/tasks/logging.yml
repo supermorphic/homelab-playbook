@@ -70,7 +70,6 @@
   vars:
     security_baseline_audit_packages:
       Debian: auditd
-      RedHat: audit
   block:
     - name: Validate audit package platform support
       ansible.builtin.assert:

@@ -25,9 +25,6 @@ Volume={{ semaphore_helper_root }}/repository-job.json:/etc/semaphore/repository
 {% if semaphore_controller_identity_enabled | default(false) %}
 Volume=/run/semaphore-identity:/run/semaphore-identity:ro
 Volume={{ semaphore_helper_root }}/identity-command.py:/opt/homelab/identity-command.py:ro
-{% if (ansible_facts | default({})).get('os_family', '') == 'RedHat' %}
-SecurityLabelType=semaphore_controller_t
-{% endif %}
 {% endif %}
 NoNewPrivileges=true
 

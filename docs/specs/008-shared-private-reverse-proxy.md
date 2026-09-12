@@ -2,17 +2,13 @@
 
 Issue: [#25 Shared private reverse proxy for NUC #4 services](https://github.com/supermorphic/homelab-playbook/issues/25)
 
-Status: Approved implementation design, including the operator's subsequent
-decision to use unpinned distribution packages and the existing OS maintenance
-lifecycle. It is not evidence of live deployment.
-
 ## Purpose and scope
 
 Provide one private HTTPS entry point for explicitly declared browser-based
 services on an off-cluster host. Ansible owns configuration, systemd supervises
 Caddy, and separately owned rootless Podman services expose local HTTP backends.
 The initial target is NUC #4; implementation supports the repository's Debian 13
-and Rocky Linux 9 baseline.
+baseline defined by [Specification 003](003-os-maintenance-security-baseline.md).
 
 Issue #25 owns the proxy, static route schema, private ingress, configuration
 activation, verification, and a disposable HTTP/WebSocket acceptance fixture.
@@ -50,14 +46,8 @@ benefit for this service that outweighs the additional mechanisms.
 ## Service installation and ownership
 
 Install the unpinned `caddy` distribution package without DNS-provider plugins.
-Use Debian 13's native APT repository. Rocky Linux 9 uses its compatible EPEL
-package, with the signed EPEL repository explicitly established by the role.
-The OS maintenance trust check recognizes the standard `epel` and
-`epel-cisco-openh264` repositories only when the exact root-owned Caddy ownership
-marker is present, and requires their EPEL 9 signing key. This keeps repeat
-provisioning and maintenance compatible with the installed Caddy package source.
-The demonstrated need for EPEL is the Caddy package; no upstream Caddy repository
-or standalone binary installer is introduced. Installation uses `state: present`;
+Use Debian 13's native APT repository. No upstream Caddy repository or standalone
+binary installer is introduced. Installation uses `state: present`;
 existing OS maintenance owns package upgrades. Daily security updates retain
 their existing distribution policy and depend on repository security metadata.
 Do not use `caddy upgrade`, package holds, or version locks. Verification records
@@ -82,8 +72,8 @@ sets to `CAP_NET_BIND_SERVICE`. Apply `NoNewPrivileges`, a private temporary
 directory, a read-only system filesystem, protected home directories, and a
 restrictive umask. Grant writable state only where required for runtime and
 Caddy state. Do not copy the upstream unit's broader capability set unchanged.
-Retain enforcing SELinux on Rocky and the existing AppArmor baseline on Debian;
-test required labels and access without disabling either mechanism.
+Retain the existing AppArmor baseline; test required access without disabling
+that mechanism.
 
 | Path | Owner:group | Mode | Purpose |
 | --- | --- | --- | --- |
@@ -336,7 +326,7 @@ It is never embedded in observational verification.
 
 Extend registered offline validation and its classifier to cover the subsystem.
 Use independent effective-state and protocol assertions rather than checking
-only generated text. Disposable Debian 13 and Rocky Linux 9 evidence covers:
+only generated text. Disposable Debian 13 evidence covers:
 
 - Input rejection, service identity, filesystem isolation, and effective unit
   restrictions, including denial of cross-account certificate and admin access.
@@ -375,7 +365,7 @@ These capabilities belong to the rootless test container; the
 managed Caddy service still receives only `CAP_NET_BIND_SERVICE`, and the
 production coordinator restrictions remain unchanged.
 Container checks establish permanent firewall configuration, not host-kernel
-firewall enforcement or enforcing SELinux behavior.
+firewall enforcement or enforcing AppArmor behavior.
 
 Offline results do not prove private-network reachability, physical boot,
 production certificate trust, certificate renewal, or recovery from a lost host.
@@ -392,7 +382,7 @@ dependency.
 - [Specification 003](003-os-maintenance-security-baseline.md) defines firewall
   ownership, mandatory access control, and host validation boundaries.
 - [Caddy systemd deployment](https://caddyserver.com/docs/running) documents
-  service ownership, logging, reload, and SELinux installation considerations.
+  service ownership, logging, and reload behavior.
 - [Caddy command line](https://caddyserver.com/docs/command-line) documents
   configuration validation.
 - [Caddy configuration API](https://caddyserver.com/docs/api) documents failed-load

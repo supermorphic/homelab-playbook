@@ -44,7 +44,7 @@ inventory. Add `--limit <host-or-pattern>` when you need a narrower target.
 
 ### OS baseline commands
 
-These commands target Debian 13 and Rocky Linux 9 hosts in `os_managed`.
+These commands target Debian 13 hosts in `os_managed`.
 The examples use the production inventory. Complete the
 [managed host onboarding guide](docs/guides/managed-host-onboarding.md) first
 for manual host preparation, SSH access, inventory, and secret setup.
@@ -213,18 +213,18 @@ validation is offline and receives no live identity.
 ### Molecule tests
 
 `mise run test:molecule -- system_maintenance/default` runs the repository's
-rootless Podman scenario for Debian 13 and Rocky Linux 9. The same platform set
-runs locally and in GitHub's native AMD64 matrix.
+rootless Podman scenario for Debian 13. It runs natively on local ARM64 or AMD64
+hosts and in GitHub's AMD64 matrix.
 
 `mise run test:molecule -- system_maintenance/baseline` runs complete Debian
-and Rocky composition. `mise run test:molecule -- reverse_proxy/default` exercises
+composition. `mise run test:molecule -- reverse_proxy/default` exercises
 the private proxy using disposable certificates and HTTP/WebSocket backends.
-Change-directed validation selects affected scenarios on both platforms using
+Change-directed validation selects affected Debian scenarios using
 [the checked-in impact map](scripts/ci/molecule-impact.json). Proxy and TLS role
 changes also select the baseline scenario, which exercises those integrations.
 TLS runtime tests and the three TLS-specific Ansible test files select the same
 two scenarios. Other Ansible validation tests retain full-suite selection.
-Shared framework changes and uncertain impact select all eight rows. Documentation
+Shared framework changes and uncertain impact select all four rows. Documentation
 changes under `docs/` or subsystem READMEs select no Molecule rows.
 
 Use `mise run ci:changed -- --dry-run` to inspect selected scenarios and reasons.
@@ -234,7 +234,7 @@ reasons to its job summary. Scheduled and manual CI run the complete suite;
 reboot, host-kernel enforcement, real network reachability, private ingress, or recovery from the real NAS.
 
 `mise run test:molecule -- semaphore/default` prepares Semaphore storage and
-configuration and checks generated Quadlets and timers on both distributions.
+configuration and checks generated Quadlets and timers on Debian 13.
 Nested user-namespace limits prevent application startup in these OS fixtures.
 Separate `test:semaphore` modes exercise the pinned runtime and recovery with
 disposable containers whenever the Semaphore scenario is selected.
