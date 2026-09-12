@@ -26,6 +26,8 @@ SAMBA_IMAGE = (
     "ghcr.io/servercontainers/samba:smbd-only-a3.24.1-s4.23.8-r0@"
     "sha256:0b8ce469f097a1afdd4f286c4313dae52ce18aad6a7e3b25ee3d93fd09200866"
 )
+TASK_OUTPUT_LINES = 20
+TASK_OUTPUT_CHARACTERS = 4000
 
 
 def _load_restore():
@@ -95,6 +97,7 @@ class Fixture:
         self.temp: tempfile.TemporaryDirectory[str] | None = None
         self.root: Path | None = None
         self.settings: dict[str, str] = {}
+        self.private_values: set[str] = set()
         self.cookie_config: Path | None = None
         self.oneshot_counter = 0
 
@@ -151,6 +154,19 @@ class Fixture:
             "SEMAPHORE_ACCESS_KEY_ENCRYPTION": base64.b64encode(os.urandom(32)).decode("ascii"),
             "SEMAPHORE_APPS": json.dumps({"bash": {"active": True}}),
         }
+        basic_auth = f"{username}:{password}"
+        self.private_values.update(
+            {
+                password,
+                database_password,
+                admin_password,
+                self.settings["SEMAPHORE_COOKIE_HASH"],
+                self.settings["SEMAPHORE_COOKIE_ENCRYPTION"],
+                self.settings["SEMAPHORE_ACCESS_KEY_ENCRYPTION"],
+                basic_auth,
+                base64.b64encode(basic_auth.encode("utf-8")).decode("ascii"),
+            }
+        )
         self._write_private(
             self.root / "settings.env",
             "".join(f"{key}={value}\n" for key, value in self.settings.items()),
@@ -259,6 +275,11 @@ class Fixture:
         login = self._curl("--fail-with-body", "--dump-header", "-", "--request", "POST", "--header", "Content-Type: application/json", "--data-binary", "@-", "http://source-semaphore:3000/api/auth/login", input_text=json.dumps({"auth": self.settings["SEMAPHORE_ADMIN"], "password": self.settings["SEMAPHORE_ADMIN_PASSWORD"]}))
         cookie = next((line.split(":", 1)[1].strip().split(";", 1)[0] for line in login.stdout.splitlines() if line.lower().startswith("set-cookie:")), None)
         if not cookie: raise FixtureFailure("fixture login returned no cookie")
+        self.private_values.add(cookie)
+        if "=" in cookie:
+            cookie_value = cookie.split("=", 1)[1]
+            if cookie_value:
+                self.private_values.add(cookie_value)
         self.cookie_config = self.root / "api.conf"
         self._write_private(self.cookie_config, f"cookie = {json.dumps(cookie)}\n")
         project = self._api("POST", "/api/projects", {"name": "Recovery fixture", "alert": False, "max_parallel_tasks": 1})
@@ -281,9 +302,32 @@ class Fixture:
         for _ in range(180):
             record = self._api("GET", f"/api/project/{project}/tasks/{task}")
             if record["status"] == "success": return
-            if record["status"] in {"error", "stopped", "failed"}: raise FixtureFailure(f"source task failed: {record['status']}")
+            if record["status"] in {"error", "stopped", "failed"}:
+                detail = self._recent_task_output(project, task)
+                raise FixtureFailure(
+                    f"source task failed: {record['status']}; recent task output:\n{detail}"
+                )
             time.sleep(1)
         raise FixtureFailure("source fixture task timed out")
+
+    def _recent_task_output(self, project: int, task: int) -> str:
+        try:
+            records = self._api(
+                "GET", f"/api/project/{project}/tasks/{task}/output"
+            )
+        except (FixtureFailure, TypeError, ValueError):
+            return "task output unavailable"
+        if not isinstance(records, list):
+            return "task output unavailable"
+        lines = [
+            str(record.get("output", "")).strip()
+            for record in records[-TASK_OUTPUT_LINES:]
+            if isinstance(record, dict) and str(record.get("output", "")).strip()
+        ]
+        detail = "\n".join(lines) or "task output unavailable"
+        for value in sorted(self.private_values, key=len, reverse=True):
+            detail = detail.replace(value, "<redacted>")
+        return detail[-TASK_OUTPUT_CHARACTERS:]
 
     def _backup_and_transfer(self) -> None:
         assert self.root is not None
