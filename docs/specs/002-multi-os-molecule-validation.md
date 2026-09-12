@@ -1,7 +1,9 @@
 # Specification 002: Debian Molecule validation
 
-Issues: [#11 Establish multi-OS Molecule validation](https://github.com/supermorphic/homelab-playbook/issues/11)
-and [#32 Deterministic Molecule CI gating](https://github.com/supermorphic/homelab-playbook/issues/32)
+Issues: [#11 Establish multi-OS Molecule validation](https://github.com/supermorphic/homelab-playbook/issues/11),
+[#32 Deterministic Molecule CI gating](https://github.com/supermorphic/homelab-playbook/issues/32),
+[#35 Lifecycle timing](https://github.com/supermorphic/homelab-playbook/issues/35),
+and [#40 Debian-only support](https://github.com/supermorphic/homelab-playbook/issues/40).
 
 ## Purpose
 
@@ -368,6 +370,54 @@ For each platform, the runner reports:
 
 The local summary reports wall-clock invocation duration separately from the
 worker stage durations.
+
+The runner observes the pinned Molecule lifecycle's start and completion log
+markers using a monotonic clock. It reports create, prepare, converge,
+idempotence, verify, cleanup, and destroy separately, as well as syntax when
+executed. Repeated phases retain their execution number, duration, and outcome.
+A started phase without a completion marker is `incomplete`; an unstarted phase
+is `not run`. These observations do not replace Molecule's test sequence or
+failure handling. The worker's existing cleanup total measures the final
+label-checked container-removal safeguard separately from Molecule cleanup.
+
+An aggregate Ansible callback is enabled only in the Molecule subprocess
+environment. It measures time between task starts and the final playbook recap,
+including handlers and skipped task dispatch. Task durations therefore include
+controller and connection overhead and are not container CPU measurements. Each
+record contains only a source location, role source directory, opaque role
+invocation identifier, and duration. Source locations outside approved role and
+playbook directories are marked generated. No task names, arguments, variables,
+host identifiers, or result objects enter timing records.
+Internal Ansible role identifiers are hashed with a random per-process salt
+before emission; their embedded controller identity is never emitted.
+
+The runner consumes callback records as they arrive and retains bounded
+aggregates: at most 64 phase executions and 4,096 task sources, role groups, and
+role invocation identifiers per platform. Reports show the 20 slowest task totals
+and role totals across phase executions, task call counts and maximum durations,
+and role invocation counts. A role invocation means an Ansible role instance in
+one playbook process; skipped tasks still contribute dispatch overhead. Collection
+limits, invalid records, and missing task timing are explicit. The callback keeps
+only the current task in memory. Timing records are omitted from streamed logs;
+ordinary Ansible output is unchanged.
+
+Terminal output and GitHub job summaries include these tables together with the
+scenario, architecture, Git commit, and worktree status at invocation start.
+Untracked, staged, and unstaged changes mark local evidence as including
+uncommitted changes. Git inspection failure produces unknown provenance.
+Structured reports remain under
+`.tmp/molecule-timings/<invocation>/timings.json`, outside Molecule's pruned
+ephemeral directory. They contain bounded timing data and existing platform
+provenance, never copies of raw playbook output.
+
+Ordinary lifecycle failures preserve available timings and cleanup behavior.
+The last task of an interrupted playbook may lack a duration because its next
+task or recap callback never ran. A killed runner or terminated GitHub job cannot
+guarantee a final summary or artifact. Missing data is not evidence of zero cost.
+Compare measurements with matching architecture, source revision, cache state,
+and concurrency; maintained package repositories can change between runs.
+Run-specific comparisons and optimization proposals belong in uncommitted
+implementation reports under `.tmp/`, not this durable specification.
 
 GitHub writes the same platform data to each job summary. The workflow and
 merge-gate summaries make infrastructure acquisition failures distinguishable

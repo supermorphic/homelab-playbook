@@ -233,6 +233,21 @@ reasons to its job summary. Scheduled and manual CI run the complete suite;
 `mise run ci` remains the explicit complete local validation command. Container results do not prove physical
 reboot, host-kernel enforcement, real network reachability, private ingress, or recovery from the real NAS.
 
+Each Molecule invocation reports phase durations and the 20 slowest task and role
+totals in terminal output and GitHub job summaries. Repeated phases have separate
+execution numbers. Failed phases retain elapsed time; unstarted phases show
+`not run`. The existing platform `cleanup` total measures the runner's final
+container-removal safeguard, separately from the Molecule cleanup phase.
+
+Reports identify the scenario, platform, architecture, image, Git commit, and
+whether the worktree had uncommitted changes at invocation start. A bounded JSON
+report remains under `.tmp/molecule-timings/<invocation>/timings.json`, including
+after ordinary test failures. Task records contain source locations and elapsed
+time, without task names, arguments, variables, or results. Compare matching
+architectures and cache conditions; task elapsed time includes controller and
+connection overhead. See the [Molecule specification](docs/specs/002-multi-os-molecule-validation.md)
+for measurement limits.
+
 `mise run test:molecule -- semaphore/default` prepares Semaphore storage and
 configuration and checks generated Quadlets and timers on Debian 13.
 Nested user-namespace limits prevent application startup in these OS fixtures.
