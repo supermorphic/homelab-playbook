@@ -324,7 +324,7 @@ Offline evidence includes:
   onboarding commands while the source-adjacent OS README remains a brief
   subsystem description.
 
-Molecule may use synthetic hostnames, the `UTC` timezone, and generated
+Molecule may use synthetic hostnames, the `Etc/UTC` timezone, and generated
 disposable SSH keys. It must not read the production protected file or contact
 `nuc4`. Container checks prove file, command, task-order, and idempotence
 contracts only. They do not prove a physical hostname transition across boot,

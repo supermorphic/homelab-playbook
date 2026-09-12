@@ -242,7 +242,7 @@ class RepositoryJobIntegrationTests(unittest.TestCase):
         )
         plaintext = self.root / "inventory-secrets.yml"
         plaintext.write_text(
-            "host_identity_timezone: UTC\n"
+            "host_identity_timezone: Etc/UTC\n"
             "security_baseline_authorized_keys:\n"
             f"  - {public_key}\n"
             "security_baseline_management_sources:\n"

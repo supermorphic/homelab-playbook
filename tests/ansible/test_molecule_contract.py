@@ -533,7 +533,7 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             "molecule-{{ inventory_hostname }}",
             variables["host_identity_hostname"],
         )
-        self.assertEqual("UTC", variables["host_identity_timezone"])
+        self.assertEqual("Etc/UTC", variables["host_identity_timezone"])
         self.assertEqual(["10.0.0.0/8"], variables["security_baseline_management_sources"])
         proxy_task = next(
             task
@@ -630,7 +630,7 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             [
                 "system_maintenance_molecule_baseline_static_hostname.stdout | trim == 'molecule-' ~ inventory_hostname",
                 "system_maintenance_molecule_baseline_current_hostname.stdout | trim == 'molecule-' ~ inventory_hostname",
-                "system_maintenance_molecule_baseline_timezone.stdout | trim == 'UTC'",
+                "system_maintenance_molecule_baseline_timezone.stdout | trim == 'Etc/UTC'",
             ],
             [
                 " ".join(expression.split())

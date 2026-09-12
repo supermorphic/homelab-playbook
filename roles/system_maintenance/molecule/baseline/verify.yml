@@ -58,7 +58,7 @@
             system_maintenance_molecule_baseline_current_hostname.stdout | trim ==
             'molecule-' ~ inventory_hostname
           - >-
-            system_maintenance_molecule_baseline_timezone.stdout | trim == 'UTC'
+            system_maintenance_molecule_baseline_timezone.stdout | trim == 'Etc/UTC'
 
     - name: Gather independently observable package state
       ansible.builtin.package_facts:
@@ -457,7 +457,7 @@
   ansible.builtin.import_playbook: ../../../../playbooks/os/verify.yml
   vars:
     host_identity_hostname: "molecule-{{ inventory_hostname }}"
-    host_identity_timezone: UTC
+    host_identity_timezone: Etc/UTC
     os_baseline_verify_runtime_controls: false
     security_baseline_authorized_keys:
       - >-
