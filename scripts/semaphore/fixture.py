@@ -243,6 +243,20 @@ class Fixture:
                     "--env-file", str(self.root / "semaphore.env"), self.restore.SEMAPHORE_IMAGE)
         for _ in range(90):
             if self._curl("--fail", "http://source-semaphore:3000/api/ping", check=False).returncode == 0:
+                probe = self.podman(
+                    "exec", self.application, "/usr/bin/curl", "--fail", "--silent",
+                    "--show-error", "--max-time", "10", "--output", "/dev/null",
+                    "http://fixture-target:8000/recovery.git/info/refs", check=False,
+                )
+                if probe.returncode != 0:
+                    state = self.podman(
+                        "inspect", "--format", "{{.State.Status}} exit={{.State.ExitCode}}",
+                        self.target, check=False,
+                    )
+                    raise FixtureFailure(
+                        f"source repository readiness failed: {probe.stderr.strip()}; "
+                        f"target state: {state.stdout.strip()}"
+                    )
                 return
             time.sleep(1)
         raise FixtureFailure("source Semaphore readiness timed out")

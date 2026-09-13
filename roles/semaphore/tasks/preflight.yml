@@ -282,6 +282,7 @@
         | list | length == 1
       - >-
         reverse_proxy_routes | default([])
+        | selectattr('backend_port', 'defined')
         | selectattr('backend_port', 'equalto', semaphore_backend_port)
         | list | length == 1
     fail_msg: >-
