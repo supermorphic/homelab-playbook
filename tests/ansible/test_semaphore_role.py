@@ -472,6 +472,28 @@ class SemaphoreInputValidationTests(unittest.TestCase):
             "semaphore_helper_root": "/usr/local/libexec/semaphore",
         }
 
+    def test_shared_proxy_accepts_device_routes_and_rejects_local_conflicts(self) -> None:
+        tasks = yaml.safe_load((ROLE / "tasks/preflight.yml").read_text())
+        validation = next(task for task in tasks if task["name"] == "Require declared shared proxy route")
+        device = {
+            "hostname": "device.example.test", "certificate_name": "infra",
+            "backend": {"transport": "http", "address": "192.0.2.10", "port": 80},
+        }
+        application = {
+            "hostname": "semaphore.example.test", "certificate_name": "semaphore",
+            "backend_port": 13000,
+        }
+        cases = [
+            ("mixed routes", [device, application], True),
+            ("missing application", [device], False),
+            ("duplicate hostname", [device, application, application], False),
+            ("duplicate local port", [device, application, application | {"hostname": "other.example.test"}], False),
+        ]
+        for label, routes, accepted in cases:
+            with self.subTest(label=label):
+                result = self.run_task(validation, self.public_variables() | {"reverse_proxy_routes": routes})
+                self.assertEqual(accepted, result.returncode == 0, result.stdout + result.stderr)
+
     def test_negative_foundation_identity_is_rejected_before_host_observation(self) -> None:
         tasks = yaml.safe_load((ROLE / "tasks/preflight.yml").read_text())
         validation = next(
