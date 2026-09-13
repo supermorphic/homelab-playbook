@@ -16,6 +16,7 @@ podman_foundation_accounts:
 semaphore_hostname: semaphore.infra.supermorphic.com
 semaphore_backend_port: 18080
 semaphore_certificate_name: infra
+semaphore_rclone_remote: "nas:Semaphore/postgres"
 # Enable after the dedicated identity and controller inputs are enrolled.
 semaphore_controller_enabled: false
 semaphore_controller_identity_enabled: false
