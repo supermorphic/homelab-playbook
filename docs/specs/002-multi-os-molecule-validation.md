@@ -253,9 +253,18 @@ the systemd-specific writable tmpfs and cgroup setup required by
 
 The two maintenance scenarios add no capabilities. The reverse proxy scenario
 adds `SYS_PTRACE` for socket inspection and `SYS_ADMIN` for its systemd sandbox
-tests, as defined in [Specification 008](008-shared-private-reverse-proxy.md).
+tests, plus `NET_ADMIN` for delayed-address startup verification, as defined in
+[Specification 008](008-shared-private-reverse-proxy.md).
 The Semaphore scenario adds `SYS_PTRACE` for socket inspection. These allowances
 apply only within the rootless test containers and do not grant host privileges.
+
+The proxy fixture image clears journald's unused `ImportCredential=journal.*`
+setting. No systemd credentials are supplied to this disposable fixture; the
+import can fail at systemd's `CREDENTIALS` setup step on a rootless Podman host.
+This image-only adjustment preserves journald's other service restrictions and
+the installed Caddy unit. Preparation requires journald to be active before the
+long provisioning sequence, because startup-recovery verification reads its
+journal. Production journald configuration is unchanged.
 
 Ansible operates as root inside the container because package management,
 system configuration, and systemd require it. With rootless Podman, this user is

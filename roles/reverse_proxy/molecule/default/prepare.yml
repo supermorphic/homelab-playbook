@@ -6,6 +6,11 @@
   vars:
     reverse_proxy_molecule_fixture_root: /var/lib/reverse-proxy-molecule
   tasks:
+    - name: Require journald for startup-recovery verification
+      ansible.builtin.command:
+        argv: [/usr/bin/systemctl, is-active, systemd-journald.service]
+      changed_when: false
+
     # Inherit the system manager's root identity. Explicit User=root in nested
     # Debian systemd loses the capability needed for the adapter's runuser call.
     - name: Check the disposable coordinator sandbox before provisioning
