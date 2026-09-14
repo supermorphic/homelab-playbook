@@ -192,6 +192,15 @@ class SemaphoreTemplateTests(unittest.TestCase):
 
 
 class SemaphorePlaybookTests(unittest.TestCase):
+    def test_account_switch_commands_start_outside_private_operator_directories(self) -> None:
+        for filename in ("verify.yml", "toolchain.yml", "definitions.yml"):
+            for task in yaml.safe_load((ROLE / "tasks" / filename).read_text()):
+                command = task.get("ansible.builtin.command", {})
+                if not isinstance(command, dict) or "/usr/sbin/runuser" not in command.get("argv", []):
+                    continue
+                with self.subTest(task=task["name"]):
+                    self.assertEqual("/", command.get("chdir"))
+
     PASSWORD_ALIASES = (
         "ansible_password",
         "ansible_ssh_pass",

@@ -202,6 +202,7 @@
 
 - name: Check persistent controller tool readiness in the stock image
   ansible.builtin.command:
+    chdir: /
     argv:
       - /usr/sbin/runuser
       - -u
@@ -241,6 +242,7 @@
 
 - name: Prepare changed or incomplete persistent controller tools
   ansible.builtin.command:
+    chdir: /
     argv:
       - /usr/sbin/runuser
       - -u
@@ -283,6 +285,7 @@
 
 - name: Verify prepared persistent controller tools
   ansible.builtin.command:
+    chdir: /
     argv:
       - /usr/sbin/runuser
       - -u

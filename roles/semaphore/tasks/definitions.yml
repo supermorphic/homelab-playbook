@@ -17,6 +17,7 @@
 
 - name: Validate installed rootless Quadlet definitions
   ansible.builtin.command:
+    chdir: /
     argv:
       - /usr/sbin/runuser
       - -u
