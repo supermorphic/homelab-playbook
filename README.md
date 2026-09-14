@@ -241,11 +241,11 @@ container-removal safeguard, separately from the Molecule cleanup phase.
 
 Reports identify the scenario, platform, architecture, image, Git commit, and
 whether the worktree had uncommitted changes at invocation start. A bounded JSON
-report remains under `.tmp/molecule-timings/<invocation>/timings.json`, including
-after ordinary test failures. Task records contain source locations and elapsed
-time, without task names, arguments, variables, or results. Compare matching
-architectures and cache conditions; task elapsed time includes controller and
-connection overhead. See the [Molecule specification](docs/specs/002-multi-os-molecule-validation.md)
+report is retained, including after ordinary test failures. Task records contain
+source locations and elapsed time, without task names, arguments, variables, or
+results. Compare matching architectures and cache conditions; task elapsed time
+includes controller and connection overhead. See the
+[Molecule specification](docs/specs/002-multi-os-molecule-validation.md)
 for measurement limits.
 
 `mise run test:molecule -- semaphore/default` prepares Semaphore storage and

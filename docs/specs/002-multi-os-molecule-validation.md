@@ -414,10 +414,9 @@ Terminal output and GitHub job summaries include these tables together with the
 scenario, architecture, Git commit, and worktree status at invocation start.
 Untracked, staged, and unstaged changes mark local evidence as including
 uncommitted changes. Git inspection failure produces unknown provenance.
-Structured reports remain under
-`.tmp/molecule-timings/<invocation>/timings.json`, outside Molecule's pruned
-ephemeral directory. They contain bounded timing data and existing platform
-provenance, never copies of raw playbook output.
+Structured reports contain bounded timing data and existing platform provenance,
+never copies of raw playbook output. They survive Molecule's ephemeral-directory
+cleanup.
 
 Ordinary lifecycle failures preserve available timings and cleanup behavior.
 The last task of an interrupted playbook may lack a duration because its next
@@ -425,8 +424,8 @@ task or recap callback never ran. A killed runner or terminated GitHub job canno
 guarantee a final summary or artifact. Missing data is not evidence of zero cost.
 Compare measurements with matching architecture, source revision, cache state,
 and concurrency; maintained package repositories can change between runs.
-Run-specific comparisons and optimization proposals belong in uncommitted
-implementation reports under `.tmp/`, not this durable specification.
+Keep run-specific comparisons and optimization proposals in uncommitted
+implementation reports.
 
 GitHub writes the same platform data to each job summary. The workflow and
 merge-gate summaries make infrastructure acquisition failures distinguishable
