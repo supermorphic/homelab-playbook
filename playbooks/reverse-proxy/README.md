@@ -76,7 +76,7 @@ reverse_proxy_deferred_certificates: [infra]
 HTTPS device backends additionally require `server_name` and `trust_name`.
 The named PEM trust bundle is supplied by `reverse_proxy_trust_certificates`
 in protected inventory. Trust names are immutable; trust rotation requires a
-new name. See the [device guide](../../docs/guides/device-proxy.md) for examples
+new name. See the [reverse-proxy guide](../../docs/guides/reverse-proxy.md) for examples
 and the modem identity prerequisite. No TLS-verification bypass is available.
 
 Provisioning commits a desired manifest together with Caddy's effective
