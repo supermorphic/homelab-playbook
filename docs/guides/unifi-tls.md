@@ -11,7 +11,7 @@ UniFi consoles retain their own certificates and Cloudflare tokens. They do not
 receive the Caddy wildcard private key or depend on NUC #4 for renewal. Caddy is
 the intended TLS endpoint for NUC #4 applications and proxied private device
 interfaces. The [hybrid TLS design](../specs/007-off-cluster-tls-trust.md) records
-the ownership boundaries. The [device proxy guide](device-proxy.md) defines DNS,
+the ownership boundaries. The [reverse-proxy guide](reverse-proxy.md) defines DNS,
 backend transport, acceptance, and recovery requirements. Each device route
 still requires separate compatibility verification.
 

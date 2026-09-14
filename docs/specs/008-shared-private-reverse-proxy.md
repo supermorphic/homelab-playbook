@@ -161,6 +161,45 @@ Private ingress policy follows declared routes so TLS can later activate them
 without becoming a second firewall controller. An empty effective route list
 still has no network listener. Removing all desired routes removes allowances.
 
+## Independent HTTPS edge health
+
+Issue #49 adds a third route form with exactly `hostname`, `certificate_name`,
+and `health: true`. It has no upstream. The fixed Caddy response accepts GET and
+HEAD at exact path `/healthz`: GET returns 200 with body `ok` and no newline;
+HEAD returns 200 without a body. Query strings do not change path matching.
+Other paths and methods return 404. The schema rejects backend fields and
+custom response fragments on health routes. Existing application and device
+routes keep their forwarding behavior.
+
+Use a dedicated `caddy.infra.supermorphic.com` hostname so the edge check remains
+stable when Semaphore, Forgejo, or other application routes change. The selected
+edge URL is `https://caddy.infra.supermorphic.com/healthz`; the separate application
+probe is `https://semaphore.infra.supermorphic.com/api/ping` (unauthenticated GET,
+expected 200). Both use private TCP/443 and hostname-verified TLS. A private DNS
+record and coverage by the existing `infra` wildcard are deployment prerequisites;
+no new issuer or renewal workflow is introduced. An existing application hostname
+would save a DNS record, but would tie the edge contract to that application's
+route lifecycle.
+
+The health route participates in the same desired manifest, ingress binding,
+certificate deferral and publication, validation, reload, rollback, and startup
+recovery as every other HTTPS route. A health-only desired list still requires
+private ingress and valid certificates. Removing all routes retains the existing
+admin-only behavior. Caddy's administration API remains on its protected socket.
+
+The signal proves the HTTPS edge responds, not general host or application
+health. A disposable scenario stops its backend while retaining a successful
+edge response, and checks the response after certificate and startup recovery.
+Production deployment and a read-only probe from the intended monitoring network
+remain separate operator evidence. The
+[proxy README](../../playbooks/reverse-proxy/README.md#monitoring-endpoint-contract)
+records the endpoint contract. The [reverse-proxy guide](../guides/reverse-proxy.md)
+covers protected route enrollment, deployment, and consumer handoff.
+[homelab-talos#423](https://github.com/supermorphic/homelab-talos/issues/423) owns
+Homepage/Gatus configuration and must receive deployment readiness before
+activating its edge check. Neither observation service is a host recovery
+prerequisite.
+
 ## Firewall integration
 
 The existing security baseline remains the sole firewall policy owner. Compose

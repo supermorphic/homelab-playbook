@@ -48,6 +48,21 @@ class ManifestTests(ActivationFixture):
         self.assertEqual(1, len(config['routes']))
         self.assertNotIn('https://', self.manifests.render(config))
 
+    def test_health_route_uses_deferred_certificate_and_endpoint_binding(self):
+        self.config['routes'].append({'hostname': 'caddy.infra.example.com',
+                                      'certificate_name': 'infra', 'health': True})
+        self.candidates()
+        unused, config = self.manifests.candidate()
+        self.assertEqual([], self.manifests.effective(config)['routes'])
+        self.assertIn(('caddy.infra.example.com', '10.20.30.40', 443),
+                      self.manifests.endpoints(config))
+        generation = '/etc/caddy/tls/infra/issued-1'
+        effective = self.manifests.effective(config, generation)
+        self.assertEqual(2, len(effective['routes']))
+        rendered = self.manifests.render(config, generation)
+        self.assertIn('https://caddy.infra.example.com:443', rendered)
+        self.assertIn(generation + '/fullchain.pem', rendered)
+
     def test_hash_or_ingress_mismatch_cannot_become_authority(self):
         self.candidates()
         ingress_path = self.state / 'ingress.candidate.json'

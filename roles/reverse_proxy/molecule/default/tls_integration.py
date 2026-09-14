@@ -23,7 +23,7 @@ from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 FIXTURE = Path("/var/lib/reverse-proxy-molecule")
 HELPER = "/usr/local/libexec/homelab-reverse-proxy"
-MANAGED = {"room-alert.infra.example.com", "modem.infra.example.com"}
+MANAGED = {"room-alert.infra.example.com", "modem.infra.example.com", "caddy.infra.example.com"}
 
 
 def command(arguments, expected=0):
@@ -73,13 +73,15 @@ def served(address, hostname, request=False):
     with socket.create_connection((address, 443), timeout=10) as connection:
         with ssl.create_default_context().wrap_socket(connection, server_hostname=hostname) as tls:
             digest = hashlib.sha256(tls.getpeercert(binary_form=True)).hexdigest()
-            if request:
-                tls.sendall(("GET /ready HTTP/1.1\r\nHost: " + hostname
+            health = hostname == "caddy.infra.example.com"
+            if request or health:
+                path = "/healthz" if health else "/ready"
+                tls.sendall(("GET " + path + " HTTP/1.1\r\nHost: " + hostname
                              + "\r\nConnection: close\r\n\r\n").encode())
                 response = http.client.HTTPResponse(tls)
                 response.begin()
                 body = response.read()
-                if response.status != 200 or b"device-fixture" not in body:
+                if response.status != 200 or (body != b"ok" if health else b"device-fixture" not in body):
                     raise AssertionError("private device backend did not receive the proxy request")
             return digest
 

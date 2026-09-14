@@ -1,22 +1,21 @@
-# Private device browser access through Caddy
+# Private HTTPS routes through Caddy
 
-The selected [hybrid TLS design](../specs/007-off-cluster-tls-trust.md) includes
-private HTTPS browser access to device management interfaces through the shared
-Caddy proxy on NUC #4. The host issuer and certificate publication capability
-are implemented with automatic renewal disabled by default; see the
-[TLS playbook README](../../playbooks/tls/README.md). The TLS role installs the
-Caddy adapter; live device routes require operator configuration and deployment.
-Use this guide for their configuration and
-acceptance procedure; it does not claim operational routes.
+Use this guide to configure and verify private HTTPS routes through the shared
+host Caddy service: device management interfaces and the independent monitoring
+endpoint. The [reverse-proxy README](../../playbooks/reverse-proxy/README.md)
+describes the service, inputs, commands, and endpoint contract.
 
-Use one explicit route per device. Caddy presents the separately managed public
-certificate to browsers, then opens an independent connection to the device.
-Select and verify that backend connection according to the device's actual
-capabilities. This guide uses two examples:
+Establish the [OS baseline](managed-host-onboarding.md) and controller
+[SOPS setup](sops-secrets.md) first. Production and staging playbook execution
+requires explicit authorization for the exact action, inventory, host limit,
+and extra arguments.
 
-- An ARRIS S34 cable modem with an HTTPS management interface.
-- A Room Alert 3E environmental monitor with an HTTP port 80 management
-  interface.
+The [hybrid TLS design](../specs/007-off-cluster-tls-trust.md) gives Caddy a
+separately managed wildcard certificate. The host issuer and certificate
+publication capability are implemented with automatic renewal disabled by
+default; see the [TLS playbook README](../../playbooks/tls/README.md). The TLS
+role installs the Caddy adapter. Live routes require operator configuration,
+deployment, and acceptance; this guide does not claim operational routes.
 
 ## DNS and routing
 
@@ -28,19 +27,19 @@ These values are synthetic examples, not production inputs:
 | Room Alert 3E | `room-alert.infra.example.com` | `room-alert.infra.example.com` to `192.0.2.40` | `http://192.0.2.60:80` |
 
 The Pi-hole records point to NUC #4's private proxy listener. The backend
-addresses are the devices' actual management addresses. Keep real hostnames and
-addresses in private operator configuration, not in this public guide.
+addresses are the devices' actual management addresses. Keep device deployment
+inputs in protected inventory; the device values in this guide are synthetic.
 
 Keep Caddy-served names under `infra.example.com`, separate from direct UniFi
 names such as `udm.example.com`, `protect.example.com`, and `nas.example.com`.
 Caddy's certificate contains exactly the `*.infra.example.com` DNS SAN; it does
 not include a broader wildcard or the directly managed appliance names.
 
-Create the exact local records on each Pi-hole instance used by management
-clients. Caddy must connect directly to each device, not back to its own
-listener. Verify NUC #4 has a route to every device management network and
-restrict proxy ingress to the intended private management networks. No public
-listener or WAN port forwarding is needed.
+Create the exact local records on each Pi-hole instance used by the intended
+clients, including monitoring clients. Restrict proxy ingress to the approved
+private client networks. No public listener or WAN port forwarding is needed.
+For device routes, verify NUC #4 can reach each device management network and
+connect directly to the device, not back to its own listener.
 
 Add one explicit hostname route per device through the proxy's Ansible-managed
 configuration. Issue #25 owns the proxy runtime, configuration validation, and
@@ -50,9 +49,15 @@ disabling one device route.
 
 When a device address changes, update that route's backend and any affected
 routing rules. The browser hostname and certificate can remain unchanged. When
-NUC #4's listener address changes, update the Pi-hole records instead.
+NUC #4's listener address changes, update the Pi-hole records for every route,
+including the monitoring hostname.
 
 ## Select the backend transport
+
+Use one explicit route per device. Caddy presents the separately managed
+certificate to browsers, then opens an independent connection to the device.
+The examples below cover an ARRIS S34 HTTPS management interface and a Room
+Alert 3E HTTP management interface.
 
 ### HTTPS devices
 
@@ -151,7 +156,7 @@ configuration outside public repository artifacts when they contain
 infrastructure identifiers. Supply protected repository inputs under the
 existing SOPS boundary.
 
-## Acceptance procedure
+## Verify device routes
 
 After the operator authorizes deployment of the exact proxy configuration:
 
@@ -175,7 +180,78 @@ redirects, cookies, or application behavior require special handling, inspect
 the actual failure and add only a tested route-specific change. A trusted
 browser certificate alone does not prove the entire management interface works.
 
+## Deploy the monitoring endpoints
+
+The [README endpoint contract](../../playbooks/reverse-proxy/README.md#monitoring-endpoint-contract)
+selects `https://caddy.infra.supermorphic.com/healthz` for the edge and
+`https://semaphore.infra.supermorphic.com/api/ping` for Semaphore. The URLs alone
+are not evidence of live deployment. Complete these steps before consumer
+activation:
+
+1. Follow [DNS and routing](#dns-and-routing) for
+   `caddy.infra.supermorphic.com`, pointing it to the existing NUC4 private Caddy
+   listener. Confirm the installed `infra` certificate
+   covers that name; its existing wildcard needs no separate renewal workflow.
+2. Through the protected inventory process, append the health route below.
+   Use the selected real hostname in place of the synthetic example. Preserve
+   all existing routes, including Semaphore's
+   hostname, backend port, and certificate. Do not replace the authoritative list
+   with only the health route. Retain the existing private bind addresses and
+   approved client sources, and confirm the intended monitoring network is allowed.
+3. With explicit authorization for that action and target, run
+   `mise run playbook -- reverse-proxy provision production --limit nuc4`.
+   This includes configuration validation and verification. The health route uses
+   the same first-certificate deferral, reload, rollback, and boot recovery as
+   other routes.
+4. From the intended Talos monitoring network, use ordinary DNS and trusted HTTPS
+   to request both URLs. For example, run
+   `curl --fail --silent --show-error https://caddy.infra.supermorphic.com/healthz`
+   and the equivalent request to Semaphore's `/api/ping`. Record HTTP 200 for each
+   and `ok` for the edge. Do not use `--insecure`, an IP URL, or `--resolve` as
+   consumer acceptance evidence. Never stop production Semaphore for this test.
+5. Hand the two URLs and the deployment and network-verification results to
+   homelab-talos#423 before activating the edge check. Homepage and Gatus changes
+   belong in that repository; this repository does not generate their configuration.
+
+Synthetic health-route declaration for the complete protected `reverse_proxy_routes`
+list:
+
+```yaml
+- hostname: caddy.infra.example.com
+  certificate_name: infra
+  health: true
+```
+
+The health route uses the existing external certificate lifecycle; it does not
+create a separate issuer or renewal schedule. Keep the Caddy administration
+socket and application backend ports outside the monitoring interface.
+
 ## Recovery
+
+### Shared Caddy service
+
+Use `systemctl status caddy` and `journalctl -u caddy` through an authorized host
+session. Keep diagnostic output private when it contains deployment values.
+After a failed activation, correct the reported configuration, ownership, or
+certificate condition and rerun provisioning. Failed first activation retains
+the admin-only configuration. If recovery fails, retain its diagnostic and
+inspect the target through the independent administration path; do not delete
+transaction records to bypass the failure.
+
+If startup reaches the retry limit, inspect the Caddy journal and correct the
+reported address, configuration, or certificate problem. Once corrected, an
+authorized `systemctl reset-failed caddy.service` clears the start limit, and
+`systemctl start caddy.service` attempts recovery immediately. Verify the proxy
+and trusted HTTPS afterward. Reboot recovery does not require certificate renewal.
+
+After package maintenance, run proxy verification and a trusted HTTPS check from
+an approved client. Separately check denial from outside the allowed network.
+Local verification does not establish DNS accuracy or network reachability.
+Package rollback and lost-host reconstruction require the existing OS recovery
+process and separately recoverable certificate material. Caddy caches and
+application data are outside configuration recovery.
+
+### Device access
 
 Keep a direct management bookmark and the documented local access method for
 each device available independently of Pi-hole, NUC #4, Caddy, and Internet

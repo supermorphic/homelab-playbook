@@ -283,7 +283,7 @@ health separately from certificate activation.
 
 ## Private device integration
 
-The [device proxy guide](../guides/device-proxy.md) defines the selected ARRIS
+The [reverse-proxy guide](../guides/reverse-proxy.md) defines the selected ARRIS
 S34 and Room Alert 3E routes. Use a route-specific trust pool and certificate
 name for the modem's HTTPS backend after the operator establishes the modem
 certificate's identity. Preserve hostname, chain, and validity checks. Do not

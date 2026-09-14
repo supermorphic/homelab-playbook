@@ -15,8 +15,8 @@ specifications record design decisions and integration contracts.
   identity, edit protected inventory, and manage recipients.
 - [UniFi TLS certificates](guides/unifi-tls.md) — Configure native UniFi OS
   certificate issuance and renewal with Cloudflare DNS and direct local access.
-- [Private device proxy](guides/device-proxy.md) — Prepare private device browser
-  access through Caddy for authenticated HTTPS and HTTP-only backends.
+- [Private HTTPS routes through Caddy](guides/reverse-proxy.md) — Configure device
+  and monitoring routes, verify private HTTPS access, and recover proxy service.
 
 ## Reference
 
