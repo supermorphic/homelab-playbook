@@ -5,6 +5,9 @@
   become: true
   vars:
     reverse_proxy_molecule_routes:
+      - hostname: caddy.example.test
+        certificate_name: fixture
+        health: true
       - hostname: app.example.test
         backend_port: 18080
         certificate_name: fixture

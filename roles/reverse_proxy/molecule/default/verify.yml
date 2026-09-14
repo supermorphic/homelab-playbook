@@ -15,6 +15,9 @@
       - --ca-file
       - "{{ reverse_proxy_molecule_ca }}"
     reverse_proxy_molecule_routes:
+      - hostname: caddy.example.test
+        certificate_name: fixture
+        health: true
       - hostname: app.example.test
         backend_port: 18080
         certificate_name: fixture
@@ -44,6 +47,12 @@
         security_baseline_management_sources:
           - >-
             {{ reverse_proxy_molecule_private_address.stdout | trim }}/32
+    - name: Prove the health route survives a disposable backend outage
+      ansible.builtin.script:
+        cmd: "files/health.py {{ reverse_proxy_molecule_address }} --stop-backend"
+        executable: /usr/bin/python3
+      changed_when: false
+
     - name: Read installed package facts
       ansible.builtin.package_facts:
         manager: auto
@@ -626,6 +635,12 @@
     - name: Verify recovery from a delayed bind address and finite failure retries
       ansible.builtin.script:
         cmd: "files/startup_recovery.py {{ reverse_proxy_molecule_address }}"
+        executable: /usr/bin/python3
+      changed_when: false
+
+    - name: Verify the health route after reload rollback and startup recovery
+      ansible.builtin.script:
+        cmd: "files/health.py {{ reverse_proxy_molecule_address }}"
         executable: /usr/bin/python3
       changed_when: false
 

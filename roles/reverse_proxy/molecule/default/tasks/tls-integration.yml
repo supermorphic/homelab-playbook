@@ -7,6 +7,9 @@
 - name: Declare synthetic integrated application and device routes
   ansible.builtin.set_fact:
     reverse_proxy_molecule_tls_routes:
+      - hostname: caddy.infra.example.com
+        certificate_name: infra
+        health: true
       - hostname: other.example.test
         backend_port: 18080
         certificate_name: fixture

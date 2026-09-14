@@ -35,6 +35,42 @@ class ReverseProxyInputTests(unittest.TestCase):
         self.assertEqual(self.module.validate({"bind_addresses": [], "client_sources": [], "routes": []}),
                          {"bind_addresses": [], "client_sources": [], "routes": []})
 
+    def test_health_route_without_a_backend(self):
+        value = self.fixture()
+        route = {"hostname": "caddy.example.test", "certificate_name": "app", "health": True}
+        value["routes"].append(route)
+        self.assertEqual(self.module.validate(value)["routes"][1], route)
+        rendered = self.module.render(value)
+        health = rendered.split("https://caddy.example.test:443 {", 1)[1]
+        self.assertNotIn("reverse_proxy", health)
+        self.assertIn("/etc/caddy/tls/app/current/fullchain.pem", health)
+        self.assertIn("reverse_proxy 127.0.0.1:8080", rendered)
+
+    def test_health_route_rejects_ambiguous_or_custom_responses(self):
+        route = {"hostname": "caddy.example.test", "certificate_name": "app", "health": True}
+        for change in ({"health": False}, {"health": 1}, {"health": "true"},
+                       {"health": {}}, {"backend_port": 8080},
+                       {"backend": self.device_route()["backend"]},
+                       {"path": "/custom"}, {"body": "details"}):
+            value = self.fixture()
+            value["routes"] = [dict(route, **change)]
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                self.module.validate(value)
+
+    def test_health_route_requires_private_ingress_and_unique_hostname(self):
+        for field in ("bind_addresses", "client_sources"):
+            value = self.fixture()
+            value["routes"] = [{"hostname": "caddy.example.test", "certificate_name": "app",
+                                "health": True}]
+            value[field] = []
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.module.validate(value)
+        value = self.fixture()
+        value["routes"].append({"hostname": "APP.example.test", "certificate_name": "app",
+                                "health": True})
+        with self.assertRaises(ValueError):
+            self.module.validate(value)
+
     def test_canonical_values_without_mutating_input(self):
         value = self.fixture()
         value["bind_addresses"] += ["fd00:0:0::2"]

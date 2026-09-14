@@ -102,14 +102,17 @@ def validate(value):
             raise ValueError("proxy route must be a mapping")
         local_fields = {"hostname", "backend_port", "certificate_name"}
         device_fields = {"hostname", "backend", "certificate_name"}
+        health_fields = {"hostname", "health", "certificate_name"}
         if set(route) == local_fields:
             backend = {"backend_port": _port(
                 route["backend_port"], 1024, "proxy backend port"
             )}
         elif set(route) == device_fields:
             backend = {"backend": _device_backend(route["backend"])}
+        elif set(route) == health_fields and route["health"] is True:
+            backend = {"health": True}
         else:
-            raise ValueError("proxy route must use exactly one local or device backend")
+            raise ValueError("proxy route requires one local backend, device backend, or health: true")
         hostname = _hostname(route["hostname"], "proxy hostname")
         if hostname in hostnames:
             raise ValueError("proxy hostname is declared more than once")
@@ -178,7 +181,16 @@ def render(value, certificate_paths=None):
             f"\tbind {' '.join(config['bind_addresses'])}",
             f"\ttls {directory}/fullchain.pem {directory}/privkey.pem",
         ])
-        if "backend_port" in route:
+        if "health" in route:
+            lines.extend([
+                "\t@health {",
+                "\t\tpath /healthz",
+                "\t\tmethod GET HEAD",
+                "\t}",
+                '\trespond @health "ok" 200',
+                "\trespond 404",
+            ])
+        elif "backend_port" in route:
             lines.append(f"\treverse_proxy 127.0.0.1:{route['backend_port']}")
         else:
             backend = route["backend"]

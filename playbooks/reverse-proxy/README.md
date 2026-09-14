@@ -101,6 +101,77 @@ defines ownership, permissions, version selection, and the shared activation loc
 Application authentication remains the application's responsibility; loopback
 backends remain reachable by other local accounts.
 
+## Monitoring endpoint contract
+
+Issue #49 selects two independent HTTPS probes for the consumer in
+[homelab-talos#423](https://github.com/supermorphic/homelab-talos/issues/423):
+
+| Check | URL | Method and success | Response owner |
+| --- | --- | --- | --- |
+| Caddy edge | `https://caddy.infra.supermorphic.com/healthz` | GET: 200, body exactly `ok` (no newline); HEAD: 200, no body | Caddy static response |
+| Semaphore | `https://semaphore.infra.supermorphic.com/api/ping` | Unauthenticated GET: 200 | Semaphore through its existing Caddy route |
+
+Gatus sends GET every minute and requires HTTP 200. The edge response requires
+no authentication and returns no host or configuration details. Only the exact
+`/healthz` path accepts GET and HEAD; query strings do not change path matching.
+Other paths and methods on the health hostname return 404. Application hostnames
+retain their existing forwarding, including their own `/healthz` paths.
+
+A dedicated hostname keeps the edge check stable when applications are added or
+removed. It requires one private DNS record and reuses the existing `infra`
+wildcard certificate and renewal workflow. Both checks use ordinary DNS,
+hostname-verified TLS, and the existing source-restricted private TCP/443 ingress.
+Do not expose a backend port or Caddy's administration socket for monitoring.
+The edge check proves the HTTPS path responds; it does not prove application,
+database, backup, or broader host health. Edge green with Semaphore red points
+toward the application path. Both red points first toward DNS, networking, TLS,
+or Caddy. Neither service depends on Gatus or Talos for operation or recovery.
+
+The health-only route has exactly `hostname`, `certificate_name`, and
+`health: true`. It cannot also declare a backend or customize the path or body.
+Synthetic example to append to the complete protected route list:
+
+```yaml
+- hostname: caddy.infra.example.com
+  certificate_name: infra
+  health: true
+```
+
+### Deployment readiness and consumer handoff
+
+The URL above is the selected contract, not evidence of live deployment.
+Protected inventory, DNS, production provisioning, and the Talos-network check
+remain operator steps:
+
+1. Create a private DNS record for `caddy.infra.supermorphic.com` pointing to the
+   existing NUC4 private Caddy listener. Confirm the installed `infra` certificate
+   covers that name; its existing wildcard needs no separate renewal workflow.
+2. Through the protected inventory process, append the route above using the
+   selected real hostname. Preserve all existing routes, including Semaphore's
+   hostname, backend port, and certificate. Do not replace the authoritative list
+   with only the health route. Retain the existing private bind addresses and
+   approved client sources, and confirm the intended monitoring network is allowed.
+3. With explicit authorization for that action and target, run
+   `mise run playbook -- reverse-proxy provision production --limit nuc4`.
+   This includes configuration validation and verification. The health route uses
+   the same first-certificate deferral, reload, rollback, and boot recovery as
+   other routes.
+4. From the intended Talos monitoring network, use ordinary DNS and trusted HTTPS
+   to request both URLs. For example, run
+   `curl --fail --silent --show-error https://caddy.infra.supermorphic.com/healthz`
+   and the equivalent request to Semaphore's `/api/ping`. Record HTTP 200 for each
+   and `ok` for the edge. Do not use `--insecure`, an IP URL, or `--resolve` as
+   consumer acceptance evidence. Never stop production Semaphore for this test.
+5. Hand the two URLs and the deployment and network-verification results to
+   homelab-talos#423 before activating the edge check. Homepage and Gatus changes
+   belong in that repository; this repository does not generate their configuration.
+
+The disposable proxy scenario stops only its fixture backend and proves that
+its application probe fails while the edge still returns 200. It also checks
+GET/HEAD, exact paths, unchanged application forwarding, idempotence, certificate
+publication and renewal, rollback, and restart recovery. Offline evidence does
+not establish deployed DNS or reachability from Talos.
+
 ## Update and recovery boundaries
 
 Install Caddy with `state: present` from Debian's distribution repository. Do
