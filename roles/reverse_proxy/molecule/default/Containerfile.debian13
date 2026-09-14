@@ -19,5 +19,11 @@ RUN apt-get update \
     && chmod 0440 /etc/sudoers.d/90-installer-ansible \
     && apt-get clean
 
+# This disposable fixture supplies no systemd credentials. The unused import
+# fails at the CREDENTIALS setup step on the local rootless Podman host.
+RUN install --directory --mode=0755 /etc/systemd/system/systemd-journald.service.d \
+    && printf '[Service]\nImportCredential=\n' \
+        > /etc/systemd/system/systemd-journald.service.d/90-molecule.conf
+
 STOPSIGNAL SIGRTMIN+3
 CMD ["/usr/lib/systemd/systemd"]

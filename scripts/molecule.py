@@ -18,10 +18,13 @@ import uuid
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Callable, Iterator, Protocol
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts import molecule_timing
 
 
 @dataclass(frozen=True)
@@ -154,6 +157,7 @@ class CommandRunner(Protocol):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
         line_prefix: str,
+        on_line: Callable[[str], bool] | None = None,
     ) -> CommandResult:
         raise NotImplementedError
 
@@ -193,10 +197,13 @@ class SubprocessCommandRunner:
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
         line_prefix: str,
+        on_line: Callable[[str], bool] | None = None,
     ) -> CommandResult:
         if timeout is not None:
             result = self.capture(command, cwd=cwd, env=env, timeout=timeout)
             for line in (result.stdout + result.stderr).splitlines():
+                if on_line is not None and on_line(line):
+                    continue
                 with OUTPUT_LOCK:
                     print(f"{line_prefix} {line}", flush=True)
             return result
@@ -214,6 +221,8 @@ class SubprocessCommandRunner:
                 process.kill()
                 raise WorkerError("could not capture worker output")
             for line in process.stdout:
+                if on_line is not None and on_line(line):
+                    continue
                 output.append(line)
                 with OUTPUT_LOCK:
                     print(f"{line_prefix} {line.rstrip()}", flush=True)
@@ -250,6 +259,7 @@ class PlatformResult:
     molecule_seconds: float
     cleanup_seconds: float
     platform_seconds: float
+    timing: dict | None = None
 
     @property
     def success(self) -> bool:
@@ -536,6 +546,7 @@ def run_platform(
     )
     role_directory = repo_root / "roles" / scenario.role_name
     line_prefix = f"[{platform_definition.name}]"
+    timing = molecule_timing.TimingCollector(scenario.scenario_name)
 
     try:
         remove_owned_container(repo_root, runner, platform_definition, scenario)
@@ -630,22 +641,35 @@ def run_platform(
         molecule_environment["HOMELAB_MOLECULE_SCENARIO_SELECTOR"] = (
             scenario.selector
         )
-        molecule_result = runner.stream(
-            [
-                "molecule",
-                "test",
-                "--scenario-name",
-                scenario.scenario_name,
-                "--platform-name",
-                platform_definition.name,
-                "--no-report",
-                "--no-command-borders",
-            ],
-            cwd=role_directory,
-            env=molecule_environment,
-            line_prefix=line_prefix,
+        molecule_environment["HOMELAB_TIMING_ROOT"] = str(repo_root)
+        molecule_environment["ANSIBLE_CALLBACK_PLUGINS"] = os.pathsep.join(filter(None, (
+            str(repo_root / "scripts/callback_plugins"),
+            molecule_environment.get("ANSIBLE_CALLBACK_PLUGINS", ""),
+        )))
+        callbacks = molecule_environment.get("ANSIBLE_CALLBACKS_ENABLED", "").split(",")
+        molecule_environment["ANSIBLE_CALLBACKS_ENABLED"] = ",".join(
+            dict.fromkeys(filter(None, [*callbacks, "homelab_timing"]))
         )
-        molecule_seconds = clock() - molecule_started
+        try:
+            molecule_result = runner.stream(
+                [
+                    "molecule",
+                    "test",
+                    "--scenario-name",
+                    scenario.scenario_name,
+                    "--platform-name",
+                    platform_definition.name,
+                    "--no-report",
+                    "--no-command-borders",
+                ],
+                cwd=role_directory,
+                env=molecule_environment,
+                line_prefix=line_prefix,
+                on_line=timing.observe,
+            )
+        finally:
+            molecule_seconds = clock() - molecule_started
+            timing.finish(time.monotonic())
         if molecule_result.returncode != 0:
             raise StageError(
                 "test failure",
@@ -657,14 +681,19 @@ def run_platform(
     except WorkerError as error:
         status = "cleanup failure"
         message = str(error)
+    except (OSError, subprocess.SubprocessError):
+        status = "runner failure"
+        message = "worker command could not complete; available timings retained"
     finally:
         cleanup_started = clock()
         try:
             remove_owned_container(repo_root, runner, platform_definition, scenario)
-        except WorkerError as cleanup_error:
+        except (WorkerError, OSError, subprocess.SubprocessError) as cleanup_error:
             primary = f"{status}: {message}"
             status = "cleanup failure"
-            message = f"{primary}; cleanup failure: {cleanup_error}"
+            detail = (str(cleanup_error) if isinstance(cleanup_error, WorkerError)
+                      else "container cleanup command could not complete")
+            message = f"{primary}; cleanup failure: {detail}"
         cleanup_seconds = clock() - cleanup_started
 
     return PlatformResult(
@@ -678,6 +707,7 @@ def run_platform(
         molecule_seconds=molecule_seconds,
         cleanup_seconds=cleanup_seconds,
         platform_seconds=clock() - platform_started,
+        timing=timing.report(),
     )
 
 
@@ -727,8 +757,12 @@ def _terminal_summary(
     results: Sequence[PlatformResult],
     invocation_seconds: float,
     scenario: Scenario = DEFAULT_SCENARIO,
+    source: dict | None = None,
 ) -> str:
-    lines = [f"Podman: {host_plan.podman_version}"]
+    source = source or {"commit": "unavailable", "worktree": "unknown"}
+    lines = [f"Podman: {host_plan.podman_version}",
+             f"Scenario: {scenario.selector}; commit: {source['commit']}; "
+             f"worktree: {source['worktree']}"]
     for result in results:
         platform_definition = _platform_by_name(result.platform, scenario)
         requested = host_plan.requested_architectures[result.platform]
@@ -748,6 +782,8 @@ def _terminal_summary(
             f"total={result.platform_seconds:.2f}s "
             f"result={result.status} message={result.message}"
         )
+        if result.timing is not None:
+            lines.append(molecule_timing.render(result.timing))
     lines.append(f"Invocation total: {invocation_seconds:.2f}s")
     return "\n".join(lines)
 
@@ -757,12 +793,16 @@ def _github_summary(
     results: Sequence[PlatformResult],
     invocation_seconds: float,
     scenario: Scenario = DEFAULT_SCENARIO,
+    source: dict | None = None,
 ) -> str:
+    source = source or {"commit": "unavailable", "worktree": "unknown"}
     lines = [
         "### Molecule platform summary",
         "",
         f"- Podman: `{host_plan.podman_version}`",
         f"- Invocation total: {invocation_seconds:.2f} seconds",
+        f"- Scenario: `{scenario.selector}`; commit: `{source['commit']}`; "
+        f"worktree: {source['worktree']}",
         "",
         "| Platform | Host | Requested | Mode | Pull | Build | Molecule | "
         "Cleanup | Total | Result |",
@@ -793,6 +833,9 @@ def _github_summary(
                 f"Molecule: {result.molecule_seconds:.2f} seconds",
             ]
         )
+        if result.timing is not None:
+            lines.extend(["", f"#### {scenario.selector} / {result.platform}",
+                          molecule_timing.render(result.timing)])
     lines.append("")
     return "\n".join(lines)
 
@@ -803,6 +846,7 @@ def emit_summary(
     invocation_seconds: float,
     environment: Mapping[str, str],
     scenario: Scenario = DEFAULT_SCENARIO,
+    source: dict | None = None,
 ) -> None:
     print(
         _terminal_summary(
@@ -810,6 +854,7 @@ def emit_summary(
             results,
             invocation_seconds,
             scenario,
+            source,
         )
     )
 
@@ -833,7 +878,7 @@ def emit_summary(
         return
     with os.fdopen(descriptor, "a", encoding="utf-8") as summary_file:
         summary_file.write(
-            _github_summary(host_plan, results, invocation_seconds, scenario)
+            _github_summary(host_plan, results, invocation_seconds, scenario, source)
         )
 
 
@@ -858,6 +903,7 @@ def run(arguments: Sequence[str] | None, runner: CommandRunner) -> int:
         )
         with invocation_lock(repo_root, runner):
             invocation_id = uuid.uuid4().hex
+            source = molecule_timing.provenance(repo_root)
             results = run_platforms(
                 platform_definitions,
                 lambda platform_definition: run_platform(
@@ -878,7 +924,23 @@ def run(arguments: Sequence[str] | None, runner: CommandRunner) -> int:
         time.monotonic() - invocation_started,
         os.environ,
         scenario,
+        source,
     )
+    # Keep only structured, source-only measurements outside Molecule's pruned
+    # ephemeral directory. Raw playbook output is never copied into this artifact.
+    report_directory = repo_root / ".tmp/molecule-timings" / invocation_id
+    try:
+        report_directory.mkdir(parents=True, mode=0o700)
+        report_path = report_directory / "timings.json"
+        with report_path.open("x", encoding="utf-8") as report_file:
+            json.dump({"schema": 1, "scenario": selector, "source": source,
+                       "host": asdict(host_plan),
+                       "results": [asdict(result) for result in results]},
+                      report_file, indent=2)
+            report_file.write("\n")
+        print(f"Timing artifact: {report_path.relative_to(repo_root)}")
+    except OSError:
+        print("warning: could not persist timing artifact; see summary above", file=sys.stderr)
     return 0 if all(result.success for result in results) else 1
 
 

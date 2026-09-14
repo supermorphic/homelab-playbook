@@ -16,7 +16,7 @@ import warnings
 import yaml
 
 from contextlib import redirect_stderr, redirect_stdout
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from types import ModuleType
 from unittest import mock
@@ -84,13 +84,18 @@ class FakeCommandRunner:
         env: dict[str, str] | None = None,
         timeout: float | None = None,
         line_prefix: str,
+        on_line=None,
     ) -> FakeResult:
         copied_env = None if env is None else dict(env)
         self.stream_calls.append(
             (list(command), cwd, copied_env, timeout, line_prefix)
         )
         self.operations.append(("stream", list(command)))
-        return self.next_response(list(command))
+        result = self.next_response(list(command))
+        if on_line is not None:
+            for line in result.stdout.splitlines():
+                on_line(line)
+        return result
 
 
 class RunnerCliTests(unittest.TestCase):
@@ -946,6 +951,49 @@ class PlatformWorkerTests(unittest.TestCase):
         self.assertIn("acquisition failure", result.message)
         self.assertIn("could not remove owned container", result.message)
 
+    def test_failed_molecule_keeps_phase_timing_and_container_cleanup(self):
+        fake = FakeCommandRunner(
+            FakeResult(returncode=1), FakeResult(),
+            FakeResult(stdout=self.image_inspect()), FakeResult(),
+            FakeResult(returncode=1, stdout=(
+                "INFO [default > converge] Executing\n"
+                "ERROR [default > converge] Executed: Failed\n"
+                "INFO [default > destroy] Executing\n"
+                "INFO [default > destroy] Executed: Successful\n"
+            )), FakeResult(returncode=1),
+        )
+        result = self.call_worker(fake, QueueClock(*range(30)))
+        self.assertFalse(result.success)
+        self.assertIsNotNone(getattr(result, "timing", None), "failure must retain timings")
+        self.assertEqual(["converge", "destroy"], [p["phase"] for p in result.timing["phases"]])
+        self.assertEqual("failed", result.timing["phases"][0]["status"])
+        self.assertEqual("exists", fake.operations[-1][1][2])
+
+    def test_command_launch_error_still_reports_failure_and_cleans_up(self):
+        fake = FakeCommandRunner(
+            FakeResult(returncode=1), FakeResult(),
+            FakeResult(stdout=self.image_inspect()), FakeResult(),
+            OSError("synthetic launch failure"), FakeResult(returncode=1),
+        )
+        result = self.call_worker(fake, QueueClock(*range(30)))
+        self.assertFalse(result.success)
+        self.assertEqual("runner failure", result.status)
+        self.assertEqual("exists", fake.operations[-1][1][2])
+
+    def test_cleanup_launch_error_preserves_primary_failure_and_timings(self):
+        fake = FakeCommandRunner(
+            FakeResult(returncode=1), FakeResult(),
+            FakeResult(stdout=self.image_inspect()), FakeResult(),
+            FakeResult(returncode=1, stdout=(
+                "INFO [default > converge] Executing\n"
+                "ERROR [default > converge] Executed: Failed\n"
+            )), OSError("synthetic cleanup launch failure"),
+        )
+        result = self.call_worker(fake, QueueClock(*range(30)))
+        self.assertEqual("cleanup failure", result.status)
+        self.assertIn("test failure", result.message)
+        self.assertEqual("failed", result.timing["phases"][0]["status"])
+
 
 class ParallelExecutionTests(unittest.TestCase):
     def platform_result(self, platform: str, status: str = "pass"):
@@ -1167,6 +1215,28 @@ class OutputTests(unittest.TestCase):
             set(output.getvalue().splitlines()),
         )
 
+    def test_stream_collects_timings_without_printing_internal_records(self):
+        collector = runner_module.molecule_timing.TimingCollector("default")
+        output = io.StringIO()
+        event = json.dumps({"source": "roles/fixture/tasks/main.yml:1",
+                            "role": "roles/fixture", "role_run": "one", "seconds": 3})
+        script = (
+            "import sys; print('INFO [default > verify] Executing'); "
+            f"print({'HOMELAB_TIMING ' + event!r}); "
+            "print('ERROR [default > verify] Executed: Failed'); sys.exit(4)"
+        )
+        with redirect_stdout(output):
+            result = runner_module.SubprocessCommandRunner().stream(
+                [sys.executable, "-c", script], cwd=REPOSITORY_ROOT,
+                line_prefix="[debian13]", on_line=collector.observe,
+            )
+        self.assertEqual(4, result.returncode)
+        self.assertEqual(3, collector.report()["tasks"][0]["seconds"])
+        self.assertEqual("failed", collector.report()["phases"][0]["status"])
+        self.assertNotIn("HOMELAB_TIMING", output.getvalue())
+        self.assertNotIn("HOMELAB_TIMING", result.stdout)
+        self.assertIn("[debian13] ERROR", output.getvalue())
+
     def test_summary_reports_provenance_architecture_timings_and_result(
         self,
     ) -> None:
@@ -1228,6 +1298,29 @@ class OutputTests(unittest.TestCase):
                 )
 
             self.assertEqual("operator content\n", target.read_text(encoding="utf-8"))
+
+    def test_failed_phase_and_dirty_revision_reach_terminal_and_github(self):
+        collector = runner_module.molecule_timing.TimingCollector("default")
+        collector.observe("INFO [default > converge] Executing", at=1)
+        collector.observe("ERROR [default > converge] Executed: Failed", at=8)
+        result = replace(self.result(), status="test failure", timing=collector.report())
+        source = {"commit": "a" * 40, "worktree": "uncommitted changes"}
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            summary_path = Path(directory) / "summary.md"
+            summary_path.write_text("Existing job summary\n")
+            with redirect_stdout(output):
+                runner_module.emit_summary(
+                    self.host_plan(), [result], 10,
+                    {"GITHUB_STEP_SUMMARY": str(summary_path)}, source=source,
+                )
+            github = summary_path.read_text()
+        self.assertTrue(github.startswith("Existing job summary\n"))
+        for rendered in (output.getvalue(), github):
+            for expected in ("system_maintenance/default", "debian13", "a" * 40,
+                             "uncommitted changes", "| converge | 1 | 7.00 | failed |",
+                             "| verify | — | — | not run |"):
+                self.assertIn(expected, rendered)
 
 
 if __name__ == "__main__":
