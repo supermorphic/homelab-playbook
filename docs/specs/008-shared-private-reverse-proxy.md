@@ -193,7 +193,8 @@ edge response, and checks the response after certificate and startup recovery.
 Production deployment and a read-only probe from the intended monitoring network
 remain separate operator evidence. The
 [proxy README](../../playbooks/reverse-proxy/README.md#monitoring-endpoint-contract)
-records the complete contract, protected route enrollment, and consumer handoff.
+records the endpoint contract. The [reverse-proxy guide](../guides/reverse-proxy.md)
+covers protected route enrollment, deployment, and consumer handoff.
 [homelab-talos#423](https://github.com/supermorphic/homelab-talos/issues/423) owns
 Homepage/Gatus configuration and must receive deployment readiness before
 activating its edge check. Neither observation service is a host recovery
