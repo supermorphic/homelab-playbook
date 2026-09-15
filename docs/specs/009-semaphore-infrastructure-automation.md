@@ -271,6 +271,13 @@ offline evidence from operator evidence for actual NAS recovery, controller
 enrollment, private ingress, enforcing host controls, and reboot persistence.
 No design approval authorizes live playbooks, credential enrollment, or cutover.
 
+The controller integration has a finite 30-minute outer budget, separate from
+the 15-minute bootstrap budget. It includes executor bootstrap, target
+provisioning, direct gateway checks, and two native application jobs. Keep the
+individual operation limits and interrupt-then-cleanup behavior. Emit only stage
+labels for progress so a slow or interrupted run identifies the active stage
+without exposing fixture values.
+
 The supported-OS Molecule harness cannot create the nested subordinate user
 namespace required to launch the application containers. In this harness,
 exercise the actual role's preparation and idempotence, then inspect filesystem

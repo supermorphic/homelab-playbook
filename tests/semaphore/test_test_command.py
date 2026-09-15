@@ -162,6 +162,7 @@ class SemaphoreTestCommandTests(unittest.TestCase):
 
         argv = child.call_args.args[0]
         environment = child.call_args.kwargs["env"]
+        self.assertEqual(1800, child.call_args.kwargs.get("timeout"))
         self.assertIn("test_repository_job_integration.py", argv)
         self.assertEqual("1", environment["SEMAPHORE_REPOSITORY_JOB_INTEGRATION"])
         self.assertEqual(

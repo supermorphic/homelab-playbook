@@ -491,12 +491,14 @@ class RepositoryJobIntegrationTests(unittest.TestCase):
         else:
             self.fail("memory-only age identity provider did not become ready")
 
+        print("Controller fixture: bootstrap executor", flush=True)
         bootstrap = self._exec(
             executor,
             ["/tools/bin/mise", "run", "bootstrap"],
             environment=self._environment(), workdir="/workspace/job", timeout=900,
         )
         self.assertEqual(0, bootstrap.returncode, _details(bootstrap))
+        print("Controller fixture: provision synthetic target", flush=True)
         provision = self._exec(
             executor,
             [
@@ -514,6 +516,7 @@ class RepositoryJobIntegrationTests(unittest.TestCase):
         self.assertEqual(0, checkout_status.returncode, _details(checkout_status))
         self.assertEqual(b"", checkout_status.stdout, checkout_status.stdout.decode())
 
+        print("Controller fixture: verify target through gateway", flush=True)
         verified = self._exec(
             executor,
             [
@@ -532,6 +535,7 @@ class RepositoryJobIntegrationTests(unittest.TestCase):
         self.assertEqual(0, served.returncode, _details(served))
         self.assertGreater(int(served.stdout), 0)
 
+        print("Controller fixture: reject incorrect host key", flush=True)
         wrong = self.root / "wrong-host-key"
         generated = _run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(wrong)])
         self.assertEqual(0, generated.returncode, _details(generated))
@@ -602,6 +606,7 @@ class RepositoryJobIntegrationTests(unittest.TestCase):
             },
             separators=(",", ":"),
         )
+        print("Controller fixture: start native application", flush=True)
         server = self._start(
             "native-app",
             [
@@ -689,6 +694,7 @@ class RepositoryJobIntegrationTests(unittest.TestCase):
             },
         )
         for invocation in range(2):
+            print(f"Controller fixture: native repository job {invocation + 1}", flush=True)
             queued = client.call(
                 "POST", f"/api/project/{project_id}/tasks", {"template_id": template["id"]}
             )
