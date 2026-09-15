@@ -1,20 +1,18 @@
 ---
 - name: Inspect reverse proxy parent directories
-  ansible.builtin.stat:
-    path: "{{ item }}"
-    follow: false
-  loop:
-    - /etc
-    - /etc/systemd
-    - /etc/systemd/system
-    - /etc/tmpfiles.d
-    - /usr
-    - /usr/local
-    - /usr/local/lib
-    - /var
-    - /var/lib
-    - /run
-    - /run/lock
+  proxy_metadata:
+    paths:
+      - /etc
+      - /etc/systemd
+      - /etc/systemd/system
+      - /etc/tmpfiles.d
+      - /usr
+      - /usr/local
+      - /usr/local/lib
+      - /var
+      - /var/lib
+      - /run
+      - /run/lock
   register: reverse_proxy_parent_directories
 
 - name: Reject unsafe reverse proxy parent directories
@@ -37,19 +35,17 @@
     label: "{{ item.item }}"
 
 - name: Inspect managed reverse proxy directories
-  ansible.builtin.stat:
-    path: "{{ item }}"
-    follow: false
-  loop:
-    - /etc/caddy
-    - /etc/caddy/tls
-    - /etc/caddy/trust
-    - /usr/local/lib/homelab-reverse-proxy
-    - /var/lib/caddy
-    - /var/lib/homelab-reverse-proxy
-    - /usr/local/libexec
-    - /etc/systemd/system/caddy.service.d
-    - /run/caddy
+  proxy_metadata:
+    paths:
+      - /etc/caddy
+      - /etc/caddy/tls
+      - /etc/caddy/trust
+      - /usr/local/lib/homelab-reverse-proxy
+      - /var/lib/caddy
+      - /var/lib/homelab-reverse-proxy
+      - /usr/local/libexec
+      - /etc/systemd/system/caddy.service.d
+      - /run/caddy
   register: reverse_proxy_filesystem_boundaries
 
 - name: Reject unsafe existing reverse proxy filesystem boundaries
@@ -76,23 +72,21 @@
     label: "{{ item.item }}"
 
 - name: Inspect managed reverse proxy files
-  ansible.builtin.stat:
-    path: "{{ item }}"
-    follow: false
-  loop:
-    - /etc/caddy/Caddyfile
-    - /etc/caddy/Caddyfile.candidate
-    - /var/lib/homelab-reverse-proxy/managed
-    - /usr/local/libexec/homelab-reverse-proxy
-    - /usr/local/lib/homelab-reverse-proxy/proxy_config.py
-    - /usr/local/lib/homelab-reverse-proxy/proxy_manifest.py
-    - /var/lib/homelab-reverse-proxy/desired.candidate.json
-    - /var/lib/homelab-reverse-proxy/ingress.candidate.json
-    - /var/lib/homelab-reverse-proxy/trust.candidate.json
-    - /var/lib/homelab-reverse-proxy/desired.json
-    - /etc/systemd/system/caddy.service.d/override.conf
-    - /etc/tmpfiles.d/homelab-reverse-proxy.conf
-    - /run/lock/homelab-reverse-proxy.lock
+  proxy_metadata:
+    paths:
+      - /etc/caddy/Caddyfile
+      - /etc/caddy/Caddyfile.candidate
+      - /var/lib/homelab-reverse-proxy/managed
+      - /usr/local/libexec/homelab-reverse-proxy
+      - /usr/local/lib/homelab-reverse-proxy/proxy_config.py
+      - /usr/local/lib/homelab-reverse-proxy/proxy_manifest.py
+      - /var/lib/homelab-reverse-proxy/desired.candidate.json
+      - /var/lib/homelab-reverse-proxy/ingress.candidate.json
+      - /var/lib/homelab-reverse-proxy/trust.candidate.json
+      - /var/lib/homelab-reverse-proxy/desired.json
+      - /etc/systemd/system/caddy.service.d/override.conf
+      - /etc/tmpfiles.d/homelab-reverse-proxy.conf
+      - /run/lock/homelab-reverse-proxy.lock
   register: reverse_proxy_managed_files
 
 - name: Reject unsafe existing reverse proxy files

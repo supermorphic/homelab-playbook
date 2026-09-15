@@ -25,6 +25,11 @@
         backend_port: 18080
         certificate_name: fixture
   tasks:
+    - name: Prove proxy metadata observation and precondition equivalence
+      ansible.builtin.include_tasks: tasks/metadata.yml
+      vars:
+        reverse_proxy_metadata_role_root: "{{ playbook_dir }}/../.."
+
     - name: Discover the rootless container private address
       ansible.builtin.command:
         argv:

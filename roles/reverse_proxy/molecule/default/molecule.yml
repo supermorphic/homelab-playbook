@@ -33,6 +33,8 @@ platforms:
 provisioner:
   name: ansible
   log: true
+  env:
+    ANSIBLE_LIBRARY: "${MOLECULE_PROJECT_DIRECTORY}/library"
 
 verifier:
   name: ansible

@@ -1,0 +1,116 @@
+---
+- name: Characterize proxy metadata on disposable filesystem objects
+  vars:
+    reverse_proxy_metadata_fixture_root: /var/lib/proxy-metadata-fixture
+    reverse_proxy_metadata_assertion_file: >-
+      {{ lookup('ansible.builtin.env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/metadata-assertions.yml
+    reverse_proxy_metadata_fields:
+      - exists
+      - isdir
+      - isreg
+      - islnk
+      - uid
+      - gid
+      - mode
+      - nlink
+      - pw_name
+      - gr_name
+  block:
+    - name: Create independent proxy metadata cases
+      ansible.builtin.script:
+        cmd: "{{ reverse_proxy_metadata_role_root }}/molecule/default/files/metadata_fixture.py {{ reverse_proxy_metadata_fixture_root }}"
+        executable: /usr/bin/python3
+      register: reverse_proxy_metadata_fixture
+      changed_when: true
+
+    - name: Record synthetic metadata cases
+      ansible.builtin.set_fact:
+        reverse_proxy_metadata_cases: "{{ (reverse_proxy_metadata_fixture.stdout | from_json).cases }}"
+        reverse_proxy_metadata_errors: "{{ (reverse_proxy_metadata_fixture.stdout | from_json).errors }}"
+
+    - name: Observe fixture metadata with the independent Ansible oracle
+      ansible.builtin.stat:
+        path: "{{ item.path }}"
+        follow: false
+      loop: "{{ reverse_proxy_metadata_cases }}"
+      register: reverse_proxy_metadata_oracle
+
+    - name: Observe the same fixture metadata in one batch
+      proxy_metadata:
+        paths: "{{ reverse_proxy_metadata_cases | map(attribute='path') | list }}"
+      register: reverse_proxy_metadata_batch
+      check_mode: true
+
+    - name: Require identical metadata for all assertion consumers
+      ansible.builtin.assert:
+        that:
+          - not reverse_proxy_metadata_batch.changed
+          - >-
+            reverse_proxy_metadata_batch.results[item].stat
+            == (reverse_proxy_metadata_oracle.results[item].stat | dict2items
+                | selectattr('key', 'in', reverse_proxy_metadata_fields) | items2dict)
+      loop: "{{ range(reverse_proxy_metadata_cases | length) | list }}"
+
+    - name: Load existing precondition assertions into disposable test tasks
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ reverse_proxy_metadata_role_root }}/molecule/default/files/metadata_assertions.py"
+          - "{{ reverse_proxy_metadata_role_root }}"
+          - "{{ reverse_proxy_metadata_assertion_file }}"
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    - name: Check existing precondition decisions against independent expectations
+      ansible.builtin.include_tasks: "{{ reverse_proxy_metadata_assertion_file }}"
+
+    - name: Observe inaccessible and invalid paths with the independent oracle
+      vars:
+        ansible_user: root
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        follow: false
+      become: true
+      become_user: nobody
+      loop: "{{ reverse_proxy_metadata_errors }}"
+      register: reverse_proxy_metadata_oracle_errors
+      ignore_errors: true
+
+    - name: Observe inaccessible and invalid paths with the batch module
+      vars:
+        ansible_user: root
+      proxy_metadata:
+        paths: ["{{ item }}"]
+      become: true
+      become_user: nobody
+      loop: "{{ reverse_proxy_metadata_errors }}"
+      register: reverse_proxy_metadata_batch_errors
+      ignore_errors: true
+
+    - name: Require errors to fail rather than report absent paths
+      ansible.builtin.assert:
+        that:
+          - reverse_proxy_metadata_oracle_errors.results[item] is failed
+          - reverse_proxy_metadata_batch_errors.results[item] is failed
+          - reverse_proxy_metadata_batch_errors.results[item].failed_path == reverse_proxy_metadata_errors[item]
+          - >-
+            reverse_proxy_metadata_oracle_errors.results[item].msg
+            is search(['Not a directory$', 'Too many levels of symbolic links$', 'Permission denied$'][item])
+          - >-
+            reverse_proxy_metadata_oracle_errors.results[item].msg
+            == reverse_proxy_metadata_batch_errors.results[item].msg
+      loop: "{{ range(reverse_proxy_metadata_errors | length) | list }}"
+
+  always:
+    - name: Remove generated metadata assertion tasks
+      ansible.builtin.file:
+        path: "{{ reverse_proxy_metadata_assertion_file }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+
+    - name: Remove disposable proxy metadata cases
+      ansible.builtin.file:
+        path: "{{ reverse_proxy_metadata_fixture_root }}"
+        state: absent

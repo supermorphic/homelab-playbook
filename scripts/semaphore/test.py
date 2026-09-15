@@ -22,6 +22,7 @@ MISE_VERSION = "2026.9.4"
 DEFAULT_TIMEOUT = 120
 DOWNLOAD_TIMEOUT = 600
 BOOTSTRAP_TIMEOUT = 900
+CONTROLLER_TIMEOUT = 1800
 CLEANUP_TIMEOUT = 30
 HEALTH_ATTEMPTS = 45
 PROVENANCE = {
@@ -148,6 +149,7 @@ def _controller() -> int:
             "-v",
         ],
         "Semaphore controller integration",
+        timeout=CONTROLLER_TIMEOUT,
         env=environment,
     )
 

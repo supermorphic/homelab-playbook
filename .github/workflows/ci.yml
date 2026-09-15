@@ -121,7 +121,8 @@ jobs:
       needs.classify.outputs.depth == 'molecule' ||
       needs.classify.outputs.depth == 'full'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Cold Galaxy bootstrap and offline validation share this job budget.
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

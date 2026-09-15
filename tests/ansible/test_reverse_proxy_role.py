@@ -151,10 +151,10 @@ class PackageInstallationTests(unittest.TestCase):
             tasks[0]["ansible.builtin.import_tasks"],
         )
         preflight = load_tasks("filesystem-preflight.yml")
-        parents = named_task(
-            preflight, "Inspect reverse proxy parent directories"
-        )["loop"]
-        files = named_task(preflight, "Inspect managed reverse proxy files")["loop"]
+        parent_observation = named_task(preflight, "Inspect reverse proxy parent directories")
+        self.assertIn("proxy_metadata", parent_observation)
+        parents = parent_observation["proxy_metadata"]["paths"]
+        files = named_task(preflight, "Inspect managed reverse proxy files")["proxy_metadata"]["paths"]
         self.assertIn("/usr/local", parents)
         self.assertIn("/etc/tmpfiles.d", parents)
         self.assertIn("/run/lock", parents)
@@ -279,6 +279,42 @@ class SystemdRestrictionTests(unittest.TestCase):
 
 
 class ProvisioningFlowTests(unittest.TestCase):
+    def test_both_checkpoints_observe_every_declared_filesystem_boundary(self) -> None:
+        expected = {
+            "Inspect reverse proxy parent directories": [
+                "/etc", "/etc/systemd", "/etc/systemd/system", "/etc/tmpfiles.d",
+                "/usr", "/usr/local", "/usr/local/lib", "/var", "/var/lib",
+                "/run", "/run/lock",
+            ],
+            "Inspect managed reverse proxy directories": [
+                "/etc/caddy", "/etc/caddy/tls", "/etc/caddy/trust",
+                "/usr/local/lib/homelab-reverse-proxy", "/var/lib/caddy",
+                "/var/lib/homelab-reverse-proxy", "/usr/local/libexec",
+                "/etc/systemd/system/caddy.service.d", "/run/caddy",
+            ],
+            "Inspect managed reverse proxy files": [
+                "/etc/caddy/Caddyfile", "/etc/caddy/Caddyfile.candidate",
+                "/var/lib/homelab-reverse-proxy/managed",
+                "/usr/local/libexec/homelab-reverse-proxy",
+                "/usr/local/lib/homelab-reverse-proxy/proxy_config.py",
+                "/usr/local/lib/homelab-reverse-proxy/proxy_manifest.py",
+                "/var/lib/homelab-reverse-proxy/desired.candidate.json",
+                "/var/lib/homelab-reverse-proxy/ingress.candidate.json",
+                "/var/lib/homelab-reverse-proxy/trust.candidate.json",
+                "/var/lib/homelab-reverse-proxy/desired.json",
+                "/etc/systemd/system/caddy.service.d/override.conf",
+                "/etc/tmpfiles.d/homelab-reverse-proxy.conf",
+                "/run/lock/homelab-reverse-proxy.lock",
+            ],
+        }
+        for checkpoint in ("filesystem-preflight.yml", "configure.yml"):
+            tasks = load_tasks(checkpoint)
+            for name, paths in expected.items():
+                with self.subTest(checkpoint=checkpoint, group=name):
+                    task = named_task(tasks, name)
+                    self.assertIn("proxy_metadata", task)
+                    self.assertEqual(paths, task["proxy_metadata"]["paths"])
+
     def test_all_managed_paths_are_lstat_checked_before_first_write(self) -> None:
         tasks = load_tasks("configure.yml")
         names = [task["name"] for task in tasks]
@@ -286,12 +322,13 @@ class ProvisioningFlowTests(unittest.TestCase):
         checks = {
             task["name"]: task
             for task in tasks[:first_write]
-            if "ansible.builtin.stat" in task
+            if "proxy_metadata" in task
         }
 
-        parents = checks["Inspect reverse proxy parent directories"]["loop"]
-        directories = checks["Inspect managed reverse proxy directories"]["loop"]
-        files = checks["Inspect managed reverse proxy files"]["loop"]
+        self.assertEqual(3, len(checks), "Observe all three path groups before writing")
+        parents = checks["Inspect reverse proxy parent directories"]["proxy_metadata"]["paths"]
+        directories = checks["Inspect managed reverse proxy directories"]["proxy_metadata"]["paths"]
+        files = checks["Inspect managed reverse proxy files"]["proxy_metadata"]["paths"]
         self.assertEqual(
             [
                 "/etc",
@@ -311,8 +348,6 @@ class ProvisioningFlowTests(unittest.TestCase):
         self.assertIn("/run/caddy", directories)
         self.assertIn("/run/lock/homelab-reverse-proxy.lock", files)
         self.assertIn("/etc/caddy/Caddyfile.candidate", files)
-        for check in checks.values():
-            self.assertIs(check["ansible.builtin.stat"]["follow"], False)
 
     def test_initial_boot_is_admin_only_despite_nonempty_desired_fact(self) -> None:
         configure = load_tasks("configure.yml")

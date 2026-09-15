@@ -91,6 +91,34 @@ directories. Certificate selection uses only the explicitly defined version
 symlink below; arbitrary path indirection is not accepted. Caddy cannot edit
 its configuration, certificate files, deployment helper, or systemd unit.
 
+Issue #51 bounds filesystem metadata acquisition to the explicit parent,
+managed-directory, and managed-file lists. The role-local `proxy_metadata`
+module observes each list in one call and returns ordered `item` and `stat`
+records for the existing independent assertions. It uses `lstat` without
+following the final symlink and preserves existence, object type, numeric and
+named ownership, four-digit permission mode, and link count. Missing paths
+return only `exists: false`; other lookup errors stop the batch, fail the task,
+and identify the failing path without accepting partial results. Unknown user or
+group names remain absent, matching the pinned Ansible `stat` behavior.
+
+Each observation is read-only, supports check mode, and has no cache. Preserve
+the three assertion groups and their order, including the separate observations
+before package installation and before filesystem configuration. Results must
+not cross a mutation boundary. Installation ownership checks, trust and
+certificate validation, and standalone verification retain their independent
+content checksums and observations. The module neither reads file contents nor
+collects unused MIME types or extended attributes.
+
+The disposable Debian proxy scenario compares metadata with
+`ansible.builtin.stat`, then runs the role's existing assertions against
+independently specified safe, unsafe, and missing-path outcomes. It covers
+symlinks, hard links, special files, ownership, writable and sticky directories,
+and lookup errors. Performance acceptance requires alternating at least three
+unchanged and three candidate scenarios under equivalent image, architecture,
+source-base, and cache conditions. Retain run-specific medians, ranges, affected
+task and phase totals, complete scenario time, and uncertainty in uncommitted
+implementation evidence; keep batching only when it demonstrates a benefit.
+
 ## Declarative ingress and routes
 
 Use an explicit `reverse_proxy` inventory group and these service inputs:

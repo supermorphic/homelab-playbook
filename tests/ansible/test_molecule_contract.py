@@ -132,7 +132,8 @@ class MoleculeScenarioContractTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            {"certificate_failure.yml", "unexpected_failure.yml", "tls-integration.yml"},
+            {"certificate_failure.yml", "unexpected_failure.yml", "tls-integration.yml",
+             "metadata.yml"},
             {
                 path.name
                 for path in (REVERSE_PROXY_SCENARIO_DIRECTORY / "tasks").iterdir()
