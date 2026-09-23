@@ -113,6 +113,47 @@ url = "https://github.com/cli/cli/releases/download/v2.96.0/gh_2.96.0_macOS_arm6
 url_api = "https://api.github.com/repos/cli/cli/releases/assets/464728562"
 provenance = "github-attestations"
 
+[[tools."github:mikefarah/yq"]]
+version = "4.53.3"
+backend = "github:mikefarah/yq"
+specifiers = ["4.53.3"]
+
+[tools."github:mikefarah/yq"."platforms.linux-arm64"]
+checksum = "sha256:42600522e7455282e11c71c9fc62dc8e98b05bcdb830210fe16eb673a871e866"
+url = "https://github.com/mikefarah/yq/releases/download/v4.53.3/yq_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/mikefarah/yq/releases/assets/440146748"
+provenance = "github-attestations"
+
+[tools."github:mikefarah/yq"."platforms.linux-arm64-musl"]
+checksum = "sha256:42600522e7455282e11c71c9fc62dc8e98b05bcdb830210fe16eb673a871e866"
+url = "https://github.com/mikefarah/yq/releases/download/v4.53.3/yq_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/mikefarah/yq/releases/assets/440146748"
+provenance = "github-attestations"
+
+[tools."github:mikefarah/yq"."platforms.linux-x64"]
+checksum = "sha256:b4077cab0f9ee5ce8381e602d090daa69a0afb7e57eb9a5b20e9cb416d7f6794"
+url = "https://github.com/mikefarah/yq/releases/download/v4.53.3/yq_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/mikefarah/yq/releases/assets/440146764"
+provenance = "github-attestations"
+
+[tools."github:mikefarah/yq"."platforms.linux-x64-musl"]
+checksum = "sha256:b4077cab0f9ee5ce8381e602d090daa69a0afb7e57eb9a5b20e9cb416d7f6794"
+url = "https://github.com/mikefarah/yq/releases/download/v4.53.3/yq_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/mikefarah/yq/releases/assets/440146764"
+provenance = "github-attestations"
+
+[tools."github:mikefarah/yq"."platforms.macos-arm64"]
+checksum = "sha256:8415210a2c06e706e4037ccbbfc0d0e35c2518683da21a432d28258752567474"
+url = "https://github.com/mikefarah/yq/releases/download/v4.53.3/yq_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/mikefarah/yq/releases/assets/440146761"
+provenance = "github-attestations"
+
+[tools."github:mikefarah/yq"."platforms.macos-x64"]
+checksum = "sha256:d39a3296b56bdd0e1c78cdda0cb54baf854b1d492c84aef9023411e1c8d7537f"
+url = "https://github.com/mikefarah/yq/releases/download/v4.53.3/yq_darwin_amd64.tar.gz"
+url_api = "https://api.github.com/repos/mikefarah/yq/releases/assets/440146768"
+provenance = "github-attestations"
+
 [[tools.gitleaks]]
 version = "8.30.1"
 backend = "aqua:gitleaks/gitleaks"
@@ -142,6 +183,35 @@ url_api = "https://api.github.com/repos/gitleaks/gitleaks/releases/assets/378332
 checksum = "sha256:b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5"
 url = "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_arm64.tar.gz"
 url_api = "https://api.github.com/repos/gitleaks/gitleaks/releases/assets/378332059"
+
+[[tools.kubectl]]
+version = "1.35.6"
+backend = "aqua:kubernetes/kubernetes/kubectl"
+specifiers = ["1.35.6"]
+
+[tools.kubectl."platforms.linux-arm64"]
+checksum = "sha256:c0f97f31c9ddc22d4951d543a1a7125a9af4b31e895ad4aa99899c4ba2a6ff0b"
+url = "https://dl.k8s.io/v1.35.6/bin/linux/arm64/kubectl"
+
+[tools.kubectl."platforms.linux-arm64-musl"]
+checksum = "sha256:c0f97f31c9ddc22d4951d543a1a7125a9af4b31e895ad4aa99899c4ba2a6ff0b"
+url = "https://dl.k8s.io/v1.35.6/bin/linux/arm64/kubectl"
+
+[tools.kubectl."platforms.linux-x64"]
+checksum = "sha256:5d11e2ba01ea68ffd053f56e27738e2b4330013ee67f7e46c6da6c585d3c9926"
+url = "https://dl.k8s.io/v1.35.6/bin/linux/amd64/kubectl"
+
+[tools.kubectl."platforms.linux-x64-musl"]
+checksum = "sha256:5d11e2ba01ea68ffd053f56e27738e2b4330013ee67f7e46c6da6c585d3c9926"
+url = "https://dl.k8s.io/v1.35.6/bin/linux/amd64/kubectl"
+
+[tools.kubectl."platforms.macos-arm64"]
+checksum = "sha256:1827b555615791c1c1065dd64870eb49a4e00e9dfd389a82a2ef1d31bb46d200"
+url = "https://dl.k8s.io/v1.35.6/bin/darwin/arm64/kubectl"
+
+[tools.kubectl."platforms.macos-x64"]
+checksum = "sha256:fa6b472ca1e542e171d7daedd9435b8e9650bc18d42a57eb930a51f48ca58874"
+url = "https://dl.k8s.io/v1.35.6/bin/darwin/amd64/kubectl"
 
 [[tools.node]]
 version = "24.18.0"
@@ -348,6 +418,47 @@ url_api = "https://api.github.com/repos/getsops/sops/releases/assets/461838762"
 
 [tools.sops."platforms.macos-x64".provenance.slsa]
 url = "https://github.com/getsops/sops/releases/download/v3.13.2/sops-v3.13.2.intoto.jsonl"
+
+[[tools.talosctl]]
+version = "1.13.7"
+backend = "aqua:siderolabs/talos"
+specifiers = ["1.13.7"]
+
+[tools.talosctl."platforms.linux-arm64"]
+checksum = "sha256:756ef525dbff50bcaa67750fce70efbef2899ec87c87468914a8390ce292b1d4"
+url = "https://github.com/siderolabs/talos/releases/download/v1.13.7/talosctl-linux-arm64"
+url_api = "https://api.github.com/repos/siderolabs/talos/releases/assets/484644288"
+provenance = "cosign"
+
+[tools.talosctl."platforms.linux-arm64-musl"]
+checksum = "sha256:756ef525dbff50bcaa67750fce70efbef2899ec87c87468914a8390ce292b1d4"
+url = "https://github.com/siderolabs/talos/releases/download/v1.13.7/talosctl-linux-arm64"
+url_api = "https://api.github.com/repos/siderolabs/talos/releases/assets/484644288"
+provenance = "cosign"
+
+[tools.talosctl."platforms.linux-x64"]
+checksum = "sha256:97d08e5584e56114659f131e95e227910d1f3b427d26360dca2af3ed821b71f8"
+url = "https://github.com/siderolabs/talos/releases/download/v1.13.7/talosctl-linux-amd64"
+url_api = "https://api.github.com/repos/siderolabs/talos/releases/assets/484644296"
+provenance = "cosign"
+
+[tools.talosctl."platforms.linux-x64-musl"]
+checksum = "sha256:97d08e5584e56114659f131e95e227910d1f3b427d26360dca2af3ed821b71f8"
+url = "https://github.com/siderolabs/talos/releases/download/v1.13.7/talosctl-linux-amd64"
+url_api = "https://api.github.com/repos/siderolabs/talos/releases/assets/484644296"
+provenance = "cosign"
+
+[tools.talosctl."platforms.macos-arm64"]
+checksum = "sha256:8965b026f416a25147b99530721c25fc2616c4fa655480673bcb63eb7f0de331"
+url = "https://github.com/siderolabs/talos/releases/download/v1.13.7/talosctl-darwin-arm64"
+url_api = "https://api.github.com/repos/siderolabs/talos/releases/assets/484644319"
+provenance = "cosign"
+
+[tools.talosctl."platforms.macos-x64"]
+checksum = "sha256:0e4b75ee78da180103aceda6da9c906bd2cba48cd7c7c2e9049776445beab688"
+url = "https://github.com/siderolabs/talos/releases/download/v1.13.7/talosctl-darwin-amd64"
+url_api = "https://api.github.com/repos/siderolabs/talos/releases/assets/484644291"
+provenance = "cosign"
 
 [[tools.uv]]
 version = "0.11.32"
