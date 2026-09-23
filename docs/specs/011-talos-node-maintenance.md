@@ -1,6 +1,7 @@
 # Specification 011: Talos node maintenance
 
-Status: proposed for operator review. Implementation and live acceptance are pending.
+Status: design approved for implementation planning. Implementation and live
+acceptance are pending.
 
 Issue: [#55](https://github.com/supermorphic/homelab-playbook/issues/55).
 
@@ -349,16 +350,21 @@ fetch, dependency installation, credential enrollment, or remote mutation occurs
 as part of verification. Missing or incompatible verification capability blocks
 admission before disruption; loss of it during recovery preserves containment.
 
+Use preparation and recovery modes on this same command. Preparation validates
+source and locally prepared dependencies without target API calls. Its result
+cannot satisfy recovery acceptance. Recovery runs the complete observational
+chain against the expected contained node. Neither mode fetches dependencies.
+
 The narrow request/response contract is:
 
 | Field or behavior | Requirement |
 | --- | --- |
-| Request identity | Version 1 request schema and a fresh per-invocation request ID |
+| Request identity | Version 1 request schema, explicit preparation/recovery mode, and a fresh per-invocation request ID |
 | Target binding | Explicit node, approved node set/endpoints, and exact desired-data/verification revision |
-| Authentication | Absolute kubeconfig path and explicit context; no credential values in the request or response |
-| Expected containment | Exact selected node and schema 1 record; permit that cordon only and reject another contained node |
+| Authentication | Absolute Kubernetes and Talos config paths with explicit contexts, including Talos diagnostics used by Cilium postflight; no credential values in the request or response |
+| Expected containment | Required for recovery: exact selected node and schema 1 record; permit that cordon only and reject another contained node |
 | Observation | Re-read target binding and containment, run all required checks, and enforce a bounded deadline |
-| Result | Exit zero only when all checks pass; structured result echoes request ID, target, context, revision, and outcomes for source validation, Cilium, and foundation |
+| Result | Exit zero only when the mode's checks pass; structured result echoes request ID, mode, target, contexts, revision, and stage outcomes; recovery requires source validation, Cilium, and foundation to pass |
 | Failure | Nonzero status for failed checks, invalid inputs, unsupported schema, missing capability, or cleanup failure; redact sensitive diagnostics |
 
 Store request and response files privately. The playbook validates the direct
