@@ -8,15 +8,16 @@ Issue: [#55](https://github.com/supermorphic/homelab-playbook/issues/55).
 ## Purpose and scope
 
 Move established-node `maintenance-check`, `maintenance-enter`,
-`maintenance-exit`, and `reboot` into the canonical playbook gateway. The
-workstation is the supported maintenance interface. Preserve the existing single-node behavior:
+`maintenance-exit`, `reboot`, and the complete attended abrupt-loss scenario
+into the canonical playbook gateway. The workstation is the supported
+maintenance interface. Preserve the existing single-node behavior:
 entry evacuates Longhorn replicas and shuts down the node; exit accepts an
 already powered-on node. Physical power-on remains an operator action.
 
 This repository owns and runs the lifecycle implementation. Issue #6 reuses it
 internally in this repository. After cutover, retained cluster workflows have
 no runtime dependency on migrated lifecycle code: no imports, command wrappers,
-or automatic dispatch to this repository. Desired configuration, workload tests,
+or automatic dispatch to this repository. Desired configuration, other workload tests,
 storage resizing, exceptional bootstrap recovery, and Cilium/foundation
 verification retain their existing ownership. Coordination across those
 workflows uses compatible protocols with independently owned implementations.
@@ -62,6 +63,7 @@ mise run playbook -- talos maintenance-check production
 mise run playbook -- talos maintenance-enter production
 mise run playbook -- talos maintenance-exit production
 mise run playbook -- talos reboot production
+mise run playbook -- talos abrupt-loss-test production
 ```
 
 Each invocation also supplies one `talos_node` and explicit input references
@@ -77,7 +79,8 @@ APIs. Talos nodes do not become SSH-managed inventory hosts.
 | `talos_talosconfig`, `talos_talos_context` | Explicit absolute credential-file path and selected Talos context |
 | `talos_source_dir`, `talos_source_revision` | Prepared, verified desired-data and verification checkout and full commit ID |
 | `talos_confirmation` | Required only for mutation; bound to the resolved action and target as described below |
-| `talos_test_run`, `talos_lease_holder` | Run identity and optional existing holder for the abrupt-loss test handoff only; never bypass live ownership checks |
+| `talos_test_confirmation` | Required for `abrupt-loss-test`: exactly `chaos:node-abrupt-loss`, in addition to target-bound `talos_confirmation` |
+| `talos_evidence_dir` | Optional absolute private output root for abrupt-loss evidence; create a unique run-owned subdirectory |
 
 Preserve gateway dependency verification. Production is the only supported
 live inventory initially. Reject staging, frozen inventories, task selection,
@@ -97,7 +100,8 @@ Entry, exit, and reboot are purpose-specific mutating actions under the
 [command lifecycle](../reference/repository-command-lifecycle.md). Reject
 Ansible check mode for these actions before acquiring a Lease or contacting
 mutation APIs; direct the operator to `maintenance-check`. Do not report a
-simulated transaction as completed maintenance.
+simulated transaction as completed maintenance. `abrupt-loss-test` uses the
+controlled-test profile and also rejects check mode.
 
 ## Workstation credentials and execution inputs
 
@@ -143,7 +147,7 @@ not a lifecycle-code dependency consumed by another repository.
 
 | Observed state | Allowed behavior |
 | --- | --- |
-| All nodes healthy and schedulable; no lifecycle record | Check, enter, or reboot one explicitly selected node after fresh admission |
+| All nodes healthy and schedulable; no lifecycle record | Check, enter, reboot, or start the attended abrupt-loss test for one explicitly selected node after fresh admission |
 | Target cordoned with a supported matching record | Exit after power-on and recovery acceptance; fresh entry is refused |
 | Target shut down with a maintenance record | Physical maintenance and operator power-on; exit does not power on |
 | Partial entry or interrupted recovery with matching record | Exit restores only owned state and repeats acceptance |
@@ -169,9 +173,10 @@ not a lifecycle-code dependency consumed by another repository.
 
 ### Exit
 
-1. Acquire and renew the same Lease, or join the verified holder for the
-   abrupt-loss test handoff below. Use recovery-aware admission that allows the
-   target's expected cordon and record while checking the other nodes.
+1. Acquire and renew the same Lease. The abrupt-loss scenario reuses this
+   recovery implementation internally under its own live Lease. Use
+   recovery-aware admission that allows the target's expected cordon and record
+   while checking the other nodes.
 2. Read and validate the existing record. Require confirmation
    `accept:<node>:<kind>`. Support schema 1 maintenance, reboot, and abrupt-loss
    recovery, including operations begun before migration.
@@ -249,8 +254,8 @@ extension must preserve the common coordination protocol.
 These are protocol and cutover requirements. The lifecycle implementation and
 retained workflows may independently implement generic Lease operations and
 read-only record admission. Retained workflows refuse new disruption while
-unknown or active records exist; observational scenario steps may track their
-expected record. They do not restore lifecycle-owned state or clear records.
+unknown or active records exist. They do not restore lifecycle-owned state or
+clear records.
 Protocol fixtures prove interoperability without a shared runtime library.
 
 ## Implementation ownership and caller migration
@@ -258,8 +263,8 @@ Protocol fixtures prove interoperability without a shared runtime library.
 The shared role contains the migrated node transaction, drain, capacity,
 Longhorn maintenance, persisted-state, and recovery mechanics. Keep focused
 shell/Python helpers as internal implementation files. Imports resolve relative
-to those files. Public maintenance and reboot actions enter through the canonical
-playbook gateway; issue #6 reuses the role internally. There is no exported
+to those files. Public maintenance, reboot, and abrupt-loss test actions enter
+through the canonical playbook gateway; issue #6 reuses the role internally. There is no exported
 shell/Python lifecycle library or cross-repository lifecycle distribution contract.
 
 Split mixed-purpose helpers by responsibility before removal. Generic Lease
@@ -271,7 +276,7 @@ an old node transaction by renaming it as a generic helper.
 | Existing functionality or caller | Required end state |
 | --- | --- |
 | Maintenance and reboot commands | Owned and run here; old commands and forwarding wrappers removed |
-| Abrupt-loss containment/recovery mechanics | Owned here; the higher-level scenario uses the operator handoff below |
+| Complete abrupt-loss scenario, containment/recovery, and regression tests | Owned and run here; old scenario, tests, catalog entries, and references removed after replacement acceptance |
 | Capacity checks for node disruption | Lifecycle admission owned here; retained tests remove imports of migrated capacity code |
 | Storage resize | Retain workflow; replace lifecycle imports with locally owned storage predicates and generic coordination |
 | Etcd retry-join | Retain exceptional bootstrap workflow; use locally owned coordination and read-only record admission |
@@ -285,50 +290,67 @@ runbooks together with each affected caller. Retained workflows must run their
 required checks without this repository installed. No migrated lifecycle helper
 is sourced, copied back, downloaded, or invoked from a retained workflow.
 
-### Abrupt-loss scenario handoff
+### Complete abrupt-loss scenario
 
-Move containment and recovery mechanics here. A retained scenario may observe
-workloads, coordinate physical power actions, collect timing evidence, and hold
-and renew the generic disruption Lease. It must remove automatic calls to the
-old containment/recovery bridge and imports of migrated capacity helpers.
+Move the entire scenario, its required support code, and abrupt-loss regression
+coverage here. Expose `mise run playbook -- talos abrupt-loss-test production`
+as an attended controlled test. It owns baseline checks, physical-power prompts,
+loss detection, containment, passive observation, external probes, recovery,
+and evidence. There is no retained observer scenario or cross-repository stage
+handoff. Remove the old scenario only after this replacement passes acceptance.
 
-Use an explicit operator handoff between the scenario and the playbook. The
-scenario reports the exact target, run identity, current holder, and observed
-phase, then waits with a bounded deadline. It never starts a playbook process
-or loads this repository to complete the handoff. The playbook independently
-validates live state; a scenario report is not proof of admission or authority.
+Require `talos_test_confirmation: chaos:node-abrupt-loss` and
+`talos_confirmation: remove-power:<node>:<resolved-address>`. Generate the run
+identity locally. Keep evidence in a private unique subdirectory of the supplied
+root, defaulting to this checkout's `.tmp/talos-evidence/`; preserve it after
+transaction cleanup. Neither confirmation grants live-operation authority. Before
+acquiring the Lease or accessing mutation APIs, require a usable controlling
+terminal. Prompts use that terminal explicitly because Ansible captures child
+stdin/stdout. Keep the scenario in the foreground process tree and prove this
+path through the actual gateway with a synthetic pseudo-terminal. Reject
+noninteractive execution before disruption; do not add an alternate launcher.
 
-Provide `mise run playbook -- talos abrupt-loss-contain production` as the
-containment stage of an explicitly authorized disruption test, under the
-command lifecycle's controlled-test profile. It takes the same explicit target
-and credential inputs plus the test run and optional existing Lease-holder
-identity. Require `contain:<node>:<resolved-address>:<run>` confirmation and
-reject check mode. Verify the live holder, absence of other lifecycle records, target
-identity from approved inputs, survivor safety, and observed target loss before
-persisting the schema 1 abrupt-loss record and cordon. Never submit a shutdown
-or reboot from this action. Failure to establish target loss blocks containment.
-If the scenario ended before containment, the operator can run this action
-without a joined holder; it must acquire and renew the Lease normally before
-mutation. A failed join never silently falls back to acquiring a different Lease.
+One transaction acquires and renews the common Lease for the full scenario.
+Internal containment and recovery calls verify that live ownership, do not
+start another renewal loop, and do not release the parent's Lease. Public inputs
+cannot select an existing holder. Keep the following scenario behavior:
 
-Recovery uses `maintenance-exit` after operator power-on. For this test handoff,
-it may join the verified test holder for the matching abrupt-loss record; ordinary
-maintenance and reboot acquire their own Lease. The scenario keeps renewal alive
-and suspends consequential actions while the operator runs a joined stage.
-The playbook checks ownership before every mutation and does not release a Lease
-owned by the waiting scenario. If the scenario has ended or renewal has failed,
-exit can acquire the Lease normally once available and recover the persisted
-record. There is no takeover based solely on a supplied holder string.
+1. Run full current baseline verification, lifecycle admission, survivor capacity,
+   and workload/storage safety checks. Capture workload owner UIDs, replica
+   placement, and PVC/PV identity. Prepare monitoring before prompting for loss.
+2. Prompt the operator to disconnect the selected node's electrical input.
+   Repeat safety-critical admission and holder checks immediately before the
+   prompt. Never cordon, drain, shut down, or reboot before physical loss.
+3. Require all four loss signals: target Talos unavailable, target Kubernetes
+   Node NotReady, target etcd member unavailable, and survivor quorum retained.
+   Authentication failure alone is not proof. Default loss deadline is 180
+   seconds. Recheck holder, target identity, survivor safety, and absence of
+   conflicting records before atomically persisting the schema 1 abrupt-loss
+   record and cordon. Insufficient evidence blocks containment.
+4. Observe passively for 600 seconds, sampling every 5 seconds. Preserve exactly
+   two Ready survivors, Cilium on both, surviving Longhorn replicas, PVC/PV
+   identity, owner UIDs, workload placement/readiness, and timing evidence.
+   Do not force pod deletion, volume detachment, or failover settings.
+5. Monitor API readiness, DNS, and HTTPS throughout the disruption and recovery.
+   Preserve the 60-second no-success threshold and failure evidence. Resolve
+   endpoints from validated desired inputs; never use ambient contexts.
+6. Prompt restoration of electrical input with firmware automatic power-on.
+   Run internal guarded recovery acceptance and final uncordon under the same
+   Lease. Preserve the platform verifier's full recovery checks.
+7. Write private atomic phase/evidence records and a separate recovery result.
+   Preserve the primary scenario failure even when recovery succeeds. Bound
+   prompts, observation, recovery, and cleanup; stop and wait for probe children.
 
-Before a planned power loss, require playbook-owned admission for the selected
-node. The scenario performs its own current generic safety checks and waits for
-the operator's deliberate power action; it does not treat a historical check as
-current authority. If admission becomes stale, the operator repeats it before
-power loss. The scenario accepts phase completion only after observing the
-matching live containment or its guarded removal and healthy return. Timeout,
-interruption, or recovery failure reports unresolved recovery and fails the test;
-it must not silently skip recovery or remove containment. The operator can
-complete recovery through the playbook even if the test process is unavailable.
+On a scenario assertion failure, request physical restoration and attempt guarded
+recovery when loss and containment are established and authority is still valid.
+Lease loss, authentication failure, or conflicting state stops further mutation.
+EOF, prompt timeout, or interruption must report unresolved recovery without
+hanging or hiding the primary error. Cleanup itself never clears containment.
+If the scenario process dies after containment, ordinary `maintenance-exit` can
+acquire the Lease once available and recover its schema 1 record without local
+scenario files. Failure before proven containment reports uncontained loss;
+do not fabricate a record or claim recovery. Keep this attended scenario out of
+unattended campaigns and scheduled execution.
 
 ## Cilium and foundation verification boundary
 
@@ -350,21 +372,23 @@ fetch, dependency installation, credential enrollment, or remote mutation occurs
 as part of verification. Missing or incompatible verification capability blocks
 admission before disruption; loss of it during recovery preserves containment.
 
-Use preparation and recovery modes on this same command. Preparation validates
-source and locally prepared dependencies without target API calls. Its result
-cannot satisfy recovery acceptance. Recovery runs the complete observational
-chain against the expected contained node. Neither mode fetches dependencies.
+Use preparation, baseline, and recovery modes on this same command. Preparation
+validates source and locally prepared dependencies without target API calls.
+Baseline runs the complete observational chain before abrupt loss, requiring all
+nodes healthy and schedulable with no lifecycle record. Recovery runs that chain
+against the expected contained node. Results bind to their exact mode; preparation
+or baseline cannot satisfy recovery acceptance. No mode fetches dependencies.
 
 The narrow request/response contract is:
 
 | Field or behavior | Requirement |
 | --- | --- |
-| Request identity | Version 1 request schema, explicit preparation/recovery mode, and a fresh per-invocation request ID |
+| Request identity | Version 1 request schema, explicit preparation/baseline/recovery mode, and a fresh per-invocation request ID |
 | Target binding | Explicit node, approved node set/endpoints, and exact desired-data/verification revision |
 | Authentication | Absolute Kubernetes and Talos config paths with explicit contexts, including Talos diagnostics used by Cilium postflight; no credential values in the request or response |
-| Expected containment | Required for recovery: exact selected node and schema 1 record; permit that cordon only and reject another contained node |
+| Expected containment | Null for preparation/baseline; required for recovery: exact selected node and schema 1 record; permit that cordon only and reject another contained node |
 | Observation | Re-read target binding and containment, run all required checks, and enforce a bounded deadline |
-| Result | Exit zero only when the mode's checks pass; structured result echoes request ID, mode, target, contexts, revision, and stage outcomes; recovery requires source validation, Cilium, and foundation to pass |
+| Result | Exit zero only when the mode's checks pass; structured result echoes request ID, mode, target, contexts, revision, and stage outcomes; baseline and recovery require source validation, Cilium, and foundation to pass |
 | Failure | Nonzero status for failed checks, invalid inputs, unsupported schema, missing capability, or cleanup failure; redact sensitive diagnostics |
 
 Store request and response files privately. The playbook validates the direct
@@ -403,7 +427,7 @@ playbook; it does not create a reverse dependency on migrated lifecycle code.
 1. Approve this design and reconcile Specification 010's ownership references
    when integrating its branch. Keep implementation planning and source
    provenance under `.tmp/`; preserve the specification identifiers.
-2. Deliver and validate maintenance, public reboot, abrupt-loss mechanics,
+2. Deliver and validate maintenance, public reboot, the complete abrupt-loss test,
    internal lifecycle reuse, migrated regressions, and the workstation guide
    here. Preserve current regression fixes and old schema 1 recovery behavior.
 3. Prepare and validate the verification owner's observational boundary. Prove
@@ -411,10 +435,11 @@ playbook; it does not create a reverse dependency on migrated lifecycle code.
 4. Untangle retained workflows from lifecycle-specific imports and dispatch.
    Keep independently owned generic coordination where needed. Update all
    tests, catalogs, publication inputs, and runbooks; prove Lease interoperability
-   and the abrupt-loss operator handoff without installing playbook code there.
+   without installing playbook code there.
 5. Once the playbook replacement and untangled workflows pass their required
    validation, remove the old maintenance and reboot commands, containment and
-   recovery bridge, and migrated lifecycle implementation. Remove obsolete
+   recovery bridge, complete old abrupt-loss scenario and its tests/catalog
+   entries/references, and migrated lifecycle implementation. Remove obsolete
    dependency/import declarations as part of that cutover. Generic protocol
    implementations and owned verification code remain with their workflows.
 6. Do not replace code underneath a running operation. An interrupted operation
@@ -422,8 +447,9 @@ playbook; it does not create a reverse dependency on migrated lifecycle code.
    Keep an explicit recovery route during transition; removing the old command
    must not strand its persisted records.
 7. Verify the end state: lifecycle implementation exists and runs here; retained
-   cluster workflows are untangled; old maintenance/reboot/lifecycle code is
-   removed; no runtime lifecycle-code dependency remains between repositories.
+   cluster workflows are untangled; old maintenance/reboot/lifecycle code
+   and the abrupt-loss scenario are removed; no runtime lifecycle-code dependency
+   remains between repositories.
 8. Record separately authorized live evidence with exact revisions and
    target/action. Coordinate recovery guidance with issue #9. Offline acceptance
    does not establish production behavior.
@@ -440,8 +466,10 @@ Required offline evidence exercises the real migrated helpers and gateway:
   verified joining, interruption after each mutation stage, and cleanup failures.
 - Exact schema 1 fixtures, partial owned-state restoration, changed resource
   versions, foreign records, and recovery after command migration.
-- Abrupt-loss scenario handoff, stale/lost holder, unavailable test process,
-  timeout with unresolved recovery, and playbook-owned containment/recovery.
+- Full abrupt-loss baseline, four-signal loss detection, passive workload/storage
+  observation, external probes, attended gateway prompts, and separate primary
+  test/recovery outcomes. Cover stale/lost holder, timeout, signals, unavailable
+  scenario process, and recovery from its persisted record through exit.
 - Cilium/foundation failures that prevent uncordon, the permitted target
   containment case through the actual transitive verification code, and invalid
   verification responses or unavailable verification commands.

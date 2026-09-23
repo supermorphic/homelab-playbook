@@ -50,5 +50,5 @@ specifications record design decisions and integration contracts.
   Defines host-level Caddy, private HTTPS routes, external certificate delivery,
   configuration recovery, and service integration contracts.
 - [011 — Talos node maintenance](specs/011-talos-node-maintenance.md) — Defines
-  workstation maintenance and reboot, playbook-owned lifecycle operations,
+  workstation maintenance, reboot, the complete attended abrupt-loss test,
   compatible recovery, and separation of retained workflows.
