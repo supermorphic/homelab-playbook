@@ -2,8 +2,7 @@
 
 Status: proposed for operator review. Implementation and live acceptance are pending.
 
-Issues: [playbook #55](https://github.com/supermorphic/homelab-playbook/issues/55)
-and [cluster #431](https://github.com/supermorphic/homelab-talos/issues/431).
+Issue: [#55](https://github.com/supermorphic/homelab-playbook/issues/55).
 
 ## Purpose and scope
 
@@ -13,10 +12,10 @@ supported maintenance interface. Preserve the existing single-node behavior:
 entry evacuates Longhorn replicas and shuts down the node; exit accepts an
 already powered-on node. Physical power-on remains an operator action.
 
-This repository owns one shared lifecycle implementation. Retained cluster
-callers and future upgrade orchestration consume that implementation. The
-cluster repository continues to own desired configuration, workload tests,
-storage resizing, and exceptional bootstrap recovery.
+This repository owns one shared lifecycle implementation. Existing callers and
+future upgrade orchestration consume that implementation. Desired configuration,
+workload tests, storage resizing, and exceptional bootstrap recovery retain
+their existing ownership.
 
 [Issue #6](https://github.com/supermorphic/homelab-playbook/issues/6) and
 Specification 010 own upgrade sequencing, Semaphore execution, upgrade
@@ -28,10 +27,9 @@ Design approval does not authorize live operations or credential enrollment.
 
 ## Baseline and design choice
 
-Use current merged cluster source and regression tests, including the fixes
-following issues 346 and 412. The inspected baseline is
-`78e2b6c09f2eb5332bc12f2ffa84c9d926ba685d`. Recheck merged changes before moving
-code; retain the relevant behavior and regression fixes in the migration.
+Use the current maintenance implementation and regression tests. Recheck
+changes before moving code; retain the relevant behavior and regression fixes
+in the migration. Record inspected source provenance in the implementation notes.
 
 Keep focused shell and Python helpers under `roles/talos_lifecycle/files/`.
 Ansible validates inputs and invokes complete transactions. It must not split
@@ -46,7 +44,7 @@ Preserve its identifier and upgrade design. When integrating the two branches,
 update its delivery boundary, ownership table, coordinated migration section,
 and maintenance command references to this specification. Its shared role is a
 dependency delivered by #55, not a second migration owned by #6. Its reference
-to a public reboot playbook is replaced by the retained cluster wrapper below.
+to a public reboot playbook is replaced by the retained public wrapper below.
 Upgrade-specific records, orchestration, and Semaphore work remain with #6.
 Integration of that branch is not a prerequisite for implementing maintenance.
 
@@ -97,11 +95,10 @@ simulated transaction as completed maintenance.
 ## Workstation credentials and execution inputs
 
 Consume the operator's existing authorized Kubernetes and Talos configuration
-files by explicit path. Existing cluster `.kube/config` and `.talos/config`
-locations can be supplied by their absolute paths; do not discover another
-checkout, issue credentials, copy administrative credentials, or change
-contexts in the original files. Credential renewal and recovery use the
-existing operator procedures, outside this workflow.
+files by explicit absolute path. Do not discover credential locations, issue
+credentials, copy administrative credentials, or change contexts in the original
+files. Credential renewal and recovery use the existing operator procedures,
+outside this workflow.
 
 Use the supplied contexts consistently in every helper, including Cilium and
 foundation verification. Match configured API endpoints and authenticated
@@ -117,8 +114,9 @@ errors containing secrets. Use private temporary directories and remove only
 run-owned files. Inventory protected inputs, if needed, use the existing SOPS
 boundary; loading the lifecycle library never decrypts an inventory.
 
-Prepare desired data before execution from the trusted repository
-`https://github.com/supermorphic/homelab-talos.git` at the supplied full commit.
+Prepare desired data before execution from an explicitly configured trusted
+Git source at the supplied full commit. Bind the allowed origin in repository
+configuration; an invocation cannot override that trust setting.
 The workflow accepts a verified local checkout; it does not fetch during an
 operation. Check origin, HEAD, tracked content, and the allowed input paths;
 read selected files from the committed tree into a private immutable run
@@ -252,18 +250,18 @@ Private transaction helpers are not a supported consumer import. Consumers
 cannot substitute shell callbacks, tool overrides, or guard-disabling flags.
 The gateway and wrappers use the same input validation and transaction code.
 
-| Existing cluster caller | Destination and change |
+| Existing consumer | Destination and change |
 | --- | --- |
-| `.just/node.just` maintenance actions | Retire after the playbook replacement is available and validated |
-| `.just/node.just` reboot | Keep the public command as a thin wrapper over the shared reboot transaction |
-| `scripts/node/abrupt-loss-bridge.sh` and `node_abrupt_loss.py` | Keep the live scenario and physical-power interaction in the cluster repository; call the shared bridge and capacity interface |
-| `scripts/node/resize-longhorn.sh` | Keep resize orchestration; adapt shared locking, admission, and storage predicates |
-| `.just/bootstrap.just` etcd retry-join | Keep exceptional bootstrap workflow; adapt shared Lease and admission imports |
-| `run-campaign`, `run-catalog-suite`, `run-chainsaw` | Keep cluster test coordination; retain verified existing-holder joining |
-| `publish-report.sh` | Keep publication; update shared coordination and dependency input lists |
-| n8n, automation-data, and NocoDB restore/test workflows | Keep workload behavior; adapt common Lease imports |
-| `scripts/verify/automation-data.sh` | Keep workflow; consume the shared storage-verification predicates |
-| Cilium/foundation verification commands | Retain cluster public commands as wrappers around the extracted shared verification implementation |
+| Maintenance commands | Retire after the playbook replacement is available and validated |
+| Reboot command | Keep the public command as a thin wrapper over the shared reboot transaction |
+| Abrupt-loss scenario | Keep the live scenario and physical-power interaction with its existing owner; call the shared bridge and capacity interface |
+| Storage resize | Keep resize orchestration; adapt shared locking, admission, and storage predicates |
+| Etcd retry-join | Keep exceptional bootstrap workflow; adapt shared Lease and admission imports |
+| Test campaigns and suites | Keep test coordination; retain verified existing-holder joining |
+| Report publication | Keep publication; update shared coordination and dependency input lists |
+| Workload restore and test workflows | Keep workload behavior; adapt common Lease imports |
+| Storage verification workflows | Keep workflow; consume the shared storage-verification predicates |
+| Cilium/foundation verification commands | Retain public commands as wrappers around the extracted shared verification implementation |
 
 Update catalogs, fixture imports, release/publication inputs, command references,
 and runbooks together with executable callers. Issue #6 uses this same role's
@@ -275,8 +273,8 @@ not move for its implementation to have one owner.
 
 Preserve the assertions behind the existing `cilium-verify` and
 `foundation-verify` calls, including source-validation prerequisites. Extract
-their required verification logic into the shared owner and replace cluster
-commands with wrappers. Do not invoke an arbitrary `just` executable boundary
+their required verification logic into the shared owner and replace existing
+commands with wrappers. Do not invoke an arbitrary command-runner boundary
 or accept a caller-supplied success result as recovery evidence.
 
 The shared source adapter reads allowed public inputs from the pinned cluster
@@ -284,8 +282,8 @@ data snapshot: node/endpoint mapping, Cilium values and chart expectations,
 Flux and foundation manifests, networking constants, public trust material,
 and provider ciphertext revision metadata. Move required source-validation
 predicates with the verifier. Validate those inputs before target mutation;
-do not decrypt provider secrets or machine configuration. Keep desired data in
-the cluster repository and derive expected values from that exact revision.
+do not decrypt provider secrets or machine configuration. Preserve desired-data
+ownership and derive expected values from that exact revision.
 
 Preserve these independent checks:
 
@@ -300,18 +298,18 @@ Preserve these independent checks:
 
 Test actual transitive validators with fixture responses, including a contained
 target that passes recovery and an unexpected second cordon that fails. A stub
-at the former `just` call does not prove acceptance parity.
+at the command-runner boundary does not prove acceptance parity.
 
 ## Immutable cross-repository distribution
 
-The cluster repository consumes this repository as a Git submodule at
+External consumers use this repository as a Git submodule at
 `vendor/homelab-playbook`. Its `.gitmodules` fixes the source URL to
 `https://github.com/supermorphic/homelab-playbook.git`; the reviewed parent
 commit's gitlink selects the exact dependency commit. The first pin must refer
 to a published, validated implementation commit, not an invented future SHA.
 This uses Git's [submodule model](https://git-scm.com/docs/gitsubmodules).
 
-Issue #431 adds dependency preparation to the cluster's registered bootstrap.
+Consumers add dependency preparation to their registered bootstrap workflow.
 Preparation checks the declared source and local URL overrides, uses checkout
 mode at the gitlink, rejects custom update commands and branch-following
 options, and never overwrites a modified dependency. Only explicit preparation
@@ -339,21 +337,21 @@ state. Unsupported records require a compatible forward recovery version.
 
 ## Cutover and acceptance evidence
 
-1. Approve this paired design and reconcile Specification 010's ownership
+1. Approve this design and reconcile Specification 010's ownership
    references when integrating its branch. Keep implementation planning under
    `.tmp/` and preserve the existing specification identifiers.
 2. Deliver the shared implementation, workstation gateway, transitive checks,
-   migrated regressions, and operator guide in #55. Recheck current merged
-   cluster fixes and record source provenance for migrated code and fixtures.
+   migrated regressions, and operator guide in #55. Recheck current maintenance
+   fixes and record source provenance for migrated code and fixtures.
 3. Validate and publish a fixed implementation commit. During preparation,
    keep the old released command available; make shared fixes in the new owner
    and incorporate any necessary transition fixes before the consumer cutover.
-4. In #431's isolated worktree, prepare the submodule pin and migrate every
-   retained caller, wrapper, test, catalog, and publication input. Prove old/new
-   Lease contention and recovery of old records against the actual shared code.
-5. After both repositories' required CI passes and the documented workstation
+4. Prepare each consumer's submodule pin and migrate its retained callers,
+   wrappers, tests, catalogs, and publication inputs. Prove old/new Lease
+   contention and recovery of old records against the actual shared code.
+5. After owner and consumer validation passes and the documented workstation
    replacement is available, retire old maintenance entrypoints and migrated
-   helper bodies in the same companion cutover. Leave one maintained source;
+   helper bodies in the coordinated cutover. Leave one maintained source;
    retained public commands are adapters. Never replace code underneath a
    running operation. A pre-cutover recovery record can remain and be accepted
    later through the supported replacement.
@@ -378,6 +376,6 @@ Required offline evidence exercises the real migrated helpers and gateway:
   from an unrelated working directory.
 
 Use synthetic APIs, credentials, and infrastructure identifiers in CI. Run the
-repository's required `mise run ci:changed` and the companion's required checks.
+repository's required `mise run ci:changed` and each consumer's required checks.
 Do not enroll credentials, operate a production node, change Semaphore, or
 enable schedules as part of offline validation.
