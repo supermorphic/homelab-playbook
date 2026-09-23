@@ -49,3 +49,6 @@ specifications record design decisions and integration contracts.
 - [008 — Shared private reverse proxy](specs/008-shared-private-reverse-proxy.md) —
   Defines host-level Caddy, private HTTPS routes, external certificate delivery,
   configuration recovery, and service integration contracts.
+- [011 — Talos node maintenance](specs/011-talos-node-maintenance.md) — Proposes
+  workstation maintenance, shared lifecycle ownership, compatible recovery,
+  and the coordinated cluster caller migration.
