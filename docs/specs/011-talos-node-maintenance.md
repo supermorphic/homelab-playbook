@@ -6,21 +6,24 @@ Issue: [#55](https://github.com/supermorphic/homelab-playbook/issues/55).
 
 ## Purpose and scope
 
-Move established-node `maintenance-check`, `maintenance-enter`, and
-`maintenance-exit` into the canonical playbook gateway. The workstation is the
-supported maintenance interface. Preserve the existing single-node behavior:
+Move established-node `maintenance-check`, `maintenance-enter`,
+`maintenance-exit`, and `reboot` into the canonical playbook gateway. The
+workstation is the supported maintenance interface. Preserve the existing single-node behavior:
 entry evacuates Longhorn replicas and shuts down the node; exit accepts an
 already powered-on node. Physical power-on remains an operator action.
 
-This repository owns one shared lifecycle implementation. Existing callers and
-future upgrade orchestration consume that implementation. Desired configuration,
-workload tests, storage resizing, and exceptional bootstrap recovery retain
-their existing ownership.
+This repository owns and runs the lifecycle implementation. Issue #6 reuses it
+internally in this repository. After cutover, retained cluster workflows have
+no runtime dependency on migrated lifecycle code: no imports, command wrappers,
+or automatic dispatch to this repository. Desired configuration, workload tests,
+storage resizing, exceptional bootstrap recovery, and Cilium/foundation
+verification retain their existing ownership. Coordination across those
+workflows uses compatible protocols with independently owned implementations.
 
 [Issue #6](https://github.com/supermorphic/homelab-playbook/issues/6) and
 Specification 010 own upgrade sequencing, Semaphore execution, upgrade
 credentials, and upgrade verification. Specification 011 owns maintenance and
-the shared implementation boundary. Semaphore maintenance templates,
+the internal lifecycle implementation boundary. Semaphore maintenance templates,
 Semaphore credentials, autonomous credential renewal, and a credential issuer
 spike are outside this delivery. They are not prerequisites for maintenance.
 Design approval does not authorize live operations or credential enrollment.
@@ -34,17 +37,18 @@ in the migration. Record inspected source provenance in the implementation notes
 Keep focused shell and Python helpers under `roles/talos_lifecycle/files/`.
 Ansible validates inputs and invokes complete transactions. It must not split
 Lease acquisition, renewal, mutation, and cleanup into separate task processes.
-This preserves the existing transaction structure and avoids a second
-implementation for upgrades. Moving every consumer here would unnecessarily
-expand maintenance into workload testing and storage operations. A third
-package repository would add an owner without a demonstrated need.
+This preserves the existing transaction structure and allows internal reuse by
+upgrades. Lifecycle-specific functionality moves here; retained workflows are
+refactored away from its imports. Generic coordination, such as Lease handling
+and refusing disruption while a lifecycle record exists, may be independently
+implemented by each workflow owner. This does not duplicate node transactions.
 
 Specification 010 exists on the separate `talos-upgrade-orchestration` branch.
 Preserve its identifier and upgrade design. When integrating the two branches,
 update its delivery boundary, ownership table, coordinated migration section,
 and maintenance command references to this specification. Its shared role is a
-dependency delivered by #55, not a second migration owned by #6. Its reference
-to a public reboot playbook is replaced by the retained public wrapper below.
+component delivered by #55, not a second migration owned by #6. Its public
+reboot playbook is delivered here together with maintenance.
 Upgrade-specific records, orchestration, and Semaphore work remain with #6.
 Integration of that branch is not a prerequisite for implementing maintenance.
 
@@ -56,6 +60,7 @@ The canonical commands are:
 mise run playbook -- talos maintenance-check production
 mise run playbook -- talos maintenance-enter production
 mise run playbook -- talos maintenance-exit production
+mise run playbook -- talos reboot production
 ```
 
 Each invocation also supplies one `talos_node` and explicit input references
@@ -69,14 +74,15 @@ APIs. Talos nodes do not become SSH-managed inventory hosts.
 | `talos_node` | Exactly one node name in the approved three-node desired input; no lists, patterns, or implicit selection |
 | `talos_kubeconfig`, `talos_kube_context` | Explicit absolute credential-file path and selected Kubernetes context |
 | `talos_talosconfig`, `talos_talos_context` | Explicit absolute credential-file path and selected Talos context |
-| `talos_source_dir`, `talos_source_revision` | Prepared, verified cluster desired-data checkout and full commit ID |
+| `talos_source_dir`, `talos_source_revision` | Prepared, verified desired-data and verification checkout and full commit ID |
 | `talos_confirmation` | Required only for mutation; bound to the resolved action and target as described below |
+| `talos_test_run`, `talos_lease_holder` | Run identity and optional existing holder for the abrupt-loss test handoff only; never bypass live ownership checks |
 
 Preserve gateway dependency verification. Production is the only supported
 live inventory initially. Reject staging, frozen inventories, task selection,
 custom inventory substitution, host limits, ambiguous targets, and arbitrary
 executable overrides before target access. Validate the complete input set
-before starting the transaction. Direct library callers must satisfy the same
+before starting the transaction. Internal role callers must satisfy the same
 target, credential, and transaction guards as the gateway.
 
 `maintenance-check` is observational: no write Lease, cordon, annotations,
@@ -86,7 +92,7 @@ identity, node health and pressure, etcd health, survivor capacity, eviction
 eligibility, networking, and storage safety. A passed check grants no authority
 and does not replace entry's fresh checks.
 
-Entry and exit are purpose-specific mutating actions under the
+Entry, exit, and reboot are purpose-specific mutating actions under the
 [command lifecycle](../reference/repository-command-lifecycle.md). Reject
 Ansible check mode for these actions before acquiring a Lease or contacting
 mutation APIs; direct the operator to `maintenance-check`. Do not report a
@@ -120,21 +126,23 @@ configuration; an invocation cannot override that trust setting.
 The workflow accepts a verified local checkout; it does not fetch during an
 operation. Check origin, HEAD, tracked content, and the allowed input paths;
 read selected files from the committed tree into a private immutable run
-snapshot. Reject path escapes and untracked substitutes. No cluster script,
-Mise configuration, Ansible plugin, or arbitrary callback is executed from that
-checkout. Credentials are separate from desired-data preparation.
+snapshot. Reject path escapes and untracked substitutes. The only executable
+boundary into that checkout is the fixed read-only verification command defined
+below. Do not load lifecycle helpers, Ansible plugins, or arbitrary callbacks
+from it. Credentials are separate from desired-data preparation.
 
 Record the automation revision, desired-data revision, action, node, phase,
-and outcome in bounded non-secret output. Resolve pinned tool paths once;
-library consumers do not activate the owner's Mise configuration as a side
-effect. Tool versions required by the exported interface are declared and
-validated during dependency preparation and admission.
+and outcome in bounded non-secret output. Resolve this repository's pinned tool
+paths once. Prepare the verification command's own tool environment separately
+and validate it before admission; invoking verification does not install tools
+or credentials. The desired-data and verifier revision identifies that input,
+not a lifecycle-code dependency consumed by another repository.
 
 ## State machine and transaction safeguards
 
 | Observed state | Allowed behavior |
 | --- | --- |
-| All nodes healthy and schedulable; no lifecycle record | Check, or enter for one explicitly selected node after fresh admission |
+| All nodes healthy and schedulable; no lifecycle record | Check, enter, or reboot one explicitly selected node after fresh admission |
 | Target cordoned with a supported matching record | Exit after power-on and recovery acceptance; fresh entry is refused |
 | Target shut down with a maintenance record | Physical maintenance and operator power-on; exit does not power on |
 | Partial entry or interrupted recovery with matching record | Exit restores only owned state and repeats acceptance |
@@ -160,8 +168,9 @@ validated during dependency preparation and admission.
 
 ### Exit
 
-1. Acquire and renew the same Lease. Use recovery-aware admission that allows
-   the target's expected cordon and record while checking the other nodes.
+1. Acquire and renew the same Lease, or join the verified holder for the
+   abrupt-loss test handoff below. Use recovery-aware admission that allows the
+   target's expected cordon and record while checking the other nodes.
 2. Read and validate the existing record. Require confirmation
    `accept:<node>:<kind>`. Support schema 1 maintenance, reboot, and abrupt-loss
    recovery, including operations begun before migration.
@@ -174,6 +183,21 @@ validated during dependency preparation and admission.
    and workload replacement acceptance when the transaction has that inventory.
 6. Recheck Lease ownership, admission, and exact record immediately before the
    concurrency-guarded removal of the record and uncordon. Read back success.
+
+### Reboot
+
+Reboot is a public playbook operation backed by the same internal transaction
+helpers. Acquire and renew the common Lease, perform fresh preflight, and
+require `reboot:<node>:<resolved-address>` confirmation. Persist the schema 1
+reboot record and cordon with concurrency guards, drain, and accept replacement
+workloads. Apply the existing short-absence storage checks and retain reusable
+replicas; full replica evacuation belongs to maintenance entry.
+
+Repeat safety and holder checks immediately before the single-node Talos reboot.
+Observe departure and return, then run the same guarded recovery acceptance and
+final uncordon used by exit, including platform verification. Failure preserves
+containment for `maintenance-exit`. Retire the old public reboot command during
+cutover; do not retain a forwarding wrapper.
 
 ### Failure and interruption
 
@@ -200,7 +224,7 @@ Keep the Lease in namespace `flux-system`, named `homelab-test-run-lock`, with
 the current 90-second duration and 30-second renewal defaults. Preserve holder
 verification, optimistic concurrency, expiry handling, and refusal to release
 another holder's Lease. An expired Lease never clears persistent containment.
-Child consumers join an existing holder only after checking current ownership;
+Joined operations use an existing holder only after checking current ownership;
 a passed holder string alone is insufficient. The parent retains renewal and
 reports renewal loss to joined work, which checks ownership before mutation.
 
@@ -221,69 +245,128 @@ without rewriting its record. Upgrade records and their acceptance belong to
 issue #6; maintenance must refuse them with a clear recovery direction. That future
 extension must preserve the common coordination protocol.
 
-## Shared implementation and supported consumers
+These are protocol and cutover requirements. The lifecycle implementation and
+retained workflows may independently implement generic Lease operations and
+read-only record admission. Retained workflows refuse new disruption while
+unknown or active records exist; observational scenario steps may track their
+expected record. They do not restore lifecycle-owned state or clear records.
+Protocol fixtures prove interoperability without a shared runtime library.
 
-The shared role contains the migrated `node/{lifecycle,common,drain,longhorn,
-recovery}.sh`, `node/capacity.py`, and the Lease, lifecycle-state, and shared
-storage-verification libraries. Move the abrupt-loss bridge's transaction
-adapter here as well. Preserve helper behavior before targeted adaptation.
-Imports resolve relative to their own files, never the caller's working directory.
+## Implementation ownership and caller migration
 
-Publish `roles/talos_lifecycle/files/interface-v1.json` with interface major,
-exported entrypoints, their argument/environment contracts, supported record
-schemas, and required tools. Version 1 supports these boundaries:
+The shared role contains the migrated node transaction, drain, capacity,
+Longhorn maintenance, persisted-state, and recovery mechanics. Keep focused
+shell/Python helpers as internal implementation files. Imports resolve relative
+to those files. Public maintenance and reboot actions enter through the canonical
+playbook gateway; issue #6 reuses the role internally. There is no exported
+shell/Python lifecycle library or cross-repository lifecycle distribution contract.
 
-| Consumer boundary | Supported behavior |
+Split mixed-purpose helpers by responsibility before removal. Generic Lease
+coordination and standalone storage verification can stay with their existing
+workflows. Move node containment, drain sequencing, owned-state restoration,
+shutdown/reboot, and recovery acceptance orchestration here. Do not preserve
+an old node transaction by renaming it as a generic helper.
+
+| Existing functionality or caller | Required end state |
 | --- | --- |
-| `node/lifecycle.sh` | Complete check, enter, exit, and reboot transactions, with explicit action, node, credential references, and validated execution inputs |
-| `node/abrupt-loss-bridge.sh` | `contain` or `recover` for one node under a verified existing Lease holder |
-| `lib/lease.sh` | Existing acquire, renew, verify-holder, start/stop renewal, and release functions with their current arguments |
-| `lib/node-lifecycle-state.sh` | Record validation and disruption admission, including the expected recovery target |
-| `node/common.sh` and `lib/longhorn-verification.sh` | Shared target/admission and storage predicates used by retained resize and verification callers |
-| `node/capacity.py` | Existing capacity analysis entrypoint used by preflight and disruption testing |
-| `verify/` | Shared Cilium/foundation acceptance and their extracted validation dependencies, with explicit desired data and expected containment |
+| Maintenance and reboot commands | Owned and run here; old commands and forwarding wrappers removed |
+| Abrupt-loss containment/recovery mechanics | Owned here; the higher-level scenario uses the operator handoff below |
+| Capacity checks for node disruption | Lifecycle admission owned here; retained tests remove imports of migrated capacity code |
+| Storage resize | Retain workflow; replace lifecycle imports with locally owned storage predicates and generic coordination |
+| Etcd retry-join | Retain exceptional bootstrap workflow; use locally owned coordination and read-only record admission |
+| Test campaigns, suites, and report publication | Retain workflows; use independently maintained generic Lease operations |
+| Workload restore and test workflows | Retain workload behavior and local coordination; remove lifecycle imports |
+| Standalone storage verification | Retain its owner and public behavior; separate it from maintenance-specific state restoration |
+| Cilium/foundation verification | Keep implementations and source validators with their current owner; expose the read-only verification command below |
 
-Document and test the precise exported signatures in that manifest before the
-first consumer pin is published. Preserve existing coordination signatures;
-adapt controller/desired-data initialization once at each entry boundary.
-Private transaction helpers are not a supported consumer import. Consumers
-cannot substitute shell callbacks, tool overrides, or guard-disabling flags.
-The gateway and wrappers use the same input validation and transaction code.
+Update catalogs, fixtures, release/publication inputs, command references, and
+runbooks together with each affected caller. Retained workflows must run their
+required checks without this repository installed. No migrated lifecycle helper
+is sourced, copied back, downloaded, or invoked from a retained workflow.
 
-| Existing consumer | Destination and change |
+### Abrupt-loss scenario handoff
+
+Move containment and recovery mechanics here. A retained scenario may observe
+workloads, coordinate physical power actions, collect timing evidence, and hold
+and renew the generic disruption Lease. It must remove automatic calls to the
+old containment/recovery bridge and imports of migrated capacity helpers.
+
+Use an explicit operator handoff between the scenario and the playbook. The
+scenario reports the exact target, run identity, current holder, and observed
+phase, then waits with a bounded deadline. It never starts a playbook process
+or loads this repository to complete the handoff. The playbook independently
+validates live state; a scenario report is not proof of admission or authority.
+
+Provide `mise run playbook -- talos abrupt-loss-contain production` as the
+containment stage of an explicitly authorized disruption test, under the
+command lifecycle's controlled-test profile. It takes the same explicit target
+and credential inputs plus the test run and optional existing Lease-holder
+identity. Require `contain:<node>:<resolved-address>:<run>` confirmation and
+reject check mode. Verify the live holder, absence of other lifecycle records, target
+identity from approved inputs, survivor safety, and observed target loss before
+persisting the schema 1 abrupt-loss record and cordon. Never submit a shutdown
+or reboot from this action. Failure to establish target loss blocks containment.
+If the scenario ended before containment, the operator can run this action
+without a joined holder; it must acquire and renew the Lease normally before
+mutation. A failed join never silently falls back to acquiring a different Lease.
+
+Recovery uses `maintenance-exit` after operator power-on. For this test handoff,
+it may join the verified test holder for the matching abrupt-loss record; ordinary
+maintenance and reboot acquire their own Lease. The scenario keeps renewal alive
+and suspends consequential actions while the operator runs a joined stage.
+The playbook checks ownership before every mutation and does not release a Lease
+owned by the waiting scenario. If the scenario has ended or renewal has failed,
+exit can acquire the Lease normally once available and recover the persisted
+record. There is no takeover based solely on a supplied holder string.
+
+Before a planned power loss, require playbook-owned admission for the selected
+node. The scenario performs its own current generic safety checks and waits for
+the operator's deliberate power action; it does not treat a historical check as
+current authority. If admission becomes stale, the operator repeats it before
+power loss. The scenario accepts phase completion only after observing the
+matching live containment or its guarded removal and healthy return. Timeout,
+interruption, or recovery failure reports unresolved recovery and fails the test;
+it must not silently skip recovery or remove containment. The operator can
+complete recovery through the playbook even if the test process is unavailable.
+
+## Cilium and foundation verification boundary
+
+Keep Cilium/foundation implementations, desired configuration, and their
+source-validation prerequisites with the cluster verification owner. The role
+orchestrates recovery and calls a supported observational command; it does not
+copy those implementations into its files or expose lifecycle code to them.
+
+Add the fixed public command `just kube recovery-verify <request-file>` with the
+verification owner. It runs the existing source validation, Cilium verification,
+foundation verification, and their transitive checks in that owner's prepared
+checkout and tool environment. It must have no imports from the lifecycle role.
+The name describes observation of recovery, not permission to repair a node.
+
+The playbook invokes this command synchronously as a subprocess, using the
+explicit verified checkout described above. The command path and operation are
+fixed by the adapter; callers cannot supply executable paths or callbacks. No
+fetch, dependency installation, credential enrollment, or remote mutation occurs
+as part of verification. Missing or incompatible verification capability blocks
+admission before disruption; loss of it during recovery preserves containment.
+
+The narrow request/response contract is:
+
+| Field or behavior | Requirement |
 | --- | --- |
-| Maintenance commands | Retire after the playbook replacement is available and validated |
-| Reboot command | Keep the public command as a thin wrapper over the shared reboot transaction |
-| Abrupt-loss scenario | Keep the live scenario and physical-power interaction with its existing owner; call the shared bridge and capacity interface |
-| Storage resize | Keep resize orchestration; adapt shared locking, admission, and storage predicates |
-| Etcd retry-join | Keep exceptional bootstrap workflow; adapt shared Lease and admission imports |
-| Test campaigns and suites | Keep test coordination; retain verified existing-holder joining |
-| Report publication | Keep publication; update shared coordination and dependency input lists |
-| Workload restore and test workflows | Keep workload behavior; adapt common Lease imports |
-| Storage verification workflows | Keep workflow; consume the shared storage-verification predicates |
-| Cilium/foundation verification commands | Retain public commands as wrappers around the extracted shared verification implementation |
+| Request identity | Version 1 request schema and a fresh per-invocation request ID |
+| Target binding | Explicit node, approved node set/endpoints, and exact desired-data/verification revision |
+| Authentication | Absolute kubeconfig path and explicit context; no credential values in the request or response |
+| Expected containment | Exact selected node and schema 1 record; permit that cordon only and reject another contained node |
+| Observation | Re-read target binding and containment, run all required checks, and enforce a bounded deadline |
+| Result | Exit zero only when all checks pass; structured result echoes request ID, target, context, revision, and outcomes for source validation, Cilium, and foundation |
+| Failure | Nonzero status for failed checks, invalid inputs, unsupported schema, missing capability, or cleanup failure; redact sensitive diagnostics |
 
-Update catalogs, fixture imports, release/publication inputs, command references,
-and runbooks together with executable callers. Issue #6 uses this same role's
-preparation, storage, Lease, and acceptance components; it adds upgrade policy
-without copying the transaction implementation. Reboot's public command need
-not move for its implementation to have one owner.
-
-## Transitive Cilium and foundation acceptance
-
-Preserve the assertions behind the existing `cilium-verify` and
-`foundation-verify` calls, including source-validation prerequisites. Extract
-their required verification logic into the shared owner and replace existing
-commands with wrappers. Do not invoke an arbitrary command-runner boundary
-or accept a caller-supplied success result as recovery evidence.
-
-The shared source adapter reads allowed public inputs from the pinned cluster
-data snapshot: node/endpoint mapping, Cilium values and chart expectations,
-Flux and foundation manifests, networking constants, public trust material,
-and provider ciphertext revision metadata. Move required source-validation
-predicates with the verifier. Validate those inputs before target mutation;
-do not decrypt provider secrets or machine configuration. Preserve desired-data
-ownership and derive expected values from that exact revision.
+Store request and response files privately. The playbook validates the direct
+child's status and complete matching response. It does not accept a prewritten
+success file, a cached result, or a caller-supplied Boolean as recovery evidence.
+After verification, the lifecycle transaction rechecks the Lease and persisted
+record immediately before final acceptance. The verifier cannot uncordon,
+change records, renew or release the disruption Lease, or invoke lifecycle code.
 
 Preserve these independent checks:
 
@@ -296,86 +379,70 @@ Preserve these independent checks:
 - Recovery permits exactly the target's expected cordon and matching record.
   Other node, survivor, component, and networking assertions remain enforced.
 
-Test actual transitive validators with fixture responses, including a contained
-target that passes recovery and an unexpected second cordon that fails. A stub
-at the command-runner boundary does not prove acceptance parity.
+The verification owner reads expected values and public trust material from
+the selected desired revision and validates provider ciphertext revision
+metadata without decrypting provider secrets or machine configuration. Preserve
+explicit context selection through every transitive call.
 
-## Immutable cross-repository distribution
-
-External consumers use this repository as a Git submodule at
-`vendor/homelab-playbook`. Its `.gitmodules` fixes the source URL to
-`https://github.com/supermorphic/homelab-playbook.git`; the reviewed parent
-commit's gitlink selects the exact dependency commit. The first pin must refer
-to a published, validated implementation commit, not an invented future SHA.
-This uses Git's [submodule model](https://git-scm.com/docs/gitsubmodules).
-
-Consumers add dependency preparation to their registered bootstrap workflow.
-Preparation checks the declared source and local URL overrides, uses checkout
-mode at the gitlink, rejects custom update commands and branch-following
-options, and never overwrites a modified dependency. Only explicit preparation
-may fetch a missing commit. Runtime never fetches, follows a branch, initializes
-a submodule, installs dependencies, or falls back to a sibling checkout.
-
-Before loading helpers, verify the parent gitlink against its reviewed revision,
-the dependency's origin and exact HEAD, unchanged tracked contents, path
-containment, and absence of unexpected executable inputs in the export tree.
-Reject symlinks escaping that tree and incompatible interface/tool versions.
-The bootstrap and operational resolver use the same verification rules.
-Consumers load only the declared export surface, not dependency inventories,
-Mise activation, provisioning, or secret-loading machinery.
-
-A prepared checkout works without GitHub. Recovery material includes the
-verified dependency checkout or a Git bundle containing the pinned commit;
-offline preparation applies the same content and origin contract. The commit
-hash identifies content; approval comes from the reviewed parent revision.
-Do not change dependencies in place during an active operation.
-
-Updates change the gitlink, wrappers, tests, and publication inputs together.
-Rollback selects a previously validated commit only when it supports every
-record the newer version may have written. Code rollback never clears live
-state. Unsupported records require a compatible forward recovery version.
+Test the real verification command and transitive validators with fixture
+responses, including the allowed contained target and a rejected second cordon.
+The owner tests its adapter against the documented request/result schema; this
+repository tests orchestration, malformed or mismatched results, and failure
+containment. Record combined fixture evidence against both reviewed revisions
+before cutover. This read-only verification dependency points out from the
+playbook; it does not create a reverse dependency on migrated lifecycle code.
 
 ## Cutover and acceptance evidence
 
-1. Approve this design and reconcile Specification 010's ownership
-   references when integrating its branch. Keep implementation planning under
-   `.tmp/` and preserve the existing specification identifiers.
-2. Deliver the shared implementation, workstation gateway, transitive checks,
-   migrated regressions, and operator guide in #55. Recheck current maintenance
-   fixes and record source provenance for migrated code and fixtures.
-3. Validate and publish a fixed implementation commit. During preparation,
-   keep the old released command available; make shared fixes in the new owner
-   and incorporate any necessary transition fixes before the consumer cutover.
-4. Prepare each consumer's submodule pin and migrate its retained callers,
-   wrappers, tests, catalogs, and publication inputs. Prove old/new Lease
-   contention and recovery of old records against the actual shared code.
-5. After owner and consumer validation passes and the documented workstation
-   replacement is available, retire old maintenance entrypoints and migrated
-   helper bodies in the coordinated cutover. Leave one maintained source;
-   retained public commands are adapters. Never replace code underneath a
-   running operation. A pre-cutover recovery record can remain and be accepted
-   later through the supported replacement.
-6. Record any separately authorized live maintenance evidence with the exact
-   revisions and target/action. Coordinate recovery guidance with issue #9.
-   Offline acceptance does not establish production behavior.
+1. Approve this design and reconcile Specification 010's ownership references
+   when integrating its branch. Keep implementation planning and source
+   provenance under `.tmp/`; preserve the specification identifiers.
+2. Deliver and validate maintenance, public reboot, abrupt-loss mechanics,
+   internal lifecycle reuse, migrated regressions, and the workstation guide
+   here. Preserve current regression fixes and old schema 1 recovery behavior.
+3. Prepare and validate the verification owner's observational boundary. Prove
+   Cilium/foundation recovery acceptance without moving their implementations.
+4. Untangle retained workflows from lifecycle-specific imports and dispatch.
+   Keep independently owned generic coordination where needed. Update all
+   tests, catalogs, publication inputs, and runbooks; prove Lease interoperability
+   and the abrupt-loss operator handoff without installing playbook code there.
+5. Once the playbook replacement and untangled workflows pass their required
+   validation, remove the old maintenance and reboot commands, containment and
+   recovery bridge, and migrated lifecycle implementation. Remove obsolete
+   dependency/import declarations as part of that cutover. Generic protocol
+   implementations and owned verification code remain with their workflows.
+6. Do not replace code underneath a running operation. An interrupted operation
+   may leave a schema 1 record for recovery through the playbook after cutover.
+   Keep an explicit recovery route during transition; removing the old command
+   must not strand its persisted records.
+7. Verify the end state: lifecycle implementation exists and runs here; retained
+   cluster workflows are untangled; old maintenance/reboot/lifecycle code is
+   removed; no runtime lifecycle-code dependency remains between repositories.
+8. Record separately authorized live evidence with exact revisions and
+   target/action. Coordinate recovery guidance with issue #9. Offline acceptance
+   does not establish production behavior.
 
 Required offline evidence exercises the real migrated helpers and gateway:
 
 - Read-only check request traces, input/context rejection, single-node scope,
-  mutation check-mode refusal, dependency verification, and confirmation guards.
+  mutation check-mode refusal, tool verification, and confirmation guards.
 - Existing pressure/etcd parsing, eviction discovery, PVC/PV identity, detached
   volume safety, affinity/topology spread, workload-owner UID, and drain cases.
-- Lease contention, renewal loss, verified child joining, expiry without state
-  clearing, interruption after each mutation stage, and cleanup failures.
+- Reboot's short-absence storage policy, observed restart, recovery acceptance,
+  and interruption behavior through the canonical gateway.
+- Independently implemented Lease contention and expiry behavior, renewal loss,
+  verified joining, interruption after each mutation stage, and cleanup failures.
 - Exact schema 1 fixtures, partial owned-state restoration, changed resource
   versions, foreign records, and recovery after command migration.
-- Cilium/foundation failures that prevent uncordon, plus the permitted target
-  containment case through the actual transitive verification code.
-- Fresh dependency preparation, cached offline execution, missing or wrong
-  commits, wrong origin, modified exports, incompatible versions, and execution
-  from an unrelated working directory.
+- Abrupt-loss scenario handoff, stale/lost holder, unavailable test process,
+  timeout with unresolved recovery, and playbook-owned containment/recovery.
+- Cilium/foundation failures that prevent uncordon, the permitted target
+  containment case through the actual transitive verification code, and invalid
+  verification responses or unavailable verification commands.
+- Retained workflows exercising their real entrypoints without playbook code
+  available, including local coordination and observation of lifecycle records.
 
 Use synthetic APIs, credentials, and infrastructure identifiers in CI. Run the
-repository's required `mise run ci:changed` and each consumer's required checks.
-Do not enroll credentials, operate a production node, change Semaphore, or
-enable schedules as part of offline validation.
+repository's required `mise run ci:changed` and the affected workflows' required
+checks. Do not enroll credentials, operate a production node, change Semaphore,
+or enable schedules as part of offline validation.
