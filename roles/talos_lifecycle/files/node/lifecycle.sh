@@ -130,7 +130,7 @@ repeat_disruption_safety() {
   local talosconfig="$2"
   local node="$3"
   local holder="$4"
-  verify_test_lease_holder "$kubeconfig" "$holder" || return 1
+  require_current_lease "$kubeconfig" "$holder" || return 1
   assert_cluster_disruption_admissible "$kubeconfig" "$node" || return 1
   verify_etcd_recovery "$talosconfig" || return 1
   [[ "$(node_kubectl "$kubeconfig" get node "$node" \
@@ -142,7 +142,7 @@ repeat_pre_containment_safety() {
   local talosconfig="$2"
   local node="$3"
   local holder="$4"
-  verify_test_lease_holder "$kubeconfig" "$holder" || return 1
+  require_current_lease "$kubeconfig" "$holder" || return 1
   assert_cluster_disruption_admissible "$kubeconfig" || return 1
   verify_etcd_recovery "$talosconfig" || return 1
   [[ "$(node_kubectl "$kubeconfig" get node "$node" \
@@ -205,14 +205,18 @@ run_maintenance_enter_transaction() {
   local kubeconfig="$1" talosconfig="$2" node="$3" node_ip="$4"
   local holder="$5" record="$6" inventory_file="$7"
   repeat_pre_containment_safety "$kubeconfig" "$talosconfig" "$node" "$holder" || return 1
+  require_current_lease "$kubeconfig" "$holder" || return 1
   persist_node_containment "$kubeconfig" "$node" "$record" || return 1
+  require_current_lease "$kubeconfig" "$holder" || return 1
   apply_longhorn_maintenance_state "$kubeconfig" "$node" "$record" || return 1
   capture_drain_inventory "$kubeconfig" "$node" "$inventory_file" || return 1
+  require_current_lease "$kubeconfig" "$holder" || return 1
   perform_kubernetes_drain "$kubeconfig" "$node" || return 1
   wait_for_workload_replacements "$kubeconfig" "$node" "$inventory_file" || return 1
   verify_no_drainable_workloads "$kubeconfig" "$node" || return 1
   evacuate_longhorn_replicas "$kubeconfig" "$node" || return 1
   repeat_disruption_safety "$kubeconfig" "$talosconfig" "$node" "$holder" || return 1
+  require_current_lease "$kubeconfig" "$holder" || return 1
   send_talos_shutdown "$talosconfig" "$node_ip" || return 1
   verify_node_offline "$kubeconfig" "$talosconfig" "$node" "$node_ip" || return 1
 }
@@ -221,29 +225,34 @@ run_reboot_transaction() {
   local kubeconfig="$1" talosconfig="$2" node="$3" node_ip="$4"
   local holder="$5" record="$6" inventory_file="$7"
   repeat_pre_containment_safety "$kubeconfig" "$talosconfig" "$node" "$holder" || return 1
+  require_current_lease "$kubeconfig" "$holder" || return 1
   persist_node_containment "$kubeconfig" "$node" "$record" || return 1
   capture_drain_inventory "$kubeconfig" "$node" "$inventory_file" || return 1
+  require_current_lease "$kubeconfig" "$holder" || return 1
   perform_kubernetes_drain "$kubeconfig" "$node" || return 1
   wait_for_workload_replacements "$kubeconfig" "$node" "$inventory_file" || return 1
   verify_no_drainable_workloads "$kubeconfig" "$node" || return 1
   verify_short_absence_longhorn_safety "$kubeconfig" "$node" || return 1
   repeat_disruption_safety "$kubeconfig" "$talosconfig" "$node" "$holder" || return 1
+  require_current_lease "$kubeconfig" "$holder" || return 1
   send_talos_reboot "$talosconfig" "$node_ip" || return 1
   observe_node_reboot "$kubeconfig" "$talosconfig" "$node" "$node_ip" || return 1
   perform_recovery_acceptance "$kubeconfig" "$talosconfig" "$node" "$node_ip" \
     "$record" "$inventory_file" || return 1
   repeat_disruption_safety "$kubeconfig" "$talosconfig" "$node" "$holder" || return 1
+  require_current_lease "$kubeconfig" "$holder" || return 1
   remove_node_containment_and_uncordon "$kubeconfig" "$node" "$record" recovery-accepted || return 1
 }
 
 run_maintenance_exit_transaction() {
   local kubeconfig="$1" talosconfig="$2" node="$3" node_ip="$4"
   local holder="$5" record="$6" inventory_file="${7:-}"
-  verify_test_lease_holder "$kubeconfig" "$holder" || return 1
+  require_current_lease "$kubeconfig" "$holder" || return 1
   assert_cluster_disruption_admissible "$kubeconfig" "$node" || return 1
   perform_recovery_acceptance "$kubeconfig" "$talosconfig" "$node" "$node_ip" \
     "$record" "$inventory_file" || return 1
   repeat_disruption_safety "$kubeconfig" "$talosconfig" "$node" "$holder" || return 1
+  require_current_lease "$kubeconfig" "$holder" || return 1
   remove_node_containment_and_uncordon "$kubeconfig" "$node" "$record" recovery-accepted || return 1
 }
 

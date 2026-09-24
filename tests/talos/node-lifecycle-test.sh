@@ -67,6 +67,7 @@ stop_test_lease_renewal() { echo stopped >> "$FIXTURE_LOG"; }
 release_test_lease() { echo released >> "$FIXTURE_LOG"; }
 assert_cluster_disruption_admissible() { :; }
 read_node_lifecycle_record() { echo '{"schemaVersion":1,"kind":"reboot"}'; }
+lifecycle_record_kind() { echo reboot; }
 require_exact_confirmation() { :; }
 run_maintenance_exit_transaction() { return 23; }
 node_lifecycle_main maintenance-exit node-a "$FIXTURE_LOG" "$FIXTURE_LOG"
@@ -77,6 +78,9 @@ mkdir -p "$state_dir/clusterconfig"
 cleanup_status=0
 REPO_ROOT="$REPO_ROOT" FIXTURE_ACTION=lifecycle FIXTURE_DIR="$state_dir" FIXTURE_LOG="$state_dir/cleanup.log" \
   bash "$state_dir/cleanup-fixture.sh" >"$state_dir/cleanup-output" 2>&1 || cleanup_status=$?
+if [[ "$cleanup_status" != 23 ]]; then
+  cat "$state_dir/cleanup-output" >&2
+fi
 [[ "$cleanup_status" == 23 ]] || fail 'lifecycle cleanup lost the original failure status.'
 rg -q '^released$' "$state_dir/cleanup.log" || fail 'lifecycle cleanup did not release its Lease.'
 if rg -q 'unbound variable' "$state_dir/cleanup-output"; then
@@ -325,13 +329,14 @@ yq --null-input --output-format json '
   {
     "apiVersion": "v1",
     "kind": "Node",
-    "metadata": {"name": "node-a", "resourceVersion": "7", "annotations": {}},
+    "metadata": {"name": "node-a", "uid": "node-a-uid", "resourceVersion": "7", "annotations": {}},
     "spec": {"unschedulable": false},
     "status": {"conditions": [{"type": "Ready", "status": "True"}]}
   }
 ' >"$node_state"
 node_conflict=false
 node_readback_mismatch=false
+node_uid_changed=false
 node_kubectl() {
   local _kubeconfig="$1"
   shift
@@ -353,6 +358,10 @@ node_kubectl() {
           yq '.metadata.resourceVersion = strenv(NEXT_VERSION)' \
           <<<"$replacement" >"$state_dir/node-next.json"
         mv "$state_dir/node-next.json" "$node_state"
+        if [[ "$node_uid_changed" == 'true' ]]; then
+          yq '.metadata.uid = "replacement-node-uid"' "$node_state" >"$state_dir/node-next.json"
+          mv "$state_dir/node-next.json" "$node_state"
+        fi
       fi
       ;;
     *) return 2 ;;
@@ -379,6 +388,14 @@ node_readback_mismatch=true
 assert_fails 'A containment read-back mismatch was accepted.' \
   persist_node_containment fake-kubeconfig node-a "$reboot_record"
 node_readback_mismatch=false
+
+yq '.metadata.uid = "node-a-uid" | .metadata.annotations = {} | .spec.unschedulable = false' \
+  "$node_state" >"$state_dir/node-next.json"
+mv "$state_dir/node-next.json" "$node_state"
+node_uid_changed=true
+assert_fails 'A changed Node UID was accepted as owned containment.' \
+  persist_node_containment fake-kubeconfig node-a "$reboot_record"
+node_uid_changed=false
 
 longhorn_state="$state_dir/longhorn-state.json"
 yq --null-input --output-format json '
@@ -847,7 +864,7 @@ evacuate_longhorn_replicas() { record_transaction_call longhorn-evacuated; }
 verify_short_absence_longhorn_safety() { record_transaction_call longhorn-safe; }
 repeat_disruption_safety() { record_transaction_call safety-repeat; }
 repeat_pre_containment_safety() { record_transaction_call pre-containment-safety; }
-verify_test_lease_holder() { record_transaction_call lease-recheck; }
+require_current_lease() { record_transaction_call lease-recheck; }
 assert_cluster_disruption_admissible() { record_transaction_call recovery-admission; }
 send_talos_shutdown() { record_transaction_call shutdown; }
 send_talos_reboot() { record_transaction_call reboot; }
@@ -859,19 +876,19 @@ remove_node_containment_and_uncordon() { record_transaction_call uncordon; }
 run_maintenance_enter_transaction fake-kubeconfig fake-talosconfig node-a \
   192.0.2.10 holder "$maintenance_record" fake-inventory
 [[ "$transaction_calls" == \
-  'pre-containment-safety contain longhorn-during inventory drain replacements drain-empty longhorn-evacuated safety-repeat shutdown offline' ]]
+  'pre-containment-safety lease-recheck contain lease-recheck longhorn-during inventory lease-recheck drain replacements drain-empty longhorn-evacuated safety-repeat lease-recheck shutdown offline' ]]
 
 transaction_calls=''
 run_reboot_transaction fake-kubeconfig fake-talosconfig node-a \
   192.0.2.10 holder "$reboot_record" fake-inventory
 [[ "$transaction_calls" == \
-  'pre-containment-safety contain inventory drain replacements drain-empty longhorn-safe safety-repeat reboot reboot-observed accepted safety-repeat uncordon' ]]
+  'pre-containment-safety lease-recheck contain inventory lease-recheck drain replacements drain-empty longhorn-safe safety-repeat lease-recheck reboot reboot-observed accepted safety-repeat lease-recheck uncordon' ]]
 
 transaction_calls=''
 run_maintenance_exit_transaction fake-kubeconfig fake-talosconfig node-a \
   192.0.2.10 holder "$maintenance_record" fake-inventory
 [[ "$transaction_calls" == \
-  'lease-recheck recovery-admission accepted safety-repeat uncordon' ]]
+  'lease-recheck recovery-admission accepted safety-repeat lease-recheck uncordon' ]]
 
 # shellcheck disable=SC2329  # Invoked indirectly by run_reboot_transaction.
 perform_kubernetes_drain() { record_transaction_call drain; return 1; }
@@ -879,7 +896,7 @@ transaction_calls=''
 assert_fails 'A blocked drain did not stop reboot.' \
   run_reboot_transaction fake-kubeconfig fake-talosconfig node-a \
     192.0.2.10 holder "$reboot_record" fake-inventory
-[[ "$transaction_calls" == 'pre-containment-safety contain inventory drain' ]]
+[[ "$transaction_calls" == 'pre-containment-safety lease-recheck contain inventory lease-recheck drain' ]]
 
 perform_kubernetes_drain() { record_transaction_call drain; }
 perform_recovery_acceptance() { record_transaction_call accepted; return 1; }

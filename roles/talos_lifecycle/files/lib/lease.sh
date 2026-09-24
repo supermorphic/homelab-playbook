@@ -164,6 +164,17 @@ verify_test_lease_holder() {
   return 0
 }
 
+require_current_lease() {
+  verify_test_lease_holder "$@"
+}
+
+join_test_lease() {
+  local kubeconfig="$1" holder="$2"
+  # Joining is observational. It never falls back to acquisition and the
+  # joining process never starts renewal or releases the owner's Lease.
+  require_current_lease "$kubeconfig" "$holder"
+}
+
 start_test_lease_renewal() {
   local kubeconfig="$1"
   local holder="$2"

@@ -67,12 +67,17 @@ persist_node_containment() {
   local kubeconfig="$1"
   local node="$2"
   local record="$3"
-  local node_json current_record replacement verified
+  local node_json current_record replacement verified node_uid
   validate_lifecycle_record "$record" || {
     echo 'Refusing to persist an invalid lifecycle record.' >&2
     return 1
   }
   node_json="$(node_kubectl "$kubeconfig" get node "$node" --output json)" || return 1
+  node_uid="$(yq -r '.metadata.uid // ""' - <<<"$node_json")"
+  [[ -n "$node_uid" ]] || {
+    echo "Node $node has no stable UID; refusing containment." >&2
+    return 1
+  }
   current_record="$(ANNOTATION="$NODE_LIFECYCLE_ANNOTATION" \
     yq -r '.metadata.annotations[strenv(ANNOTATION)] // ""' <<<"$node_json")"
   [[ -z "$current_record" ]] || {
@@ -94,7 +99,8 @@ persist_node_containment() {
       return 1
     }
   verified="$(node_kubectl "$kubeconfig" get node "$node" --output json)" || return 1
-  [[ "$(ANNOTATION="$NODE_LIFECYCLE_ANNOTATION" \
+  [[ "$(yq -r '.metadata.uid // ""' - <<<"$verified")" == "$node_uid" &&
+    "$(ANNOTATION="$NODE_LIFECYCLE_ANNOTATION" \
     yq -r '.metadata.annotations[strenv(ANNOTATION)] // ""' <<<"$verified")" == "$record" &&
     "$(yq -r '.spec.unschedulable // false' - <<<"$verified")" == 'true' ]] || {
     echo "Node $node containment did not persist exactly as requested." >&2
@@ -107,13 +113,15 @@ remove_node_containment_and_uncordon() {
   local node="$2"
   local expected_record="$3"
   local acceptance="$4"
-  local node_json current_record replacement verified
+  local node_json current_record replacement verified node_uid
   [[ "$acceptance" == 'recovery-accepted' ]] || {
     echo "Refusing to make $node schedulable before recovery acceptance." >&2
     return 1
   }
   validate_lifecycle_record "$expected_record" || return 1
   node_json="$(node_kubectl "$kubeconfig" get node "$node" --output json)" || return 1
+  node_uid="$(yq -r '.metadata.uid // ""' - <<<"$node_json")"
+  [[ -n "$node_uid" ]] || return 1
   current_record="$(ANNOTATION="$NODE_LIFECYCLE_ANNOTATION" \
     yq -r '.metadata.annotations[strenv(ANNOTATION)] // ""' <<<"$node_json")"
   [[ "$current_record" == "$expected_record" ]] || {
@@ -135,7 +143,8 @@ remove_node_containment_and_uncordon() {
       return 1
     }
   verified="$(node_kubectl "$kubeconfig" get node "$node" --output json)" || return 1
-  [[ "$(ANNOTATION="$NODE_LIFECYCLE_ANNOTATION" \
+  [[ "$(yq -r '.metadata.uid // ""' - <<<"$verified")" == "$node_uid" &&
+    "$(ANNOTATION="$NODE_LIFECYCLE_ANNOTATION" \
     yq -r '.metadata.annotations[strenv(ANNOTATION)] // ""' <<<"$verified")" == '' &&
     "$(yq -r '.spec.unschedulable // false' - <<<"$verified")" == 'false' ]] || {
     echo "Final lifecycle transition for $node could not be verified." >&2

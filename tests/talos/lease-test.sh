@@ -68,6 +68,12 @@ if verify_test_lease_holder fake-kubeconfig run-two >/dev/null 2>&1; then
   echo 'A non-holder joined the test Lease.' >&2
   exit 1
 fi
+join_test_lease fake-kubeconfig run-one
+if join_test_lease fake-kubeconfig run-two >/dev/null 2>&1; then
+  echo 'A join accepted a foreign holder.' >&2
+  exit 1
+fi
+[[ "$(yq -r '.spec.holderIdentity' "$state_file")" == 'run-one' ]]
 
 renew_test_lease fake-kubeconfig run-one
 [[ "$(yq -r '.metadata.resourceVersion' "$state_file")" == '2' ]]
