@@ -13,7 +13,8 @@ TEST_LEASE_RENEW_PID=''
 lease_kubectl() {
   local kubeconfig="$1"
   shift
-  "${TEST_LEASE_KUBECTL:-kubectl}" --kubeconfig "$kubeconfig" "$@"
+  "${TEST_LEASE_KUBECTL:-kubectl}" --kubeconfig "$kubeconfig" \
+    --context "${TALOS_LIFECYCLE_KUBE_CONTEXT:?}" "$@"
 }
 
 lease_now() {

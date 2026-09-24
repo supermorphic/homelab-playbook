@@ -14,6 +14,20 @@ source "$REPO_ROOT/roles/talos_lifecycle/files/node/lifecycle.sh"
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/homelab-node-lifecycle-test.XXXXXX")"
 trap 'rm -rf -- "$state_dir"' EXIT
 
+context_log="$state_dir/context-calls"
+cat >"$state_dir/fake-client" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$CONTEXT_LOG"
+printf '%s\n' '{}'
+EOF
+chmod +x "$state_dir/fake-client"
+CONTEXT_LOG="$context_log" NODE_KUBECTL="$state_dir/fake-client" \
+  node_kubectl /operator/kubeconfig get nodes >/dev/null
+CONTEXT_LOG="$context_log" NODE_TALOSCTL="$state_dir/fake-client" \
+  lifecycle_talosctl --talosconfig /operator/talosconfig get hostname >/dev/null
+rg -q '^--kubeconfig /operator/kubeconfig --context fixture get nodes$' "$context_log"
+rg -q '^--context fixture --talosconfig /operator/talosconfig get hostname$' "$context_log"
+
 fail() {
   echo "$*" >&2
   exit 1

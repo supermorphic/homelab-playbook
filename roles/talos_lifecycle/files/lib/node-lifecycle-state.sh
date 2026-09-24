@@ -5,7 +5,8 @@ NODE_LIFECYCLE_ANNOTATION="${NODE_LIFECYCLE_ANNOTATION:-homelab.supermorphic.com
 lifecycle_kubectl() {
   local kubeconfig="$1"
   shift
-  "${NODE_LIFECYCLE_KUBECTL:-kubectl}" --kubeconfig "$kubeconfig" "$@"
+  "${NODE_LIFECYCLE_KUBECTL:-kubectl}" --kubeconfig "$kubeconfig" \
+    --context "${TALOS_LIFECYCLE_KUBE_CONTEXT:?}" "$@"
 }
 
 validate_lifecycle_record() {

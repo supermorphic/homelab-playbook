@@ -11,7 +11,7 @@ source "$lifecycle_node_dir/longhorn.sh"
 source "$lifecycle_node_dir/recovery.sh"
 
 lifecycle_talosctl() {
-  "${NODE_TALOSCTL:-talosctl}" "$@"
+  "${NODE_TALOSCTL:-talosctl}" --context "${TALOS_LIFECYCLE_TALOS_CONTEXT:?}" "$@"
 }
 
 verify_expected_node_health() {

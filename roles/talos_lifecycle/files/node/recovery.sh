@@ -9,11 +9,12 @@ source "$lifecycle_node_dir/longhorn.sh"
 recovery_kubectl() {
   local kubeconfig="$1"
   shift
-  "${NODE_KUBECTL:-kubectl}" --kubeconfig "$kubeconfig" "$@"
+  "${NODE_KUBECTL:-kubectl}" --kubeconfig "$kubeconfig" \
+    --context "${TALOS_LIFECYCLE_KUBE_CONTEXT:?}" "$@"
 }
 
 recovery_talosctl() {
-  "${NODE_TALOSCTL:-talosctl}" "$@"
+  "${NODE_TALOSCTL:-talosctl}" --context "${TALOS_LIFECYCLE_TALOS_CONTEXT:?}" "$@"
 }
 
 recovery_just() {

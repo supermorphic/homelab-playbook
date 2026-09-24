@@ -50,7 +50,8 @@ require_exact_confirmation() {
 node_kubectl() {
   local kubeconfig="$1"
   shift
-  "${NODE_KUBECTL:-kubectl}" --kubeconfig "$kubeconfig" "$@"
+  "${NODE_KUBECTL:-kubectl}" --kubeconfig "$kubeconfig" \
+    --context "${TALOS_LIFECYCLE_KUBE_CONTEXT:?}" "$@"
 }
 
 read_node_lifecycle_record() {

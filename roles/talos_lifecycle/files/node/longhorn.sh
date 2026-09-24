@@ -8,7 +8,7 @@ longhorn_kubectl() {
   local kubeconfig="$1"
   shift
   "${NODE_KUBECTL:-kubectl}" --kubeconfig "$kubeconfig" \
-    --namespace longhorn-system "$@"
+    --context "${TALOS_LIFECYCLE_KUBE_CONTEXT:?}" --namespace longhorn-system "$@"
 }
 
 read_longhorn_node() {
