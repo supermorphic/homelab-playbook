@@ -74,7 +74,7 @@ APIs. Talos nodes do not become SSH-managed inventory hosts.
 
 | Input | Contract |
 | --- | --- |
-| `talos_node` | Exactly one node name in the approved three-node desired input; no lists, patterns, or implicit selection |
+| `talos_node` | Exactly one node name in the approved desired input; no lists, patterns, or implicit selection |
 | `talos_kubeconfig`, `talos_kube_context` | Explicit absolute credential-file path and selected Kubernetes context |
 | `talos_talosconfig`, `talos_talos_context` | Explicit absolute credential-file path and selected Talos context |
 | `talos_source_dir`, `talos_source_revision` | Prepared, verified desired-data and verification checkout and full commit ID |
@@ -88,6 +88,8 @@ custom inventory substitution, host limits, ambiguous targets, and arbitrary
 executable overrides before target access. Validate the complete input set
 before starting the transaction. Internal role callers must satisfy the same
 target, credential, and transaction guards as the gateway.
+The [recovery verification contract](../reference/recovery-verification.md)
+records the current topology limit.
 
 `maintenance-check` is observational: no write Lease, cordon, annotations,
 Longhorn changes, or disruptive API calls. Client-side drain simulation and
@@ -347,9 +349,10 @@ cannot select an existing holder. Keep the following scenario behavior:
    seconds. Recheck holder, target identity, survivor safety, and absence of
    conflicting records before atomically persisting the schema 1 abrupt-loss
    record and cordon. Insufficient evidence blocks containment.
-4. Observe passively for 600 seconds, sampling every 5 seconds. Preserve exactly
-   two Ready survivors, Cilium on both, surviving Longhorn replicas, PVC/PV
-   identity, owner UIDs, workload placement/readiness, and timing evidence.
+4. Observe passively for 600 seconds, sampling every 5 seconds. Require every
+   surviving Node to be Ready with Cilium running. Preserve surviving Longhorn
+   replica availability, PVC/PV identity, owner UIDs, workload placement/readiness,
+   and timing evidence.
    Every captured workload owner must have a Ready replacement on a survivor in
    the final sample before the 600-second deadline; earlier samples may be
    pending, absent, or replacing. Do not force pod deletion, volume detachment,

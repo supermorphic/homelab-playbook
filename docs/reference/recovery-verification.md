@@ -59,7 +59,11 @@ Addresses, UUID, SHA, paths, and context names above are marked synthetic exampl
 Rules:
 
 - `schemaVersion` must be integer 1, not Boolean/string; `mode` is exactly `prepare`, `baseline`, or `recovery`.
-- Require exactly three unique approved nodes/addresses. The verifier independently checks this mapping against the selected source and validates live identity during baseline/recovery.
+- Require a complete set of unique approved nodes and addresses. The verifier
+  independently checks this mapping against the selected source and validates
+  live identity during baseline/recovery. The current implementation accepts
+  exactly three control-plane nodes; source validation, abrupt-loss observation,
+  and verifier checks enforce this limit.
 - `expectedContainment` is null in `prepare` and `baseline`; in `recovery` it contains the selected node and the exact persisted annotation string. Parse/validate schema 1 while retaining the string for exact live comparison. A kind supplied by the caller does not authorize restoration.
 - Require explicit Kubernetes and Talos contexts in all modes. Never switch to diagnostic/ambient contexts. Cilium postflight uses Talos diagnostics/etcd and therefore needs its explicit configuration as well as Kubernetes access.
 - `timeoutSeconds` is an integer in 1..3600. The controller may select a smaller remaining transaction budget. Enforce a monotonic deadline and terminate/wait for subprocesses after expiration; no child survives with inherited access.

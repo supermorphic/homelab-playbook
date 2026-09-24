@@ -1,9 +1,11 @@
 # Talos node maintenance
 
-This guide describes the supported workstation interface for one established
-three-node Talos cluster. Every live invocation requires explicit operator
+This guide describes the supported workstation interface for an established
+multi-node Talos cluster. Every live invocation requires explicit operator
 authorization for the action, production target, node, and request file.
 Confirmation values record execution intent; they do not grant authorization.
+The [recovery verification contract](../reference/recovery-verification.md)
+records the current implementation's topology limit.
 
 ## Prepare the source and chart cache
 
@@ -153,8 +155,9 @@ Talos API loss, loss of the target etcd member, and retained quorum before it
 persists containment. Authentication or malformed client output does not prove
 physical loss.
 
-The scenario observes two ready survivors, Cilium, Longhorn availability, and
-external DNS/HTTPS paths for the full 600-second passive window. Every workload
+The scenario checks that every surviving node is Ready and runs Cilium. It also
+checks Longhorn availability and external DNS/HTTPS paths for the full
+600-second passive window. Every workload
 owner captured on the target before loss must have a Ready replacement on a
 surviving node in the final sample before that deadline. Pending or absent
 replacements are allowed during earlier samples. At the restoration prompt,
