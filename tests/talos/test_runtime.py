@@ -1,0 +1,76 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+import sys
+
+
+FILES = Path(__file__).resolve().parents[2] / "roles/talos_lifecycle/files"
+sys.path.insert(0, str(FILES))
+import runtime  # noqa: E402
+
+
+class RuntimeTests(unittest.TestCase):
+    def test_prepared_request_uses_derived_target_and_sanitized_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            request_path = root / "request.json"
+            request_path.write_text("{}", encoding="utf-8")
+            request = {
+                "talos_node": "node-a",
+                "talos_source_dir": str(root),
+                "talos_source_revision": "a" * 40,
+                "talos_kubeconfig": "/operator/kubeconfig",
+                "talos_kube_context": "selected-kube",
+                "talos_talosconfig": "/operator/talosconfig",
+                "talos_talos_context": "selected-talos",
+                "talos_confirmation": "reboot:node-a:192.0.2.10",
+            }
+            source = {
+                "revision": "a" * 40,
+                "snapshot_dir": str(root / "snapshot"),
+                "verification_dir": str(root / "snapshot"),
+                "api_server": "https://192.0.2.20:6443",
+                "nodes": {"node-a": "192.0.2.10", "node-b": "192.0.2.11", "node-c": "192.0.2.12"},
+                "talos_endpoints": ["192.0.2.10", "192.0.2.11", "192.0.2.12"],
+            }
+            captured: dict[str, object] = {}
+
+            class Process:
+                def __init__(self, argv: list[str], **kwargs: object) -> None:
+                    captured["argv"] = argv
+                    captured["env"] = kwargs["env"]
+                    captured["prepared"] = json.loads(Path(argv[-1]).read_text(encoding="utf-8"))
+
+                def wait(self) -> int:
+                    return 0
+
+            with (
+                mock.patch.object(runtime, "load_request", return_value=request),
+                mock.patch.object(runtime, "prepare_source", return_value=source),
+                mock.patch.object(runtime, "_tool", side_effect=lambda name: f"/tools/{name}"),
+                mock.patch.object(runtime, "_bash_major", return_value=5),
+                mock.patch.object(runtime.subprocess, "Popen", Process),
+            ):
+                self.assertEqual(runtime.run("reboot", request_path), 0)
+
+            prepared = captured["prepared"]
+            self.assertEqual(prepared["address"], "192.0.2.10")
+            self.assertEqual(prepared["talos_kube_context"], "selected-kube")
+            self.assertEqual(prepared["talos_talos_context"], "selected-talos")
+            environment = captured["env"]
+            self.assertNotIn("NODE_KUBECTL", environment)
+            self.assertNotIn("KUBECONFIG", environment)
+            self.assertNotIn("ANSIBLE_CONFIG", environment)
+
+    def test_confirmation_is_bound_to_derived_address(self) -> None:
+        request = {"talos_node": "node-a", "talos_confirmation": "reboot:node-a:192.0.2.99"}
+        with self.assertRaises(runtime.RuntimeFailure):
+            runtime._confirmation("reboot", request, "192.0.2.10")
+
+
+if __name__ == "__main__":
+    unittest.main()

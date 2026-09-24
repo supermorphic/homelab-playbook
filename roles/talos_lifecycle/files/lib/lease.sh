@@ -165,6 +165,11 @@ verify_test_lease_holder() {
 }
 
 require_current_lease() {
+  if [[ -n "${TEST_LEASE_RENEWAL_FAILURE_MARKER:-}" && \
+    -f "$TEST_LEASE_RENEWAL_FAILURE_MARKER" ]]; then
+    echo 'Shared disruption Lease renewal failed during the transaction.' >&2
+    return 1
+  fi
   verify_test_lease_holder "$@"
 }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2016,SC2218,SC2329
+# shellcheck disable=SC1091,SC2016,SC2031,SC2218,SC2329
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -64,19 +64,32 @@ require_operator_checkout() { :; }
 acquire_test_lease() { :; }
 start_test_lease_renewal() { :; }
 stop_test_lease_renewal() { echo stopped >> "$FIXTURE_LOG"; }
-release_test_lease() { echo released >> "$FIXTURE_LOG"; }
+release_test_lease() {
+  echo released >> "$FIXTURE_LOG"
+  [[ "${FAIL_RELEASE:-false}" != true ]]
+}
 assert_cluster_disruption_admissible() { :; }
 read_node_lifecycle_record() { echo '{"schemaVersion":1,"kind":"reboot"}'; }
 lifecycle_record_kind() { echo reboot; }
 require_exact_confirmation() { :; }
 run_maintenance_exit_transaction() { return 23; }
-node_lifecycle_main maintenance-exit node-a "$FIXTURE_LOG" "$FIXTURE_LOG"
+node_lifecycle_main "$FIXTURE_PREPARED"
 EOF
 mkdir -p "$state_dir/clusterconfig"
 : >"$state_dir/clusterconfig/node-a.yaml"
 : >"$state_dir/cleanup.log"
+CONFIG_PATH="$state_dir/cleanup.log" yq -n -o=json \
+  '{
+    "action":"maintenance-exit", "node":"node-a", "address":"192.0.2.10",
+    "holder":"fixture-holder", "talos_kubeconfig":strenv(CONFIG_PATH),
+    "talos_talosconfig":strenv(CONFIG_PATH), "talos_kube_context":"fixture",
+    "talos_talos_context":"fixture", "talos_confirmation":"accept:node-a:reboot",
+    "talos_endpoints":["192.0.2.10","192.0.2.11","192.0.2.12"],
+    "tools":{"kubectl":"kubectl","talosctl":"talosctl","python3":"python3"}
+  }' >"$state_dir/prepared.json"
 cleanup_status=0
-REPO_ROOT="$REPO_ROOT" FIXTURE_ACTION=lifecycle FIXTURE_DIR="$state_dir" FIXTURE_LOG="$state_dir/cleanup.log" \
+REPO_ROOT="$REPO_ROOT" FIXTURE_PREPARED="$state_dir/prepared.json" \
+  FIXTURE_ACTION=lifecycle FIXTURE_DIR="$state_dir" FIXTURE_LOG="$state_dir/cleanup.log" \
   bash "$state_dir/cleanup-fixture.sh" >"$state_dir/cleanup-output" 2>&1 || cleanup_status=$?
 if [[ "$cleanup_status" != 23 ]]; then
   cat "$state_dir/cleanup-output" >&2
@@ -86,6 +99,15 @@ rg -q '^released$' "$state_dir/cleanup.log" || fail 'lifecycle cleanup did not r
 if rg -q 'unbound variable' "$state_dir/cleanup-output"; then
   fail 'lifecycle cleanup used expired local variables.'
 fi
+
+: >"$state_dir/cleanup.log"
+cleanup_status=0
+REPO_ROOT="$REPO_ROOT" FIXTURE_PREPARED="$state_dir/prepared.json" FAIL_RELEASE=true \
+  FIXTURE_LOG="$state_dir/cleanup.log" bash "$state_dir/cleanup-fixture.sh" \
+  >"$state_dir/cleanup-output" 2>&1 || cleanup_status=$?
+[[ "$cleanup_status" == 23 ]] || fail 'cleanup failure replaced the primary status.'
+rg -q 'cleanup also failed' "$state_dir/cleanup-output" || \
+  fail 'cleanup failure was not reported alongside the primary status.'
 
 
 reboot_record='{"schemaVersion":1,"kind":"reboot"}'

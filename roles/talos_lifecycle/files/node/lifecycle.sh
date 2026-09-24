@@ -257,20 +257,51 @@ run_maintenance_exit_transaction() {
 }
 
 node_lifecycle_main() (
-  [[ "$#" -eq 4 ]] || {
-    echo 'Usage: lifecycle.sh <maintenance-check|maintenance-enter|maintenance-exit|reboot> <node> <kubeconfig> <talosconfig>' >&2
+  [[ "$#" -eq 1 ]] || {
+    echo 'Usage: lifecycle.sh PREPARED_JSON' >&2
     return 2
   }
-  local action="$1" requested_node="$2" kubeconfig="$3" talosconfig="$4"
-  local holder record kind temp_dir inventory_file renewal_failure lease_acquired=false
-  resolve_node_target "$requested_node"
+  local prepared_json="$1" action kubeconfig talosconfig holder record kind
+  local temp_dir inventory_file renewal_failure status cleanup_status=0
+  local lease_acquired=false
+  [[ "$prepared_json" == /* && -f "$prepared_json" && ! -L "$prepared_json" ]] || return 2
+  action="$(yq -r '.action' "$prepared_json")"
+  NODE_NAME="$(yq -r '.node' "$prepared_json")"
+  NODE_IP="$(yq -r '.address' "$prepared_json")"
+  kubeconfig="$(yq -r '.talos_kubeconfig' "$prepared_json")"
+  talosconfig="$(yq -r '.talos_talosconfig' "$prepared_json")"
+  holder="$(yq -r '.holder' "$prepared_json")"
+  NODE_CLUSTER_ENDPOINTS="$(yq -r '.talos_endpoints | join(",")' "$prepared_json")"
+  TALOS_LIFECYCLE_KUBE_CONTEXT="$(yq -r '.talos_kube_context' "$prepared_json")"
+  TALOS_LIFECYCLE_TALOS_CONTEXT="$(yq -r '.talos_talos_context' "$prepared_json")"
+  NODE_KUBECTL="$(yq -r '.tools.kubectl' "$prepared_json")"
+  NODE_TALOSCTL="$(yq -r '.tools.talosctl' "$prepared_json")"
+  NODE_PYTHON="$(yq -r '.tools.python3' "$prepared_json")"
+  export NODE_NAME NODE_IP NODE_CLUSTER_ENDPOINTS TALOS_LIFECYCLE_KUBE_CONTEXT
+  export TALOS_LIFECYCLE_TALOS_CONTEXT NODE_KUBECTL NODE_TALOSCTL NODE_PYTHON
   [[ -f "$kubeconfig" && -f "$talosconfig" ]] || {
-    echo 'Missing node lifecycle credentials; generate the operator kubeconfig and talosconfig first.' >&2
+    echo 'Missing validated node lifecycle credential reference.' >&2
     return 1
   }
   temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/homelab-node-lifecycle.XXXXXX")"
   inventory_file="$temp_dir/drain-inventory.json"
   renewal_failure="$temp_dir/lease-renewal-failed"
+  TEST_LEASE_RENEWAL_FAILURE_MARKER="$renewal_failure"
+  export TEST_LEASE_RENEWAL_FAILURE_MARKER
+  cleanup() {
+    local primary_status="$1"
+    cleanup_status=0
+    stop_test_lease_renewal || cleanup_status=1
+    if [[ "$lease_acquired" == true ]]; then
+      release_test_lease "$kubeconfig" "$holder" || cleanup_status=1
+    fi
+    rm -rf -- "$temp_dir" || cleanup_status=1
+    if ((primary_status != 0)); then
+      ((cleanup_status == 0)) || echo 'Talos lifecycle cleanup also failed.' >&2
+      return "$primary_status"
+    fi
+    return "$cleanup_status"
+  }
   if [[ "$action" == 'maintenance-check' ]]; then
     if ! run_disruption_preflight "$kubeconfig" "$talosconfig" "$NODE_NAME" "$NODE_IP" "$inventory_file"; then
       rm -rf -- "$temp_dir"
@@ -280,26 +311,23 @@ node_lifecycle_main() (
     echo "Maintenance preflight passed for $NODE_NAME; repeat it through maintenance-enter before mutation."
     return 0
   fi
-  require_operator_checkout
-  holder="node:${action}:${NODE_NAME}:$$"
   acquire_test_lease "$kubeconfig" "$holder"
   lease_acquired=true
   start_test_lease_renewal "$kubeconfig" "$holder" "$renewal_failure"
   trap '
     status=$?
-    stop_test_lease_renewal
-    if [[ "$lease_acquired" == true ]]; then
-      release_test_lease "$kubeconfig" "$holder" >/dev/null 2>&1 || true
-    fi
-    rm -rf -- "$temp_dir"
-    exit "$status"
-  ' EXIT INT TERM
+    trap - EXIT INT TERM
+    cleanup "$status"
+    exit $?
+  ' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 
   case "$action" in
     maintenance-enter)
       local longhorn_state
       run_disruption_preflight "$kubeconfig" "$talosconfig" "$NODE_NAME" "$NODE_IP" "$inventory_file"
-      require_exact_confirmation NODE_MAINTENANCE_CONFIRM "enter:${NODE_NAME}:${NODE_IP}"
+      [[ "$(yq -r '.talos_confirmation' "$prepared_json")" == "enter:${NODE_NAME}:${NODE_IP}" ]] || return 1
       longhorn_state="$(read_longhorn_node "$kubeconfig" "$NODE_NAME")"
       record="$(build_maintenance_lifecycle_record_from_state "$longhorn_state")"
       run_maintenance_enter_transaction "$kubeconfig" "$talosconfig" "$NODE_NAME" \
@@ -307,7 +335,7 @@ node_lifecycle_main() (
       ;;
     reboot)
       run_disruption_preflight "$kubeconfig" "$talosconfig" "$NODE_NAME" "$NODE_IP" "$inventory_file"
-      require_exact_confirmation NODE_REBOOT_CONFIRM "reboot:${NODE_NAME}:${NODE_IP}"
+      [[ "$(yq -r '.talos_confirmation' "$prepared_json")" == "reboot:${NODE_NAME}:${NODE_IP}" ]] || return 1
       record='{"schemaVersion":1,"kind":"reboot"}'
       run_reboot_transaction "$kubeconfig" "$talosconfig" "$NODE_NAME" "$NODE_IP" \
         "$holder" "$record" "$inventory_file"
@@ -316,7 +344,7 @@ node_lifecycle_main() (
       assert_cluster_disruption_admissible "$kubeconfig" "$NODE_NAME"
       record="$(read_node_lifecycle_record "$kubeconfig" "$NODE_NAME")"
       kind="$(lifecycle_record_kind "$record")"
-      require_exact_confirmation NODE_LIFECYCLE_CONFIRM "accept:${NODE_NAME}:${kind}"
+      [[ "$(yq -r '.talos_confirmation' "$prepared_json")" == "accept:${NODE_NAME}:${kind}" ]] || return 1
       run_maintenance_exit_transaction "$kubeconfig" "$talosconfig" "$NODE_NAME" \
         "$NODE_IP" "$holder" "$record"
       ;;
@@ -326,14 +354,8 @@ node_lifecycle_main() (
       ;;
   esac
 
-  [[ ! -f "$renewal_failure" ]] || {
-    echo 'Shared disruption Lease renewal failed during the transaction.' >&2
-    return 1
-  }
-  release_test_lease "$kubeconfig" "$holder"
-  lease_acquired=false
-  rm -rf -- "$temp_dir"
   trap - EXIT INT TERM
+  cleanup 0
 )
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
