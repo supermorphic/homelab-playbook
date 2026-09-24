@@ -53,6 +53,7 @@ class RuntimeTests(unittest.TestCase):
                 mock.patch.object(runtime, "prepare_source", return_value=source),
                 mock.patch.object(runtime, "_tool", side_effect=lambda name: f"/tools/{name}"),
                 mock.patch.object(runtime, "_bash_major", return_value=5),
+                mock.patch.object(runtime, "invoke_verifier", return_value={}),
                 mock.patch.object(runtime.subprocess, "Popen", Process),
             ):
                 self.assertEqual(runtime.run("reboot", request_path), 0)
@@ -70,6 +71,15 @@ class RuntimeTests(unittest.TestCase):
         request = {"talos_node": "node-a", "talos_confirmation": "reboot:node-a:192.0.2.99"}
         with self.assertRaises(runtime.RuntimeFailure):
             runtime._confirmation("reboot", request, "192.0.2.10")
+
+    def test_abrupt_evidence_directory_is_unique_and_private(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            request = {"talos_evidence_dir": str(Path(temporary) / "evidence")}
+            first = runtime._make_evidence_dir(request)
+            second = runtime._make_evidence_dir(request)
+            self.assertNotEqual(first, second)
+            self.assertEqual(first.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(first.parent.stat().st_mode & 0o777, 0o700)
 
 
 if __name__ == "__main__":

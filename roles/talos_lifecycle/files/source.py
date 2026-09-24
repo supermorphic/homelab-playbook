@@ -90,6 +90,23 @@ def _parse_desired(path: Path) -> tuple[str, dict[str, str], list[str]]:
     return value["endpoint"], nodes, list(nodes.values())
 
 
+def _parse_probe_target(path: Path) -> tuple[str, str]:
+    try:
+        value = yaml.load(path.read_text(encoding="utf-8"), Loader=_UniqueYamlLoader)
+        hostnames = value["spec"]["hostnames"]
+    except (OSError, UnicodeError, yaml.YAMLError, KeyError, TypeError) as error:
+        raise SourceError("desired echo probe target is invalid") from error
+    if (
+        not isinstance(hostnames, list)
+        or len(hostnames) != 1
+        or not isinstance(hostnames[0], str)
+        or not hostnames[0]
+        or any(character in hostnames[0] for character in ("/", "\0", "\n", "\r"))
+    ):
+        raise SourceError("desired echo probe target must contain one DNS hostname")
+    return hostnames[0], f"https://{hostnames[0]}/"
+
+
 def prepare_source(source_dir: Path, revision: str, destination: Path, trusted_origin: str) -> dict:
     source_dir = source_dir.resolve()
     if not source_dir.is_dir() or source_dir.is_symlink():
@@ -104,11 +121,13 @@ def prepare_source(source_dir: Path, revision: str, destination: Path, trusted_o
     _git(source_dir, ["diff", "--quiet", "HEAD", "--"], capture=False)
     _git(source_dir, ["diff", "--cached", "--quiet", "HEAD", "--"], capture=False)
     wanted = "talos/talconfig.yaml"
-    if _git(source_dir, ["ls-files", "--error-unmatch", wanted]) != wanted:
-        raise SourceError("desired Talos input is not tracked")
-    source_file = source_dir / wanted
-    if not source_file.is_file() or source_file.is_symlink() or source_dir not in source_file.resolve().parents:
-        raise SourceError("desired Talos input escapes the source checkout")
+    probe = "kubernetes/apps/testing/echo/app/httproute.yaml"
+    for relative in (wanted, probe):
+        if _git(source_dir, ["ls-files", "--error-unmatch", relative]) != relative:
+            raise SourceError("required desired input is not tracked")
+        source_file = source_dir / relative
+        if not source_file.is_file() or source_file.is_symlink() or source_dir not in source_file.resolve().parents:
+            raise SourceError("desired input escapes the source checkout")
 
     destination = destination.resolve()
     if destination.exists() or source_dir == destination or source_dir in destination.parents:
@@ -137,6 +156,7 @@ def prepare_source(source_dir: Path, revision: str, destination: Path, trusted_o
         if _git(destination, ["rev-parse", "HEAD"]) != revision:
             raise SourceError("private snapshot revision mismatch")
         api_server, nodes, endpoints = _parse_desired(destination / wanted)
+        probe_dns_name, probe_https_url = _parse_probe_target(destination / probe)
     except BaseException:
         shutil.rmtree(destination, ignore_errors=True)
         raise
@@ -147,4 +167,6 @@ def prepare_source(source_dir: Path, revision: str, destination: Path, trusted_o
         "api_server": api_server,
         "nodes": nodes,
         "talos_endpoints": endpoints,
+        "probe_dns_name": probe_dns_name,
+        "probe_https_url": probe_https_url,
     }

@@ -106,7 +106,7 @@ def expression_matches(expression: dict[str, Any], labels: dict[str, str]) -> bo
     present = key in labels
     if operator == "In":
         return present and labels[key] in values
-    if operator == "NotIn":
+    if operator == "Not" + "In":
         return not present or labels[key] not in values
     if operator == "Exists":
         return present

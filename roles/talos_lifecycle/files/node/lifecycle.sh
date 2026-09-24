@@ -102,7 +102,7 @@ verify_survivor_capacity() {
     rm -rf -- "$temp_dir"
     return 1
   }
-  "${NODE_PYTHON:-python}" "/capacity.py" "$node" "$nodes_file" "$pods_file"
+  "${NODE_PYTHON:-python}" "$lifecycle_node_dir/capacity.py" "$node" "$nodes_file" "$pods_file"
   result="$?"
   rm -rf -- "$temp_dir"
   return "$result"
@@ -118,7 +118,6 @@ run_disruption_preflight() {
   verify_expected_node_health "$kubeconfig" || return 1
   verify_target_identity "$kubeconfig" "$talosconfig" "$node" "$node_ip" || return 1
   verify_etcd_recovery "$talosconfig" || return 1
-  recovery_just kube cilium-verify || return 1
   verify_survivor_capacity "$kubeconfig" "$node" || return 1
   capture_drain_inventory "$kubeconfig" "$node" "$inventory_file" || return 1
   preflight_kubernetes_drain "$kubeconfig" "$node" || return 1
@@ -276,9 +275,15 @@ node_lifecycle_main() (
   TALOS_LIFECYCLE_TALOS_CONTEXT="$(yq -r '.talos_talos_context' "$prepared_json")"
   NODE_KUBECTL="$(yq -r '.tools.kubectl' "$prepared_json")"
   NODE_TALOSCTL="$(yq -r '.tools.talosctl' "$prepared_json")"
+  TEST_LEASE_KUBECTL="$NODE_KUBECTL"
+  NODE_LIFECYCLE_KUBECTL="$NODE_KUBECTL"
   NODE_PYTHON="$(yq -r '.tools.python3' "$prepared_json")"
+  TALOS_LIFECYCLE_PREPARED_JSON="$prepared_json"
+  TALOS_LIFECYCLE_VERIFICATION_PY="$lifecycle_node_dir/../verification.py"
   export NODE_NAME NODE_IP NODE_CLUSTER_ENDPOINTS TALOS_LIFECYCLE_KUBE_CONTEXT
   export TALOS_LIFECYCLE_TALOS_CONTEXT NODE_KUBECTL NODE_TALOSCTL NODE_PYTHON
+  export TEST_LEASE_KUBECTL NODE_LIFECYCLE_KUBECTL
+  export TALOS_LIFECYCLE_PREPARED_JSON TALOS_LIFECYCLE_VERIFICATION_PY
   [[ -f "$kubeconfig" && -f "$talosconfig" ]] || {
     echo 'Missing validated node lifecycle credential reference.' >&2
     return 1
@@ -339,6 +344,14 @@ node_lifecycle_main() (
       record='{"schemaVersion":1,"kind":"reboot"}'
       run_reboot_transaction "$kubeconfig" "$talosconfig" "$NODE_NAME" "$NODE_IP" \
         "$holder" "$record" "$inventory_file"
+      ;;
+    abrupt-loss-test)
+      run_disruption_preflight "$kubeconfig" "$talosconfig" "$NODE_NAME" "$NODE_IP" "$inventory_file"
+      require_current_lease "$kubeconfig" "$holder"
+      [[ "$(yq -r '.talos_test_confirmation' "$prepared_json")" == 'chaos:node-abrupt-loss' ]] || return 1
+      [[ "$(yq -r '.talos_confirmation' "$prepared_json")" == "remove-power:${NODE_NAME}:${NODE_IP}" ]] || return 1
+      "$NODE_PYTHON" "$lifecycle_node_dir/../scenarios/node_abrupt_loss.py" \
+        "$prepared_json" "$(yq -r '.evidence_dir' "$prepared_json")"
       ;;
     maintenance-exit)
       assert_cluster_disruption_admissible "$kubeconfig" "$NODE_NAME"

@@ -781,24 +781,20 @@ verify_talos_recovery() { record_recovery_call talos; }
 restore_longhorn_maintenance_state() { record_recovery_call longhorn-restore; }
 verify_longhorn_convergence() { record_recovery_call longhorn-converged; }
 verify_etcd_recovery() { record_recovery_call etcd; }
-verify_cilium_recovery() { record_recovery_call cilium; }
+verify_platform_recovery() { record_recovery_call platform; }
 verify_workload_replacements() { record_recovery_call workloads; }
-recovery_just() {
-  [[ "$*" == 'kube foundation-verify' ]] || return 2
-  record_recovery_call foundation
-}
 
 # shellcheck disable=SC2218  # The later definitions are deliberate transaction fakes.
 perform_recovery_acceptance fake-kubeconfig fake-talosconfig node-a 192.0.2.10 \
   "$maintenance_record" fake-inventory
 [[ "$recovery_calls" == \
-  'contained talos contained longhorn-restore longhorn-converged etcd cilium workloads foundation' ]]
+  'contained talos contained longhorn-restore longhorn-converged etcd workloads platform' ]]
 
 recovery_calls=''
 # shellcheck disable=SC2218  # The later definitions are deliberate transaction fakes.
 perform_recovery_acceptance fake-kubeconfig fake-talosconfig node-a 192.0.2.10 \
   "$reboot_record"
-[[ "$recovery_calls" == 'contained talos longhorn-converged etcd cilium foundation' ]]
+[[ "$recovery_calls" == 'contained talos longhorn-converged etcd platform' ]]
 
 capacity_nodes="$state_dir/capacity-nodes.json"
 capacity_pods="$state_dir/capacity-pods.json"
@@ -927,5 +923,29 @@ assert_fails 'Rejected recovery was reported as a successful reboot.' \
   run_reboot_transaction fake-kubeconfig fake-talosconfig node-a \
     192.0.2.10 holder "$reboot_record" fake-inventory
 [[ "$transaction_calls" != *uncordon* ]]
+
+# The abrupt-loss adapter joins the root holder and cannot acquire, renew, or release it.
+source "$REPO_ROOT/roles/talos_lifecycle/files/node/abrupt-loss-bridge.sh"
+cat >"$state_dir/abrupt-prepared.json" <<EOF
+{"talos_kubeconfig":"/operator/kube","talos_talosconfig":"/operator/talos","talos_kube_context":"fixture","talos_talos_context":"fixture","node":"node-a","address":"192.0.2.10","holder":"root-holder","talos_endpoints":["192.0.2.10","192.0.2.11","192.0.2.12"],"tools":{"kubectl":"/tools/kubectl","talosctl":"/tools/talosctl","python3":"/tools/python"}}
+EOF
+bridge_calls=''
+bridge_call() { bridge_calls+="${bridge_calls:+ }$1"; }
+join_test_lease() { bridge_call join; }
+require_current_lease() { bridge_call current; }
+abrupt_survivors_safe() { bridge_call survivors; }
+persist_node_containment() { bridge_call contain; }
+assert_cluster_disruption_admissible() { bridge_call recovery-admission; }
+read_node_lifecycle_record() { printf '%s\n' '{"schemaVersion":1,"kind":"abrupt-loss"}'; }
+perform_recovery_acceptance() { bridge_call accepted; }
+remove_node_containment_and_uncordon() { bridge_call uncordon; }
+acquire_test_lease() { fail 'abrupt bridge tried to acquire a second Lease'; }
+start_test_lease_renewal() { fail 'abrupt bridge tried to renew the root Lease'; }
+release_test_lease() { fail 'abrupt bridge tried to release the root Lease'; }
+abrupt_loss_bridge_main contain "$state_dir/abrupt-prepared.json"
+[[ "$bridge_calls" == 'join current survivors current contain current' ]]
+bridge_calls=''
+abrupt_loss_bridge_main recover "$state_dir/abrupt-prepared.json"
+[[ "$bridge_calls" == 'join current recovery-admission accepted current uncordon current' ]]
 
 echo 'Node lifecycle state tests passed.'

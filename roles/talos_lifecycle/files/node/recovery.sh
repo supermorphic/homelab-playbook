@@ -17,8 +17,10 @@ recovery_talosctl() {
   "${NODE_TALOSCTL:-talosctl}" --context "${TALOS_LIFECYCLE_TALOS_CONTEXT:?}" "$@"
 }
 
-recovery_just() {
-  "${NODE_JUST:-just}" "$@"
+verify_platform_recovery() {
+  local record="$1"
+  "${NODE_PYTHON:-python3}" "${TALOS_LIFECYCLE_VERIFICATION_PY:?}" \
+    --prepared "${TALOS_LIFECYCLE_PREPARED_JSON:?}" --mode recovery --record "$record"
 }
 
 verify_returned_node_contained() {
@@ -159,9 +161,8 @@ perform_recovery_acceptance() {
   fi
   verify_longhorn_convergence "$kubeconfig" || return 1
   verify_etcd_recovery "$talosconfig" || return 1
-  verify_cilium_recovery "$kubeconfig" "$node" || return 1
   if [[ -n "$inventory_file" ]]; then
     wait_for_workload_replacements "$kubeconfig" "$node" "$inventory_file" || return 1
   fi
-  recovery_just kube foundation-verify || return 1
+  verify_platform_recovery "$record" || return 1
 }

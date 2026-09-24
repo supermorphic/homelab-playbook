@@ -24,6 +24,7 @@ class SourceTests(unittest.TestCase):
         self.source = root / "source"
         self.destination = root / "prepared"
         (self.source / "talos").mkdir(parents=True)
+        (self.source / "kubernetes/apps/testing/echo/app").mkdir(parents=True)
         (self.source / "talos/talconfig.yaml").write_text(
             "endpoint: https://192.0.2.20:6443\n"
             "nodes:\n"
@@ -32,11 +33,14 @@ class SourceTests(unittest.TestCase):
             "  - hostname: node-c\n    ipAddress: 192.0.2.12\n    controlPlane: true\n",
             encoding="utf-8",
         )
+        (self.source / "kubernetes/apps/testing/echo/app/httproute.yaml").write_text(
+            "spec:\n  hostnames:\n    - echo.example.test\n", encoding="utf-8"
+        )
         subprocess.run(["git", "init", "-q", str(self.source)], check=True)
         subprocess.run(["git", "-C", str(self.source), "config", "user.name", "Fixture"], check=True)
         subprocess.run(["git", "-C", str(self.source), "config", "user.email", "fixture@example.invalid"], check=True)
         subprocess.run(["git", "-C", str(self.source), "remote", "add", "origin", ORIGIN], check=True)
-        subprocess.run(["git", "-C", str(self.source), "add", "talos/talconfig.yaml"], check=True)
+        subprocess.run(["git", "-C", str(self.source), "add", "talos/talconfig.yaml", "kubernetes/apps/testing/echo/app/httproute.yaml"], check=True)
         subprocess.run(["git", "-C", str(self.source), "commit", "-qm", "fixture"], check=True)
         self.revision = subprocess.check_output(
             ["git", "-C", str(self.source), "rev-parse", "HEAD"], text=True
@@ -58,6 +62,8 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(result["api_server"], "https://192.0.2.20:6443")
         self.assertEqual(result["nodes"], {"node-a": "192.0.2.10", "node-b": "192.0.2.11", "node-c": "192.0.2.12"})
         self.assertEqual(result["talos_endpoints"], ["192.0.2.10", "192.0.2.11", "192.0.2.12"])
+        self.assertEqual(result["probe_dns_name"], "echo.example.test")
+        self.assertEqual(result["probe_https_url"], "https://echo.example.test/")
         snapshot = Path(str(result["snapshot_dir"]))
         self.assertNotEqual(snapshot.resolve(), self.source.resolve())
         self.assertEqual(snapshot, Path(str(result["verification_dir"])))

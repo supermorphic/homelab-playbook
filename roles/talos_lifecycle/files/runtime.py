@@ -16,6 +16,7 @@ from pathlib import Path
 
 from inputs import InputError, load_request
 from source import SourceError, prepare_source
+from verification import VerificationError, invoke_verifier, make_request
 
 
 TRUSTED_ORIGIN = "https://github.com/supermorphic/homelab-talos.git"
@@ -54,6 +55,17 @@ def _bash_major(bash: str) -> int:
     return int(output)
 
 
+def _make_evidence_dir(request: dict[str, object]) -> Path:
+    root = Path(str(request.get("talos_evidence_dir", FILES.parents[2] / ".tmp/talos-evidence")))
+    if root.exists() and (not root.is_dir() or root.is_symlink()):
+        raise RuntimeFailure("Talos evidence root must be a real directory")
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(root, 0o700)
+    evidence = Path(tempfile.mkdtemp(prefix="abrupt-loss-", dir=root))
+    os.chmod(evidence, 0o700)
+    return evidence
+
+
 def run(action: str, request_path: Path) -> int:
     request = load_request(request_path, action)
     with tempfile.TemporaryDirectory(prefix="talos-lifecycle-") as temporary:
@@ -70,9 +82,23 @@ def run(action: str, request_path: Path) -> int:
         if node not in nodes:
             raise RuntimeFailure("selected node is absent from approved desired input")
         _confirmation(action, request, nodes[node])
-        tools = {name: _tool(name) for name in ("bash", "python3", "kubectl", "talosctl", "yq")}
+        tool_names = ["bash", "python3", "kubectl", "talosctl", "yq", "mise"]
+        if action == "abrupt-loss-test":
+            tool_names.extend(["dig", "curl"])
+        tools = {name: _tool(name) for name in tool_names}
         if _bash_major(tools["bash"]) < 5:
             raise RuntimeFailure("Talos lifecycle requires Bash 5 or newer")
+        source["mise"] = tools["mise"]
+        source["mise_data_dir"] = str(Path.home() / ".local/share/mise")
+        prepare_request = make_request(source, request, "prepare")
+        invoke_verifier(source, prepare_request, deadline_seconds=prepare_request["timeoutSeconds"])
+        if action != "maintenance-exit":
+            baseline_request = make_request(source, request, "baseline")
+            invoke_verifier(
+                source,
+                baseline_request,
+                deadline_seconds=baseline_request["timeoutSeconds"],
+            )
         prepared = {
             **request,
             **source,
@@ -85,6 +111,9 @@ def run(action: str, request_path: Path) -> int:
             "runtime_dir": str(private),
         }
         prepared_path = private / "prepared.json"
+        prepared["prepared_path"] = str(prepared_path)
+        if action == "abrupt-loss-test":
+            prepared["evidence_dir"] = str(_make_evidence_dir(request))
         prepared_path.write_text(json.dumps(prepared, sort_keys=True) + "\n", encoding="utf-8")
         os.chmod(prepared_path, 0o600)
         tool_path = os.pathsep.join(dict.fromkeys(str(Path(value).parent) for value in tools.values()))
@@ -118,7 +147,14 @@ def main(argv: list[str] | None = None) -> int:
         if not arguments.request.is_absolute():
             raise InputError("request path must be absolute")
         return run(arguments.action, arguments.request)
-    except (InputError, SourceError, RuntimeFailure, OSError, subprocess.SubprocessError) as error:
+    except (
+        InputError,
+        SourceError,
+        VerificationError,
+        RuntimeFailure,
+        OSError,
+        subprocess.SubprocessError,
+    ) as error:
         print(f"Talos lifecycle failed: {error}", file=sys.stderr)
         return 1
 
