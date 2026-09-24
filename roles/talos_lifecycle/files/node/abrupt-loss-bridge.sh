@@ -53,11 +53,12 @@ abrupt_loss_bridge_main() {
       abrupt_survivors_safe "$kubeconfig" "$node"
       require_current_lease "$kubeconfig" "$holder"
       persist_node_containment "$kubeconfig" "$node" "$record"
+      record_lifecycle_phase containment-confirmed
       ;;
     recover)
       assert_cluster_disruption_admissible "$kubeconfig" "$node"
       [[ "$(read_node_lifecycle_record "$kubeconfig" "$node")" == "$record" ]] || return 1
-      perform_recovery_acceptance "$kubeconfig" "$talosconfig" "$node" "$node_ip" "$record"
+      perform_recovery_acceptance "$kubeconfig" "$talosconfig" "$node" "$node_ip" "$holder" "$record"
       require_current_lease "$kubeconfig" "$holder"
       remove_node_containment_and_uncordon "$kubeconfig" "$node" "$record" recovery-accepted
       ;;

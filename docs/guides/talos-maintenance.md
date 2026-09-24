@@ -160,10 +160,20 @@ press Enter. Final recovery uses the same guarded acceptance as exit. Evidence
 is written atomically in a unique private run directory.
 
 EOF, timeout, or a signal after the removal prompt reports unresolved possible
-loss, requests physical restoration when possible, stops child processes, and
+loss, requests physical restoration when an interactive failure can still be
+answered, stops child process groups, and
 preserves containment unless recovery acceptance succeeds. Lease-holder loss
 stops further mutation. A scenario failure and a later recovery failure remain
 separate outcomes.
+
+On command failure, the gateway reports only the action, node, failed outcome,
+automation revision, desired-source revision, last allowlisted phase, and
+whether recovery is required. `containment-confirmed` means the lifecycle record
+and cordon must be treated as durable before recovery. It does not mean recovery
+acceptance passed. A failure after `preflight-confirmed` reports recovery need as
+unknown because containment and its phase record are separate durable writes.
+A `preflight-pending` failure also reports unknown because maintenance exit can
+start with an existing durable containment record.
 
 ## Evidence and recovery limits
 

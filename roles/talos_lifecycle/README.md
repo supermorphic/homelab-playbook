@@ -19,5 +19,16 @@ records.
 
 The abrupt-loss gateway reads the terminal device from its own standard input.
 Ansible and runtime receive that fixed internal path so prompts remain visible
-after local Ansible starts the command. Run-owned process groups and a private
-cancellation marker stop and wait for children on interruption.
+after local Ansible starts the command. A private cancellation marker tells the
+runtime to stop and reap its lifecycle process group. Scenario bridge calls
+start blocked, register their separate group before executing the target
+command. Recovery gets a 75-minute deadline that covers the sequential node
+return, workload replacement, and verifier waits plus ten minutes of margin.
+The gateway has a bounded emergency fallback tied to the current run's private
+ownership token and live lifecycle group leader; it stops that group before it
+stops Ansible. Each nested bridge group is registered in that private record so
+the bridge helper, runtime, and gateway fallback can stop it before lifecycle
+ownership ends. The runtime also removes same-group descendants after a normal
+leader exit.
+The role keeps command output private and reports only an allowlisted last
+confirmed phase when the transaction fails.

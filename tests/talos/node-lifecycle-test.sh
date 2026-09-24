@@ -14,6 +14,7 @@ source "$REPO_ROOT/roles/talos_lifecycle/files/node/lifecycle.sh"
 
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/homelab-node-lifecycle-test.XXXXXX")"
 trap 'rm -rf -- "$state_dir"' EXIT
+export TALOS_LIFECYCLE_RESULT_PATH="$state_dir/result.json"
 
 context_log="$state_dir/context-calls"
 cat >"$state_dir/fake-client" <<'EOF'
@@ -785,17 +786,26 @@ verify_longhorn_convergence() { record_recovery_call longhorn-converged; }
 verify_etcd_recovery() { record_recovery_call etcd; }
 verify_platform_recovery() { record_recovery_call platform; }
 verify_workload_replacements() { record_recovery_call workloads; }
+require_current_lease() { record_recovery_call lease-recheck; }
 
 # shellcheck disable=SC2218  # The later definitions are deliberate transaction fakes.
 perform_recovery_acceptance fake-kubeconfig fake-talosconfig node-a 192.0.2.10 \
-  "$maintenance_record" fake-inventory
+  fixture-holder "$maintenance_record" fake-inventory
 [[ "$recovery_calls" == \
-  'contained talos contained longhorn-restore longhorn-converged etcd workloads platform' ]]
+  'contained talos contained lease-recheck longhorn-restore longhorn-converged etcd workloads platform' ]]
 
 recovery_calls=''
+require_current_lease() { record_recovery_call lease-lost; return 1; }
+assert_fails 'Longhorn maintenance restore continued after Lease holder loss.' \
+  perform_recovery_acceptance fake-kubeconfig fake-talosconfig node-a 192.0.2.10 \
+    fixture-holder "$maintenance_record" fake-inventory
+[[ "$recovery_calls" == 'contained talos contained lease-lost' ]]
+
+recovery_calls=''
+require_current_lease() { record_recovery_call lease-recheck; }
 # shellcheck disable=SC2218  # The later definitions are deliberate transaction fakes.
 perform_recovery_acceptance fake-kubeconfig fake-talosconfig node-a 192.0.2.10 \
-  "$reboot_record"
+  fixture-holder "$reboot_record"
 [[ "$recovery_calls" == 'contained talos longhorn-converged etcd platform' ]]
 
 capacity_nodes="$state_dir/capacity-nodes.json"

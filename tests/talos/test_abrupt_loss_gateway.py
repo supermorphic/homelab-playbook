@@ -74,6 +74,8 @@ class AbruptLossGatewayTests(unittest.TestCase):
 import json,sys
 p=json.load(open(sys.argv[-1])); c=p['credentials']; mode=p['mode']
 if mode=='recovery' and __import__('pathlib').Path('__FAKE_STATE__/verifier-fail').exists(): raise SystemExit(77)
+if mode=='baseline' and __import__('pathlib').Path('__FAKE_STATE__/baseline-fail').exists(): raise SystemExit(78)
+if mode=='prepare' and __import__('pathlib').Path('__FAKE_STATE__/prepare-fail').exists(): raise SystemExit(79)
 print(json.dumps({'schemaVersion':1,'requestId':p['requestId'],'mode':mode,'node':p['node'],'sourceRevision':p['sourceRevision'],'kubeContext':c['kubeContext'],'talosContext':c['talosContext'],'checks':{'source':'passed','cilium':'not-run' if mode=='prepare' else 'passed','foundation':'not-run' if mode=='prepare' else 'passed'}}))
 """)
         self._write_executable("talosctl", r"""#!/usr/bin/env python3
@@ -196,8 +198,8 @@ raise SystemExit(0)
         return subprocess.run(command, cwd=repository, env=environment, stdin=subprocess.DEVNULL,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
 
-    def _repository_fixture(self) -> Path:
-        fixture = self.root / "repository"
+    def _repository_fixture(self, name: str = "repository") -> Path:
+        fixture = self.root / name
         shutil.copytree(
             ROOT,
             fixture,
@@ -221,6 +223,11 @@ raise SystemExit(0)
                      'bounded_seconds("NODE_ABRUPT_PROBE_SECONDS", 1, 30)'),
             encoding="utf-8",
         )
+        subprocess.run(["git", "init", "-q", str(fixture)], check=True)
+        subprocess.run(["git", "-C", str(fixture), "config", "user.name", "Fixture"], check=True)
+        subprocess.run(["git", "-C", str(fixture), "config", "user.email", "fixture@example.invalid"], check=True)
+        subprocess.run(["git", "-C", str(fixture), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(fixture), "commit", "-qm", "fixture"], check=True)
         return fixture
 
     def _descendants(self, parent: int) -> list[tuple[int, str]]:
@@ -298,6 +305,11 @@ raise SystemExit(0)
         result = subprocess.run(command, cwd=repository, env=environment, stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
         self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("automation_revision", result.stdout)
+        self.assertIn("source_revision", result.stdout)
+        self.assertIn("last_confirmed_phase", result.stdout)
+        self.assertIn("completed", result.stdout)
+        self.assertIn("recovery_required", result.stdout)
         calls = (self.state / "calls.log").read_text(encoding="utf-8")
         mutations = [line for line in calls.splitlines()
                      if any(f" {verb} " in f" {line} " for verb in
@@ -332,10 +344,81 @@ raise SystemExit(0)
         (self.state / "verifier-fail").write_text("1")
         result = self._run_action(repository, "reboot")
         self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("last_confirmed_phase", result.stdout)
+        self.assertIn("containment-confirmed", result.stdout)
+        self.assertIn("automation_revision", result.stdout)
+        self.assertIn(self.revision, result.stdout)
+        self.assertRegex(result.stdout, r"recovery_required['\" ]*:[ '\"]*true")
         self.assertTrue((self.state / "contained").exists(), result.stdout)
         calls = (self.state / "calls.log").read_text(encoding="utf-8")
         mutations = [line for line in calls.splitlines() if line.startswith("node-mutation ")]
         self.assertEqual(mutations, ["node-mutation node-a set"], calls)
+
+    def test_real_gateway_preflight_failure_reports_only_bounded_phase(self) -> None:
+        repository = self._repository_fixture()
+        (self.state / "baseline-fail").write_text("1")
+        result = self._run_action(repository, "reboot")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("last_confirmed_phase", result.stdout)
+        self.assertIn("preflight-pending", result.stdout)
+        self.assertIn("automation_revision", result.stdout)
+        self.assertIn(self.revision, result.stdout)
+        self.assertRegex(result.stdout, r"recovery_required['\" ]*:[ '\"]*unknown")
+        self.assertNotIn(str(self.request), result.stdout)
+        self.assertFalse((self.state / "contained").exists())
+
+    def test_real_gateway_absent_or_malformed_phase_reports_unknown(self) -> None:
+        cases = {
+            "absent": 'raise RuntimeFailure("fixture failure")',
+            "malformed": 'Path(os.environ["TALOS_LIFECYCLE_RESULT_PATH"]).write_text("malformed")\n    raise RuntimeFailure("fixture failure")',
+        }
+        for name, replacement in cases.items():
+            with self.subTest(name=name):
+                repository = self._repository_fixture(f"repository-{name}")
+                runtime = repository / "roles/talos_lifecycle/files/runtime.py"
+                runtime.write_text(
+                    runtime.read_text().replace('_record_phase("preflight-pending")', replacement, 1),
+                    encoding="utf-8",
+                )
+                result = self._run_action(repository, "reboot")
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("last_confirmed_phase", result.stdout)
+                self.assertIn("unknown", result.stdout)
+                self.assertIn("recovery_required", result.stdout)
+
+    def test_post_containment_phase_write_failure_never_reports_no_recovery(self) -> None:
+        repository = self._repository_fixture()
+        common = repository / "roles/talos_lifecycle/files/node/common.sh"
+        common.write_text(
+            common.read_text().replace(
+                '  local phase="$1" result_path=',
+                '  local phase="$1" result_path=',
+                1,
+            ).replace(
+                '  case "$phase" in',
+                '  [[ "$phase" != containment-confirmed ]] || return 1\n  case "$phase" in',
+                1,
+            ),
+            encoding="utf-8",
+        )
+        result = self._run_action(repository, "reboot")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertTrue((self.state / "contained").exists(), result.stdout)
+        self.assertIn("preflight-confirmed", result.stdout)
+        self.assertRegex(result.stdout, r"recovery_required['\" ]*:[ '\"]*unknown")
+
+    def test_maintenance_exit_early_failure_never_reports_no_recovery(self) -> None:
+        repository = self._repository_fixture()
+        entered = self._run_action(repository, "maintenance-enter")
+        self.assertEqual(entered.returncode, 0, entered.stdout)
+        self.assertTrue((self.state / "contained").exists())
+        (self.state / "power-off").unlink(missing_ok=True)
+        (self.state / "prepare-fail").write_text("1")
+        exited = self._run_action(repository, "maintenance-exit")
+        self.assertNotEqual(exited.returncode, 0, exited.stdout)
+        self.assertTrue((self.state / "contained").exists(), exited.stdout)
+        self.assertIn("preflight-pending", exited.stdout)
+        self.assertRegex(exited.stdout, r"recovery_required['\" ]*:[ '\"]*unknown")
 
     def test_real_gateway_ansible_runtime_and_scenario_keep_tty_and_lease_alive(self) -> None:
         repository = self._repository_fixture()
@@ -422,19 +505,8 @@ raise SystemExit(0)
             self.assertIsNotNone(gateway_pid, output.decode(errors="replace"))
             self.assertTrue((self.state / "contained").exists(), output.decode(errors="replace"))
             os.kill(gateway_pid, 15)
-            restore_deadline = time.monotonic() + 10
-            while time.monotonic() < restore_deadline:
-                ready, _, _ = select.select([descriptor], [], [], 0.2)
-                if ready:
-                    try:
-                        output.extend(os.read(descriptor, 4096))
-                    except OSError:
-                        pass
-                if b"Restore electrical input" in output:
-                    (self.state / "power-off").unlink(missing_ok=True)
-                    os.write(descriptor, b"\n")
-                    break
-            status = self._wait_child(pid, descriptor, time.monotonic() + 10, output)
+            # Cancellation must finish without another response on the terminal.
+            status = self._wait_child(pid, descriptor, time.monotonic() + 20, output)
             self.assertIsNotNone(status, output.decode(errors="replace"))
             self.assertNotEqual(status, 0, output.decode(errors="replace"))
             leftovers = self._processes_containing(str(self.root))

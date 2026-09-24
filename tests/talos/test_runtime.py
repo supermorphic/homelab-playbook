@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -14,6 +17,36 @@ import runtime  # noqa: E402
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_group_cleanup_stops_descendant_after_leader_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pid_path = Path(temporary) / "child.pid"
+            script = (
+                "import pathlib,subprocess,sys; "
+                "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
+                "pathlib.Path(sys.argv[1]).write_text(str(child.pid))"
+            )
+            process = subprocess.Popen(
+                [sys.executable, "-c", script, str(pid_path)], start_new_session=True
+            )
+            process.wait(timeout=5)
+            runtime._stop_process_group(process, timeout=0.2)
+            child = int(pid_path.read_text())
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(child, 0)
+                except ProcessLookupError:
+                    break
+                state = subprocess.run(
+                    ["ps", "-o", "state=", "-p", str(child)], text=True,
+                    capture_output=True, check=False,
+                ).stdout.strip()
+                if not state or state.startswith("Z"):
+                    break
+                time.sleep(0.05)
+            else:
+                self.fail(f"lifecycle descendant {child} survived leader exit")
+
     def test_prepared_request_uses_derived_target_and_sanitized_environment(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -44,8 +77,9 @@ class RuntimeTests(unittest.TestCase):
                     captured["argv"] = argv
                     captured["env"] = kwargs["env"]
                     captured["prepared"] = json.loads(Path(argv[-1]).read_text(encoding="utf-8"))
+                    self.pid = 12345
 
-                def wait(self) -> int:
+                def wait(self, timeout: float | None = None) -> int:
                     return 0
 
                 def poll(self) -> int:
@@ -61,6 +95,9 @@ class RuntimeTests(unittest.TestCase):
                 mock.patch.object(runtime.subprocess, "Popen", Process),
                 mock.patch.dict(runtime.os.environ, {"TALOS_LIFECYCLE_MISE_DATA_DIR": "/mise-data",
                                                      "TALOS_LIFECYCLE_CANCEL_PATH": str(root / "cancel"),
+                                                     "TALOS_LIFECYCLE_RESULT_PATH": str(root / "result.json"),
+                                                     "TALOS_LIFECYCLE_SUPERVISOR_PATH": str(root / "supervisor.json"),
+                                                     "TALOS_LIFECYCLE_SUPERVISOR_TOKEN": "b" * 64,
                                                      "TALOS_LIFECYCLE_TRUSTED_ORIGIN":
                                                          "https://github.com/supermorphic/homelab-talos.git"}),
             ):

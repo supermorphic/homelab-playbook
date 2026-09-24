@@ -41,6 +41,9 @@
         TALOS_LIFECYCLE_MISE_DATA_DIR: "{{ talos_lifecycle_mise_data_dir }}"
         TALOS_LIFECYCLE_CANCEL_PATH: "{{ talos_lifecycle_cancel_path }}"
         TALOS_LIFECYCLE_TRUSTED_ORIGIN: "{{ talos_lifecycle_trusted_origin }}"
+        TALOS_LIFECYCLE_RESULT_PATH: "{{ talos_lifecycle_private.path }}/result.json"
+        TALOS_LIFECYCLE_SUPERVISOR_PATH: "{{ talos_lifecycle_supervisor_path }}"
+        TALOS_LIFECYCLE_SUPERVISOR_TOKEN: "{{ talos_lifecycle_supervisor_token }}"
       check_mode: false
       changed_when: talos_lifecycle_action != 'maintenance-check'
       no_log: true
@@ -51,7 +54,67 @@
           action: "{{ talos_lifecycle_action }}"
           node: "{{ talos_lifecycle_request.talos_node }}"
           outcome: passed
+          automation_revision: "{{ talos_lifecycle_automation_revision }}"
+          source_revision: "{{ talos_lifecycle_request.talos_source_revision }}"
+          last_confirmed_phase: completed
+          recovery_required: false
       changed_when: false
+  rescue:
+    - name: Read bounded Talos lifecycle failure phase
+      ansible.builtin.slurp:
+        src: "{{ talos_lifecycle_private.path }}/result.json"
+      register: talos_lifecycle_failure_result
+      failed_when: false
+      changed_when: false
+      no_log: true
+
+    - name: Decode bounded Talos lifecycle failure result
+      ansible.builtin.set_fact:
+        talos_lifecycle_failure_result_text: >-
+          {{
+            talos_lifecycle_failure_result.content | default('') | b64decode
+          }}
+      no_log: true
+
+    - name: Parse bounded Talos lifecycle failure phase
+      ansible.builtin.set_fact:
+        talos_lifecycle_failure_phase_raw: >-
+          {{
+            {
+              '{"last_confirmed_phase":"preflight-pending"}': 'preflight-pending',
+              '{"last_confirmed_phase":"preflight-confirmed"}': 'preflight-confirmed',
+              '{"last_confirmed_phase":"containment-confirmed"}': 'containment-confirmed',
+              '{"last_confirmed_phase":"completed"}': 'completed'
+            }.get(talos_lifecycle_failure_result_text | trim | replace(' ', ''), 'unknown')
+          }}
+      no_log: true
+
+    - name: Report bounded Talos lifecycle failure
+      ansible.builtin.debug:
+        msg:
+          action: "{{ talos_lifecycle_action }}"
+          node: "{{ talos_lifecycle_request.talos_node }}"
+          outcome: failed
+          automation_revision: "{{ talos_lifecycle_automation_revision }}"
+          source_revision: "{{ talos_lifecycle_request.talos_source_revision }}"
+          last_confirmed_phase: >-
+            {{
+              talos_lifecycle_failure_phase_raw
+              if talos_lifecycle_failure_phase_raw in
+                ['preflight-pending', 'preflight-confirmed', 'containment-confirmed', 'completed']
+              else 'unknown'
+            }}
+          recovery_required: >-
+            {{
+              true if talos_lifecycle_failure_phase_raw == 'containment-confirmed'
+              else false if talos_lifecycle_failure_phase_raw == 'completed'
+              else 'unknown'
+            }}
+      changed_when: false
+
+    - name: Preserve Talos lifecycle failure
+      ansible.builtin.fail:
+        msg: Talos lifecycle transaction failed; use the bounded phase above for recovery.
   always:
     - name: Remove private Talos lifecycle request directory
       ansible.builtin.file:

@@ -26,8 +26,14 @@ class RoleTests(unittest.TestCase):
         text = json_text = __import__("json").dumps(tasks)
         self.assertEqual(text.count('"argv"'), 1)
         self.assertIn("always", json_text)
+        self.assertIn("rescue", json_text)
         self.assertIn("no_log", json_text)
         self.assertIn("check_mode", json_text)
+        self.assertIn("last_confirmed_phase", json_text)
+        self.assertIn("recovery_required", json_text)
+        self.assertIn("automation_revision", json_text)
+        self.assertIn("source_revision", json_text)
+        self.assertIn("TALOS_LIFECYCLE_RESULT_PATH", json_text)
 
 
 if __name__ == "__main__":

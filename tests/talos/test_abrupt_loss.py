@@ -74,7 +74,8 @@ class AbruptLossTests(unittest.TestCase):
             ]
             stable = {"quorumRetained": True, "readySurvivors": 2, "readyCiliumSurvivors": 2,
                  "workloads": [{"namespace": "apps", "ownerKind": "ReplicaSet", "ownerName": "echo", "state": "ready-on-survivor"}],
-                 "storage": {"survivingReplicaAvailable": True, "pvcIdentityPreserved": True}}
+                 "storage": {"survivingReplicaAvailable": True, "pvcIdentityPreserved": True,
+                             "fullReplicaCount": False}}
             def observe() -> dict[str, object]:
                 return observations.pop(0) if observations else stable
             controller = abrupt.Controller(
@@ -91,6 +92,7 @@ class AbruptLossTests(unittest.TestCase):
             self.assertEqual(events, ["probes-start", "bridge:admit", "disconnect", "bridge:contain", "restore", "bridge:recover", "probes-stop"])
             self.assertEqual(state["workloadRecoverySeconds"]["apps/ReplicaSet/echo"], 0.0)
             self.assertEqual(len(state["passiveObservation"]), 120)
+            self.assertEqual(set(state["externalProbes"][0]), {"at", "api", "dns", "https"})
 
     def test_probe_failure_cannot_be_erased_by_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -118,6 +120,8 @@ class AbruptLossTests(unittest.TestCase):
         monitor = abrupt.ExternalProbeMonitor(self.prepared(), status_runner=status,
                                               interval=5, no_success_limit=60, monotonic=clock.now)
         monitor._sample()
+        self.assertEqual(monitor.interval, 5)
+        self.assertEqual(set(monitor.samples[0]), {"at", "api", "dns", "https"})
         clock.sleep(59)
         monitor._sample()
         self.assertEqual(monitor.violations(), [])
@@ -149,7 +153,14 @@ class AbruptLossTests(unittest.TestCase):
                                             status_runner=status, monitor=self.Monitor([]))
             baseline = controller._baseline()
             self.assertEqual(baseline["targetWorkloads"][0]["ownerUid"], "owner-uid")
-            self.assertEqual(baseline["affectedClaims"][0]["volumeUid"], "pv-uid")
+            self.assertEqual(baseline["affectedClaims"], [{
+                "namespace": "apps",
+                "name": "echo-data",
+                "uid": "pvc-uid",
+                "volumeName": "pv-echo",
+                "volumeUid": "pv-uid",
+                "longhornVolume": "lh-volume",
+            }])
             self.assertEqual(baseline["affectedVolumes"], ["lh-volume"])
             self.assertTrue(all("--context" in command for command in calls))
             self.assertEqual(len(capacity_calls), 2)
@@ -168,6 +179,8 @@ class AbruptLossTests(unittest.TestCase):
             with self.assertRaisesRegex(abrupt.ScenarioFailure, "four signals"):
                 controller.run()
             self.assertNotIn("contain", events)
+            self.assertEqual(events[:3], ["probes-start", "admit", "disconnect"])
+            self.assertIn("restore", events)
             recovery = json.loads((Path(temporary) / "recovery.json").read_text())
             self.assertEqual(recovery["status"], "failed")
             self.assertIn("uncontained", recovery["reason"])
@@ -184,6 +197,23 @@ class AbruptLossTests(unittest.TestCase):
             recovery = json.loads((Path(temporary) / "recovery.json").read_text())
             self.assertEqual(recovery["status"], "failed")
             self.assertIn("possible uncontained", recovery["reason"])
+
+    def test_wrong_target_confirmation_has_no_bridge_or_prompt_events(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            prepared = self.prepared()
+            prepared["talos_confirmation"] = "remove-power:node-b:192.0.2.11"
+            events: list[str] = []
+            controller = abrupt.Controller(
+                prepared,
+                Path(temporary),
+                baseline=lambda: events.append("baseline") or {},
+                bridge=lambda action: events.append(f"bridge:{action}"),
+                prompt=lambda _message: events.append("prompt") or "",
+                monitor=self.Monitor(events),
+            )
+            with self.assertRaisesRegex(abrupt.ScenarioFailure, "target-bound"):
+                controller.run()
+            self.assertEqual(events, [])
 
     def test_primary_failure_and_recovery_failure_remain_separate(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

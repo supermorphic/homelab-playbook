@@ -8,6 +8,7 @@ import os
 import shutil
 import signal
 import time
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,8 @@ from inputs import InputError, _UniqueYamlLoader, validate_request  # noqa: E402
 
 ACTIONS = {"maintenance-check", "maintenance-enter", "maintenance-exit", "reboot", "abrupt-loss-test"}
 BASE_TOOLS = ("bash", "python3", "kubectl", "talosctl", "yq", "mise")
+CANCELLATION_WAIT_SECONDS = 45
+FALLBACK_GRACE_SECONDS = 5
 
 
 class GatewayError(RuntimeError):
@@ -94,7 +97,86 @@ def _resolved_tools(action: str) -> dict[str, str]:
     return resolved
 
 
-def _run_ansible(argv: list[str], environment: dict[str, str], cancel_path: Path) -> int:
+def _automation_revision() -> str:
+    git = Path("/usr/bin/git")
+    if not git.is_file() or not os.access(git, os.X_OK):
+        raise GatewayError("trusted Git executable is unavailable")
+    result = subprocess.run(
+        [str(git), "-C", str(ROOT), "rev-parse", "HEAD"], text=True,
+        capture_output=True, check=False, timeout=10,
+        env={"PATH": "/usr/bin:/bin", "HOME": "/", "GIT_CONFIG_NOSYSTEM": "1",
+             "GIT_CONFIG_GLOBAL": "/dev/null"},
+    )
+    revision = result.stdout.strip()
+    if result.returncode != 0 or len(revision) != 40 or any(
+        character not in "0123456789abcdef" for character in revision
+    ):
+        raise GatewayError("automation revision is unavailable")
+    return revision
+
+
+def _group_exists(group: int) -> bool:
+    try:
+        os.killpg(group, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def _stop_lifecycle_fallback(supervisor_path: Path, owner_token: str) -> None:
+    group: int | None = None
+    bridge_group: int | None = None
+    try:
+        value = json.loads(supervisor_path.read_text(encoding="utf-8"))
+        if (isinstance(value, dict)
+                and set(value) in ({"lifecyclePgid", "ownerToken"},
+                                   {"lifecyclePgid", "ownerToken", "bridgePgid"})
+                and isinstance(value["lifecyclePgid"], int)
+                and value["ownerToken"] == owner_token):
+            group = value["lifecyclePgid"]
+            if isinstance(value.get("bridgePgid"), int):
+                bridge_group = value["bridgePgid"]
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        pass
+    if group is None or group <= 1:
+        return
+    if bridge_group is not None and bridge_group > 1:
+        try:
+            os.killpg(bridge_group, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + FALLBACK_GRACE_SECONDS
+        while _group_exists(bridge_group) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if _group_exists(bridge_group):
+            try:
+                os.killpg(bridge_group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    try:
+        if os.getpgid(group) != group:
+            return
+    except ProcessLookupError:
+        return
+    try:
+        os.killpg(group, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + FALLBACK_GRACE_SECONDS
+    while _group_exists(group) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if _group_exists(group):
+        try:
+            os.killpg(group, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    deadline = time.monotonic() + FALLBACK_GRACE_SECONDS
+    while _group_exists(group) and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+
+def _run_ansible(argv: list[str], environment: dict[str, str], cancel_path: Path,
+                 supervisor_path: Path, owner_token: str) -> int:
     process = subprocess.Popen(argv, cwd=ROOT, env=environment, start_new_session=True)
     received: list[int] = []
 
@@ -116,8 +198,9 @@ def _run_ansible(argv: list[str], environment: dict[str, str], cancel_path: Path
                 break
             except subprocess.TimeoutExpired:
                 if received and cancellation_deadline is None:
-                    cancellation_deadline = time.monotonic() + 10
+                    cancellation_deadline = time.monotonic() + CANCELLATION_WAIT_SECONDS
                 if cancellation_deadline is not None and time.monotonic() >= cancellation_deadline:
+                    _stop_lifecycle_fallback(supervisor_path, owner_token)
                     try:
                         os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError:
@@ -141,6 +224,7 @@ def run(action: str, inventory: str, arguments: list[str]) -> int:
     if check and action != "maintenance-check":
         raise GatewayError("check mode is supported only for maintenance-check")
     request = _load(request_path, action)
+    automation_revision = _automation_revision()
     terminal_path = _terminal_path() if action == "abrupt-loss-test" else ""
     tools = _resolved_tools(action)
     original_home = Path.home()
@@ -152,11 +236,16 @@ def run(action: str, inventory: str, arguments: list[str]) -> int:
         os.chmod(private, 0o700)
         variables_path = private / "variables.json"
         cancel_path = private / "cancel"
+        supervisor_path = private / "supervisor.json"
+        owner_token = secrets.token_hex(32)
         variables_path.write_text(json.dumps({"talos_lifecycle_action": action, "talos_lifecycle_request": request,
+                                               "talos_lifecycle_automation_revision": automation_revision,
                                                "talos_lifecycle_tty_path": terminal_path,
                                                "talos_lifecycle_tool_paths": tools,
                                                "talos_lifecycle_mise_data_dir": str(mise_data),
-                                               "talos_lifecycle_cancel_path": str(cancel_path)}, sort_keys=True) + "\n", encoding="utf-8")
+                                               "talos_lifecycle_cancel_path": str(cancel_path),
+                                               "talos_lifecycle_supervisor_path": str(supervisor_path),
+                                               "talos_lifecycle_supervisor_token": owner_token}, sort_keys=True) + "\n", encoding="utf-8")
         os.chmod(variables_path, 0o600)
         config = private / "ansible.cfg"
         config.write_text(
@@ -178,7 +267,7 @@ def run(action: str, inventory: str, arguments: list[str]) -> int:
         tool_path = os.pathsep.join(dict.fromkeys([*(str(Path(value).parent) for value in tools.values()), "/usr/bin", "/bin"]))
         environment = {"ANSIBLE_CONFIG": str(config), "HOME": str(private), "TMPDIR": str(private),
                        "PATH": tool_path, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
-        return _run_ansible(argv, environment, cancel_path)
+        return _run_ansible(argv, environment, cancel_path, supervisor_path, owner_token)
 
 
 def main(argv: list[str] | None = None) -> int:

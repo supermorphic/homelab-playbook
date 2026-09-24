@@ -5,6 +5,24 @@ lifecycle_node_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$lifecycle_node_dir/../lib/node-lifecycle-state.sh"
 
 # These globals are the validated result consumed by lifecycle coordinators.
+
+record_lifecycle_phase() {
+  local phase="$1" result_path="${TALOS_LIFECYCLE_RESULT_PATH:-}" result_dir temporary
+  case "$phase" in
+    preflight-pending|preflight-confirmed|containment-confirmed|completed) ;;
+    *) return 2 ;;
+  esac
+  [[ "$result_path" == /* && ! -L "$result_path" ]] || return 1
+  result_dir="$(dirname -- "$result_path")"
+  [[ -d "$result_dir" && ! -L "$result_dir" ]] || return 1
+  temporary="$(mktemp "$result_dir/.talos-result.XXXXXX")" || return 1
+  chmod 0600 "$temporary" || { rm -f -- "$temporary"; return 1; }
+  printf '{"last_confirmed_phase":"%s"}\n' "$phase" >"$temporary" || {
+    rm -f -- "$temporary"
+    return 1
+  }
+  mv -f -- "$temporary" "$result_path"
+}
 # shellcheck disable=SC2034
 NODE_CLUSTER_ENDPOINTS='192.0.2.10,192.0.2.11,192.0.2.12'
 # shellcheck disable=SC2034

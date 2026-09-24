@@ -206,6 +206,7 @@ run_maintenance_enter_transaction() {
   repeat_pre_containment_safety "$kubeconfig" "$talosconfig" "$node" "$holder" || return 1
   require_current_lease "$kubeconfig" "$holder" || return 1
   persist_node_containment "$kubeconfig" "$node" "$record" || return 1
+  record_lifecycle_phase containment-confirmed || return 1
   require_current_lease "$kubeconfig" "$holder" || return 1
   apply_longhorn_maintenance_state "$kubeconfig" "$node" "$record" || return 1
   capture_drain_inventory "$kubeconfig" "$node" "$inventory_file" || return 1
@@ -226,6 +227,7 @@ run_reboot_transaction() {
   repeat_pre_containment_safety "$kubeconfig" "$talosconfig" "$node" "$holder" || return 1
   require_current_lease "$kubeconfig" "$holder" || return 1
   persist_node_containment "$kubeconfig" "$node" "$record" || return 1
+  record_lifecycle_phase containment-confirmed || return 1
   capture_drain_inventory "$kubeconfig" "$node" "$inventory_file" || return 1
   require_current_lease "$kubeconfig" "$holder" || return 1
   perform_kubernetes_drain "$kubeconfig" "$node" || return 1
@@ -237,7 +239,7 @@ run_reboot_transaction() {
   send_talos_reboot "$talosconfig" "$node_ip" || return 1
   observe_node_reboot "$kubeconfig" "$talosconfig" "$node" "$node_ip" || return 1
   perform_recovery_acceptance "$kubeconfig" "$talosconfig" "$node" "$node_ip" \
-    "$record" "$inventory_file" || return 1
+    "$holder" "$record" "$inventory_file" || return 1
   repeat_disruption_safety "$kubeconfig" "$talosconfig" "$node" "$holder" || return 1
   require_current_lease "$kubeconfig" "$holder" || return 1
   remove_node_containment_and_uncordon "$kubeconfig" "$node" "$record" recovery-accepted || return 1
@@ -249,7 +251,7 @@ run_maintenance_exit_transaction() {
   require_current_lease "$kubeconfig" "$holder" || return 1
   assert_cluster_disruption_admissible "$kubeconfig" "$node" || return 1
   perform_recovery_acceptance "$kubeconfig" "$talosconfig" "$node" "$node_ip" \
-    "$record" "$inventory_file" || return 1
+    "$holder" "$record" "$inventory_file" || return 1
   repeat_disruption_safety "$kubeconfig" "$talosconfig" "$node" "$holder" || return 1
   require_current_lease "$kubeconfig" "$holder" || return 1
   remove_node_containment_and_uncordon "$kubeconfig" "$node" "$record" recovery-accepted || return 1
@@ -313,6 +315,7 @@ node_lifecycle_main() (
       rm -rf -- "$temp_dir"
       return 1
     fi
+    record_lifecycle_phase preflight-confirmed || return 1
     rm -rf -- "$temp_dir"
     echo "Maintenance preflight passed for $NODE_NAME; repeat it through maintenance-enter before mutation."
     return 0
@@ -334,6 +337,7 @@ node_lifecycle_main() (
       local longhorn_state
       run_disruption_preflight "$kubeconfig" "$talosconfig" "$NODE_NAME" "$NODE_IP" "$inventory_file"
       [[ "$(yq -r '.talos_confirmation' "$prepared_json")" == "enter:${NODE_NAME}:${NODE_IP}" ]] || return 1
+      record_lifecycle_phase preflight-confirmed
       longhorn_state="$(read_longhorn_node "$kubeconfig" "$NODE_NAME")"
       record="$(build_maintenance_lifecycle_record_from_state "$longhorn_state")"
       run_maintenance_enter_transaction "$kubeconfig" "$talosconfig" "$NODE_NAME" \
@@ -342,6 +346,7 @@ node_lifecycle_main() (
     reboot)
       run_disruption_preflight "$kubeconfig" "$talosconfig" "$NODE_NAME" "$NODE_IP" "$inventory_file"
       [[ "$(yq -r '.talos_confirmation' "$prepared_json")" == "reboot:${NODE_NAME}:${NODE_IP}" ]] || return 1
+      record_lifecycle_phase preflight-confirmed
       record='{"schemaVersion":1,"kind":"reboot"}'
       run_reboot_transaction "$kubeconfig" "$talosconfig" "$NODE_NAME" "$NODE_IP" \
         "$holder" "$record" "$inventory_file"
@@ -351,6 +356,7 @@ node_lifecycle_main() (
       require_current_lease "$kubeconfig" "$holder"
       [[ "$(yq -r '.talos_test_confirmation' "$prepared_json")" == 'chaos:node-abrupt-loss' ]] || return 1
       [[ "$(yq -r '.talos_confirmation' "$prepared_json")" == "remove-power:${NODE_NAME}:${NODE_IP}" ]] || return 1
+      record_lifecycle_phase preflight-confirmed
       "$NODE_PYTHON" "$lifecycle_node_dir/../scenarios/node_abrupt_loss.py" \
         "$prepared_json" "$(yq -r '.evidence_dir' "$prepared_json")"
       ;;
@@ -359,6 +365,7 @@ node_lifecycle_main() (
       record="$(read_node_lifecycle_record "$kubeconfig" "$NODE_NAME")"
       kind="$(lifecycle_record_kind "$record")"
       [[ "$(yq -r '.talos_confirmation' "$prepared_json")" == "accept:${NODE_NAME}:${kind}" ]] || return 1
+      record_lifecycle_phase containment-confirmed
       run_maintenance_exit_transaction "$kubeconfig" "$talosconfig" "$NODE_NAME" \
         "$NODE_IP" "$holder" "$record"
       ;;

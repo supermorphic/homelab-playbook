@@ -26,6 +26,124 @@ class RuntimeFailure(RuntimeError):
     pass
 
 
+def _record_phase(phase: str) -> None:
+    allowed = {"preflight-pending", "preflight-confirmed", "containment-confirmed", "completed"}
+    if phase not in allowed:
+        raise RuntimeFailure("invalid lifecycle result phase")
+    raw_path = os.environ.get("TALOS_LIFECYCLE_RESULT_PATH", "")
+    path = Path(raw_path)
+    if not path.is_absolute() or path.is_symlink() or not path.parent.is_dir() or path.parent.is_symlink():
+        raise RuntimeFailure("trusted lifecycle result path is missing or invalid")
+    descriptor, temporary = tempfile.mkstemp(prefix=".talos-result-", dir=path.parent, text=True)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump({"last_confirmed_phase": phase}, handle, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _record_supervisor(group: int) -> Path:
+    raw_path = os.environ.get("TALOS_LIFECYCLE_SUPERVISOR_PATH", "")
+    path = Path(raw_path)
+    token = os.environ.get("TALOS_LIFECYCLE_SUPERVISOR_TOKEN", "")
+    if (group <= 1 or len(token) != 64 or any(character not in "0123456789abcdef" for character in token)
+            or not path.is_absolute() or path.is_symlink()
+            or not path.parent.is_dir() or path.parent.is_symlink()):
+        raise RuntimeFailure("trusted lifecycle supervisor path is missing or invalid")
+    descriptor, temporary = tempfile.mkstemp(prefix=".talos-supervisor-", dir=path.parent, text=True)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump({"lifecyclePgid": group, "ownerToken": token}, handle, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+    return path
+
+
+def _process_group_exists(group: int) -> bool:
+    try:
+        os.killpg(group, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def _registered_bridge_group() -> int | None:
+    path = Path(os.environ.get("TALOS_LIFECYCLE_SUPERVISOR_PATH", ""))
+    token = os.environ.get("TALOS_LIFECYCLE_SUPERVISOR_TOKEN", "")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if (not isinstance(value, dict) or value.get("ownerToken") != token
+            or set(value) != {"lifecyclePgid", "ownerToken", "bridgePgid"}
+            or not isinstance(value.get("bridgePgid"), int)):
+        return None
+    group = value["bridgePgid"]
+    return group if group > 1 else None
+
+
+def _stop_group_id(group: int, initial_signal: int = signal.SIGTERM) -> None:
+    try:
+        os.killpg(group, initial_signal)
+    except (ProcessLookupError, PermissionError):
+        return
+    deadline = time.monotonic() + 5
+    while _process_group_exists(group) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if _process_group_exists(group):
+        try:
+            os.killpg(group, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+
+def _stop_process_group(
+    process: subprocess.Popen[object], timeout: float = 30, initial_signal: int = signal.SIGTERM
+) -> int:
+    bridge_group = _registered_bridge_group()
+    if bridge_group is not None:
+        _stop_group_id(bridge_group, initial_signal)
+    try:
+        os.killpg(process.pid, initial_signal)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        status = process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        status = process.wait()
+    deadline = time.monotonic() + 5
+    while _process_group_exists(process.pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if _process_group_exists(process.pid):
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    return status
+
+
 def _tools(action: str) -> dict[str, str]:
     expected = {"bash", "python3", "kubectl", "talosctl", "yq", "mise"}
     if action == "abrupt-loss-test":
@@ -80,6 +198,7 @@ def _make_evidence_dir(request: dict[str, object]) -> Path:
 
 
 def run(action: str, request_path: Path) -> int:
+    _record_phase("preflight-pending")
     request = load_request(request_path, action)
     with tempfile.TemporaryDirectory(prefix="talos-lifecycle-") as temporary:
         private = Path(temporary)
@@ -142,6 +261,9 @@ def run(action: str, request_path: Path) -> int:
             "TMPDIR": str(private),
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
+            "TALOS_LIFECYCLE_RESULT_PATH": os.environ["TALOS_LIFECYCLE_RESULT_PATH"],
+            "TALOS_LIFECYCLE_SUPERVISOR_PATH": os.environ["TALOS_LIFECYCLE_SUPERVISOR_PATH"],
+            "TALOS_LIFECYCLE_SUPERVISOR_TOKEN": os.environ["TALOS_LIFECYCLE_SUPERVISOR_TOKEN"],
         }
         if action == "abrupt-loss-test":
             environment["TALOS_LIFECYCLE_TTY_PATH"] = os.environ.get(
@@ -155,24 +277,29 @@ def run(action: str, request_path: Path) -> int:
             start_new_session=True,
             env=environment,
         )
+        supervisor_path: Path | None = None
         try:
+            supervisor_path = _record_supervisor(process.pid)
             while True:
                 status = process.poll()
                 if status is not None:
+                    _stop_process_group(process, timeout=5)
+                    if status == 0:
+                        _record_phase("completed")
                     return 128 - status if status < 0 else status
                 if cancel_path.exists():
-                    os.killpg(process.pid, signal.SIGTERM)
-                    try:
-                        process.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        os.killpg(process.pid, signal.SIGKILL)
-                        process.wait()
+                    _stop_process_group(process)
                     return 143
                 time.sleep(0.1)
         except KeyboardInterrupt:
-            os.killpg(process.pid, signal.SIGINT)
-            status = process.wait()
+            status = _stop_process_group(process, initial_signal=signal.SIGINT)
             return 128 - status if status < 0 else status
+        except BaseException:
+            _stop_process_group(process)
+            raise
+        finally:
+            if supervisor_path is not None:
+                supervisor_path.unlink(missing_ok=True)
 
 
 def main(argv: list[str] | None = None) -> int:

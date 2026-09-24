@@ -149,14 +149,16 @@ perform_recovery_acceptance() {
   local talosconfig="$2"
   local node="$3"
   local node_ip="$4"
-  local record="$5"
-  local inventory_file="${6:-}"
+  local holder="$5"
+  local record="$6"
+  local inventory_file="${7:-}"
   local kind
   kind="$(lifecycle_record_kind "$record")" || return 1
   wait_for_returned_node_contained "$kubeconfig" "$node" "$record" || return 1
   verify_talos_recovery "$talosconfig" "$node" "$node_ip" || return 1
   if [[ "$kind" == 'maintenance' ]]; then
     verify_returned_node_contained "$kubeconfig" "$node" "$record" || return 1
+    require_current_lease "$kubeconfig" "$holder" || return 1
     restore_longhorn_maintenance_state "$kubeconfig" "$node" "$record" || return 1
   fi
   verify_longhorn_convergence "$kubeconfig" || return 1

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from resilience_support import (
+    InterruptedRun,
     Runner,
     ScenarioFailure,
     atomic_write_json,
@@ -799,7 +800,8 @@ class Controller:
             )
             state["phase"] = "failed"
             state["failure"] = str(error)
-            if removal_prompt_issued and not restore_requested:
+            interrupted = isinstance(error, InterruptedRun)
+            if removal_prompt_issued and not restore_requested and not interrupted:
                 try:
                     self.prompt(
                         f"Restore electrical input to {self.node} now, then press Enter. "
@@ -822,7 +824,7 @@ class Controller:
                     "passed",
                     f"{self.node} was unchanged because execution stopped before disruption",
                 )
-            elif contained and not recovery_attempted:
+            elif contained and not recovery_attempted and not interrupted:
                 try:
                     recovery_attempted = True
                     self.bridge_fn("recover")

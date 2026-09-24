@@ -50,7 +50,9 @@ class GatewayTests(unittest.TestCase):
                         "MISE_CONFIG_FILE": "/attacker/mise", "ANSIBLE_INVENTORY": "/attacker/inventory",
                         "KUBECONFIG": "/attacker/kube", "TALOSCONFIG": "/attacker/talos", "SOPS_AGE_KEY": "secret",
                         "TALOS_LIFECYCLE_TTY_PATH": "/dev/attacker"}
-            with mock.patch.object(talos_gateway.subprocess, "Popen", Process), mock.patch.dict(os.environ, injected):
+            with (mock.patch.object(talos_gateway.subprocess, "Popen", Process),
+                  mock.patch.object(talos_gateway, "_automation_revision", return_value="c" * 40),
+                  mock.patch.dict(os.environ, injected)):
                 self.assertEqual(talos_gateway.run("maintenance-check", "production", ["-e", f"@{request}", "--check"]), 0)
             argv = captured["argv"]
             self.assertEqual(argv[1:5], ["--inventory", "localhost,", "--connection", "local"])
@@ -97,6 +99,81 @@ class GatewayTests(unittest.TestCase):
                 with self.subTest(key=key), self.assertRaises(talos_gateway.GatewayError):
                     talos_gateway.run("reboot", "production", ["-e", f"@{request}"])
                 del value[key]
+
+    def test_fallback_requires_current_run_token_and_live_group_leader(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "supervisor.json"
+            path.write_text(json.dumps({"lifecyclePgid": 4321, "ownerToken": "a" * 64}))
+            with mock.patch.object(talos_gateway.os, "killpg") as kill:
+                talos_gateway._stop_lifecycle_fallback(path, "b" * 64)
+                kill.assert_not_called()
+            with (
+                mock.patch.object(talos_gateway.os, "getpgid", return_value=9999),
+                mock.patch.object(talos_gateway.os, "killpg") as kill,
+            ):
+                talos_gateway._stop_lifecycle_fallback(path, "a" * 64)
+                kill.assert_not_called()
+            with (
+                mock.patch.object(talos_gateway.os, "getpgid", return_value=4321),
+                mock.patch.object(talos_gateway.os, "killpg") as kill,
+                mock.patch.object(talos_gateway, "_group_exists", return_value=False),
+            ):
+                talos_gateway._stop_lifecycle_fallback(path, "a" * 64)
+                kill.assert_called_once_with(4321, talos_gateway.signal.SIGTERM)
+            path.write_text(json.dumps({"lifecyclePgid": 4321, "bridgePgid": 5432,
+                                        "ownerToken": "a" * 64}))
+            with (
+                mock.patch.object(talos_gateway.os, "getpgid", return_value=4321),
+                mock.patch.object(talos_gateway.os, "killpg") as kill,
+                mock.patch.object(talos_gateway, "_group_exists", return_value=False),
+            ):
+                talos_gateway._stop_lifecycle_fallback(path, "a" * 64)
+                self.assertEqual(kill.call_args_list, [
+                    mock.call(5432, talos_gateway.signal.SIGTERM),
+                    mock.call(4321, talos_gateway.signal.SIGTERM),
+                ])
+
+    def test_cancel_deadline_stops_lifecycle_before_ansible_group(self) -> None:
+        events: list[str] = []
+        handlers: dict[int, object] = {}
+
+        class Process:
+            pid = 2468
+
+            def __init__(self, _argv: list[str], **_kwargs: object) -> None:
+                pass
+
+            def wait(self, timeout: float | None = None) -> int:
+                if timeout is None:
+                    return -9
+                if not handlers:
+                    self.fail = True
+                handler = handlers[talos_gateway.signal.SIGTERM]
+                handler(talos_gateway.signal.SIGTERM, None)
+                raise talos_gateway.subprocess.TimeoutExpired("ansible", timeout)
+
+        def install(signum: int, handler: object) -> object:
+            handlers[signum] = handler
+            return talos_gateway.signal.SIG_DFL
+
+        def fallback(_path: Path, _token: str) -> None:
+            events.append("lifecycle")
+
+        def killpg(_group: int, _signal: int) -> None:
+            events.append("ansible")
+
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            mock.patch.object(talos_gateway.subprocess, "Popen", Process),
+            mock.patch.object(talos_gateway.signal, "signal", side_effect=install),
+            mock.patch.object(talos_gateway, "_stop_lifecycle_fallback", side_effect=fallback),
+            mock.patch.object(talos_gateway.os, "killpg", side_effect=killpg),
+            mock.patch.object(talos_gateway, "CANCELLATION_WAIT_SECONDS", 0),
+        ):
+            root = Path(temporary)
+            status = talos_gateway._run_ansible([], {}, root / "cancel", root / "supervisor", "a" * 64)
+        self.assertEqual(status, 143)
+        self.assertEqual(events, ["lifecycle", "ansible"])
 
 
 if __name__ == "__main__":

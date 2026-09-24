@@ -137,8 +137,9 @@ below. Do not load lifecycle helpers, Ansible plugins, or arbitrary callbacks
 from it. Credentials are separate from desired-data preparation.
 
 Record the automation revision, desired-data revision, action, node, phase,
-and outcome in bounded non-secret output. Resolve this repository's pinned tool
-paths once. Prepare the verification command's own tool environment separately
+outcome, and whether recovery is required in bounded non-secret output. Resolve
+this repository's pinned tool paths once. Prepare the verification command's
+own tool environment separately
 and validate it before admission; invoking verification does not install tools
 or credentials. The desired-data and verifier revision identifies that input,
 not a lifecycle-code dependency consumed by another repository.
@@ -210,7 +211,12 @@ cutover; do not retain a forwarding wrapper.
 Every wait is bounded. Lease renewal loss, authentication failure, API outage,
 signal, or failed safety assertion stops further consequential mutation. A
 completed shutdown is not retried merely because its response was lost. Report
-the last confirmed phase and require observation before another action.
+the last confirmed phase from the fixed set `preflight-pending`,
+`preflight-confirmed`, `containment-confirmed`, and `completed`; require
+observation before another action. Keep command output private and expose only
+the action, node, revisions, failed outcome, allowlisted phase, and recovery
+need on failure. Report recovery need as unknown after `preflight-confirmed`
+because containment and its phase record cannot be one atomic write.
 
 After containment, failure preserves the record and cordon. Cleanup must not
 uncordon, clear records, or automatically roll back partially completed
@@ -308,8 +314,19 @@ acquiring the Lease or accessing mutation APIs, require a usable controlling
 terminal. The gateway derives the terminal device from its own standard input
 and passes that fixed internal path through local Ansible to the runtime. Public
 inputs and inherited environment cannot select the path. Run-owned children use
-dedicated process groups so interruption can cancel and reap the complete local
-process tree while prompts continue to use the gateway-bound terminal. Prove
+dedicated process groups. The gateway records cancellation and waits; the
+runtime normally signals and reaps the lifecycle group. The gateway wait is
+bounded. Its fallback accepts only the current run's private random ownership
+token and a still-live group leader whose process-group ID equals its PID; it
+stops that lifecycle group before stopping Ansible. Each scenario bridge call
+starts blocked, registers its separate group in the same private token-bound
+supervisor record, and only then releases the child to execute the bridge
+command. Recovery gets a 75-minute deadline: 30 minutes for node return, five
+minutes for workload replacement, 30 minutes for the verifier, and ten minutes
+of command and scheduling margin. Normal
+completion, timeout, runtime cancellation, and the gateway fallback stop the
+registered bridge group before releasing lifecycle ownership. This keeps prompts
+on the gateway-bound terminal without competing supervisors. Prove
 this path through the actual gateway with a synthetic pseudo-terminal. Reject
 noninteractive execution before disruption; do not add an alternate launcher.
 

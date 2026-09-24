@@ -27,6 +27,15 @@ argument_specs:
       talos_lifecycle_cancel_path:
         type: str
         required: true
+      talos_lifecycle_supervisor_path:
+        type: str
+        required: true
+      talos_lifecycle_supervisor_token:
+        type: str
+        required: true
+      talos_lifecycle_automation_revision:
+        type: str
+        required: true
       talos_lifecycle_trusted_origin:
         type: str
         required: true
