@@ -1,0 +1,32 @@
+---
+argument_specs:
+  main:
+    short_description: Run one controller-side Talos lifecycle action
+    options:
+      talos_lifecycle_action:
+        type: str
+        required: true
+        choices:
+          - maintenance-check
+          - maintenance-enter
+          - maintenance-exit
+          - reboot
+          - abrupt-loss-test
+      talos_lifecycle_request:
+        type: dict
+        required: true
+      talos_lifecycle_tty_path:
+        type: str
+        required: false
+      talos_lifecycle_tool_paths:
+        type: dict
+        required: true
+      talos_lifecycle_mise_data_dir:
+        type: str
+        required: true
+      talos_lifecycle_cancel_path:
+        type: str
+        required: true
+      talos_lifecycle_trusted_origin:
+        type: str
+        required: true

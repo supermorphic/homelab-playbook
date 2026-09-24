@@ -78,8 +78,8 @@ verify_etcd_recovery() {
   members="$(recovery_talosctl etcd members --nodes "$NODE_CLUSTER_ENDPOINTS" \
     --endpoints "$NODE_CLUSTER_ENDPOINTS" --talosconfig "$talosconfig")" || return 1
   names="$(awk 'NR > 1 && NF {print $3}' <<<"$members" | sort -u)"
-  [[ "$names" == $'node-a\nnode-b\nnode-c' ]] || {
-    printf 'Expected etcd members node-a, node-b, and node-c; found:\n%s\n' \
+  [[ "$names" == "${NODE_EXPECTED_NAMES:?}" ]] || {
+    printf 'etcd member names differ from validated desired source; found:\n%s\n' \
       "${names:-none}" >&2
     return 1
   }

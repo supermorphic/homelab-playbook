@@ -48,13 +48,21 @@ class RuntimeTests(unittest.TestCase):
                 def wait(self) -> int:
                     return 0
 
+                def poll(self) -> int:
+                    return 0
+
             with (
                 mock.patch.object(runtime, "load_request", return_value=request),
                 mock.patch.object(runtime, "prepare_source", return_value=source),
-                mock.patch.object(runtime, "_tool", side_effect=lambda name: f"/tools/{name}"),
+                mock.patch.object(runtime, "_tools", return_value={name: f"/tools/{name}" for name in
+                                  ("bash", "python3", "kubectl", "talosctl", "yq", "mise")}),
                 mock.patch.object(runtime, "_bash_major", return_value=5),
                 mock.patch.object(runtime, "invoke_verifier", return_value={}),
                 mock.patch.object(runtime.subprocess, "Popen", Process),
+                mock.patch.dict(runtime.os.environ, {"TALOS_LIFECYCLE_MISE_DATA_DIR": "/mise-data",
+                                                     "TALOS_LIFECYCLE_CANCEL_PATH": str(root / "cancel"),
+                                                     "TALOS_LIFECYCLE_TRUSTED_ORIGIN":
+                                                         "https://github.com/supermorphic/homelab-talos.git"}),
             ):
                 self.assertEqual(runtime.run("reboot", request_path), 0)
 

@@ -6,12 +6,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import uuid
+import time
 from pathlib import Path
 
 from inputs import InputError, load_request
@@ -19,7 +19,6 @@ from source import SourceError, prepare_source
 from verification import VerificationError, invoke_verifier, make_request
 
 
-TRUSTED_ORIGIN = "https://github.com/supermorphic/homelab-talos.git"
 FILES = Path(__file__).resolve().parent
 
 
@@ -27,11 +26,25 @@ class RuntimeFailure(RuntimeError):
     pass
 
 
-def _tool(name: str) -> str:
-    path = shutil.which(name)
-    if path is None:
-        raise RuntimeFailure(f"required tool is unavailable: {name}")
-    return str(Path(path).resolve())
+def _tools(action: str) -> dict[str, str]:
+    expected = {"bash", "python3", "kubectl", "talosctl", "yq", "mise"}
+    if action == "abrupt-loss-test":
+        expected.update({"dig", "curl"})
+    try:
+        value = json.loads(os.environ["TALOS_LIFECYCLE_TOOL_PATHS"])
+    except (KeyError, json.JSONDecodeError) as error:
+        raise RuntimeFailure("trusted tool paths are missing or invalid") from error
+    if not isinstance(value, dict) or set(value) != expected:
+        raise RuntimeFailure("trusted tool paths do not match the action")
+    tools: dict[str, str] = {}
+    for name, raw in value.items():
+        if not isinstance(raw, str) or not Path(raw).is_absolute():
+            raise RuntimeFailure(f"trusted tool path is invalid: {name}")
+        path = Path(raw)
+        if not path.is_file() or not os.access(path, os.X_OK):
+            raise RuntimeFailure(f"trusted tool is unavailable: {name}")
+        tools[name] = str(path)
+    return tools
 
 
 def _confirmation(action: str, request: dict[str, object], address: str) -> None:
@@ -71,25 +84,29 @@ def run(action: str, request_path: Path) -> int:
     with tempfile.TemporaryDirectory(prefix="talos-lifecycle-") as temporary:
         private = Path(temporary)
         os.chmod(private, 0o700)
+        trusted_origin = os.environ.get("TALOS_LIFECYCLE_TRUSTED_ORIGIN", "")
+        if trusted_origin != "https://github.com/supermorphic/homelab-talos.git":
+            raise RuntimeFailure("trusted source origin is missing or invalid")
         source = prepare_source(
             Path(request["talos_source_dir"]),
             request["talos_source_revision"],
             private / "source",
-            TRUSTED_ORIGIN,
+            trusted_origin,
         )
         node = request["talos_node"]
         nodes = source["nodes"]
         if node not in nodes:
             raise RuntimeFailure("selected node is absent from approved desired input")
         _confirmation(action, request, nodes[node])
-        tool_names = ["bash", "python3", "kubectl", "talosctl", "yq", "mise"]
-        if action == "abrupt-loss-test":
-            tool_names.extend(["dig", "curl"])
-        tools = {name: _tool(name) for name in tool_names}
+        tools = _tools(action)
         if _bash_major(tools["bash"]) < 5:
             raise RuntimeFailure("Talos lifecycle requires Bash 5 or newer")
         source["mise"] = tools["mise"]
-        source["mise_data_dir"] = str(Path.home() / ".local/share/mise")
+        source["bash"] = tools["bash"]
+        mise_data_dir = Path(os.environ.get("TALOS_LIFECYCLE_MISE_DATA_DIR", ""))
+        if not mise_data_dir.is_absolute():
+            raise RuntimeFailure("trusted Mise data directory is missing or invalid")
+        source["mise_data_dir"] = str(mise_data_dir)
         prepare_request = make_request(source, request, "prepare")
         invoke_verifier(source, prepare_request, deadline_seconds=prepare_request["timeoutSeconds"])
         if action != "maintenance-exit":
@@ -116,7 +133,9 @@ def run(action: str, request_path: Path) -> int:
             prepared["evidence_dir"] = str(_make_evidence_dir(request))
         prepared_path.write_text(json.dumps(prepared, sort_keys=True) + "\n", encoding="utf-8")
         os.chmod(prepared_path, 0o600)
-        tool_path = os.pathsep.join(dict.fromkeys(str(Path(value).parent) for value in tools.values()))
+        tool_path = os.pathsep.join(
+            dict.fromkeys([*(str(Path(value).parent) for value in tools.values()), "/usr/bin", "/bin"])
+        )
         environment = {
             "HOME": str(private),
             "PATH": tool_path,
@@ -124,16 +143,34 @@ def run(action: str, request_path: Path) -> int:
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
         }
+        if action == "abrupt-loss-test":
+            environment["TALOS_LIFECYCLE_TTY_PATH"] = os.environ.get(
+                "TALOS_LIFECYCLE_TTY_PATH", "/dev/tty"
+            )
+        cancel_path = Path(os.environ.get("TALOS_LIFECYCLE_CANCEL_PATH", ""))
+        if not cancel_path.is_absolute() or cancel_path.exists():
+            raise RuntimeFailure("trusted cancellation path is missing or invalid")
         process = subprocess.Popen(
             [tools["bash"], str(FILES / "node/lifecycle.sh"), str(prepared_path)],
-            start_new_session=False,
+            start_new_session=True,
             env=environment,
         )
         try:
-            status = process.wait()
-            return 128 - status if status < 0 else status
+            while True:
+                status = process.poll()
+                if status is not None:
+                    return 128 - status if status < 0 else status
+                if cancel_path.exists():
+                    os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
+                    return 143
+                time.sleep(0.1)
         except KeyboardInterrupt:
-            process.send_signal(signal.SIGINT)
+            os.killpg(process.pid, signal.SIGINT)
             status = process.wait()
             return 128 - status if status < 0 else status
 

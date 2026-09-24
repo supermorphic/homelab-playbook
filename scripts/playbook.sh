@@ -66,6 +66,9 @@ esac
 if [[ "$playbook" == 'tls' && "$inventory" != 'production' ]]; then
   error "TLS currently supports production only; staging experiments require a separate isolated workflow"
 fi
+if [[ "$playbook" == 'talos' && "$inventory" != 'production' ]]; then
+  error "Talos lifecycle currently supports production only"
+fi
 inventory_path="$repo_root/inventory/$inventory"
 [[ -f "$inventory_path" || -d "$inventory_path" ]] || error "inventory is unavailable: $inventory"
 
@@ -92,6 +95,10 @@ if [[ ( "$playbook" == 'os' && "$action" != 'inspect' ) || \
 fi
 
 uv run --frozen --no-sync python scripts/dependencies.py verify
+
+if [[ "$playbook" == 'talos' ]]; then
+  exec uv run --frozen --no-sync python scripts/talos_gateway.py "$action" "$inventory" "$@"
+fi
 
 if [[ "$guarded_host_action" == true ]]; then
   effective_config="$(

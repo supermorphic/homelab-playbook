@@ -1,0 +1,8 @@
+---
+talos_lifecycle_action: invalid
+talos_lifecycle_request: {}
+talos_lifecycle_tty_path: ''
+talos_lifecycle_tool_paths: {}
+talos_lifecycle_mise_data_dir: ''
+talos_lifecycle_cancel_path: ''
+talos_lifecycle_trusted_origin: https://github.com/supermorphic/homelab-talos.git

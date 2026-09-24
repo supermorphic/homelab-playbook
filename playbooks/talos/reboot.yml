@@ -1,0 +1,10 @@
+---
+- name: Reboot one Talos node
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  roles:
+    - role: talos_lifecycle
+      vars:
+        talos_lifecycle_action: reboot

@@ -109,9 +109,14 @@ def validate_response(request: dict, response: dict, returncode: int) -> None:
 
 def invoke_verifier(source: dict, request: dict, *, deadline_seconds: int) -> dict:
     verification_dir = Path(source["verification_dir"])
-    mise = source.get("mise", "mise")
+    mise = Path(str(source.get("mise", "")))
+    bash = Path(str(source.get("bash", "")))
     if not verification_dir.is_absolute() or not 1 <= deadline_seconds <= 3600:
         raise VerificationError("verification invocation is invalid")
+    if not mise.is_absolute() or not mise.is_file() or not os.access(mise, os.X_OK):
+        raise VerificationError("fixed Mise executable is unavailable")
+    if not bash.is_absolute() or not bash.is_file() or not os.access(bash, os.X_OK):
+        raise VerificationError("fixed Bash executable is unavailable")
     with tempfile.TemporaryDirectory(prefix="talos-verification-") as temporary:
         root = Path(temporary)
         request_path = root / "request.json"
@@ -119,13 +124,17 @@ def invoke_verifier(source: dict, request: dict, *, deadline_seconds: int) -> di
         os.chmod(request_path, 0o600)
         environment = {
             "HOME": str(root),
-            "PATH": "/usr/bin:/bin",
+            "PATH": os.pathsep.join(dict.fromkeys((str(bash.parent), str(mise.parent), "/usr/bin", "/bin"))),
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
             "MISE_AUTO_INSTALL": "0",
         }
         if source.get("mise_data_dir"):
             environment["MISE_DATA_DIR"] = str(source["mise_data_dir"])
+        recovery_cache = Path(str(source.get("recovery_helm_cache", "")))
+        if not recovery_cache.is_absolute() or not recovery_cache.is_dir() or recovery_cache.is_symlink():
+            raise VerificationError("prepared recovery chart cache is unavailable")
+        environment["RECOVERY_HELM_CACHE"] = str(recovery_cache)
         try:
             result = subprocess.run(
                 [str(mise), "exec", "--", "just", "kube", "recovery-verify", str(request_path)],

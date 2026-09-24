@@ -91,7 +91,10 @@ class ResponseTests(unittest.TestCase):
     def test_fixed_invocation_rejects_malformed_multiple_and_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            source = {"verification_dir": str(root), "mise": "/tools/mise"}
+            cache = root / "cache"
+            cache.mkdir()
+            source = {"verification_dir": str(root), "mise": sys.executable, "bash": "/bin/bash",
+                      "recovery_helm_cache": str(cache)}
             value = request("prepare")
             for stdout in ("not-json", "{}\n{}\n"):
                 completed = mock.Mock(returncode=0, stdout=stdout, stderr="")

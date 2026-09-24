@@ -27,6 +27,7 @@ abrupt_loss_bridge_main() {
   node_ip="$(yq -r '.address' "$prepared")"
   holder="$(yq -r '.holder' "$prepared")"
   NODE_CLUSTER_ENDPOINTS="$(yq -r '.talos_endpoints | join(",")' "$prepared")"
+  NODE_EXPECTED_NAMES="$(yq -r '.nodes | keys | .[]' "$prepared" | sort)"
   TALOS_LIFECYCLE_KUBE_CONTEXT="$(yq -r '.talos_kube_context' "$prepared")"
   TALOS_LIFECYCLE_TALOS_CONTEXT="$(yq -r '.talos_talos_context' "$prepared")"
   NODE_KUBECTL="$(yq -r '.tools.kubectl' "$prepared")"
@@ -36,7 +37,7 @@ abrupt_loss_bridge_main() {
   NODE_PYTHON="$(yq -r '.tools.python3' "$prepared")"
   TALOS_LIFECYCLE_PREPARED_JSON="$prepared"
   TALOS_LIFECYCLE_VERIFICATION_PY="$bridge_dir/../verification.py"
-  export NODE_CLUSTER_ENDPOINTS TALOS_LIFECYCLE_KUBE_CONTEXT TALOS_LIFECYCLE_TALOS_CONTEXT
+  export NODE_CLUSTER_ENDPOINTS NODE_EXPECTED_NAMES TALOS_LIFECYCLE_KUBE_CONTEXT TALOS_LIFECYCLE_TALOS_CONTEXT
   export NODE_KUBECTL NODE_TALOSCTL NODE_PYTHON TALOS_LIFECYCLE_PREPARED_JSON TALOS_LIFECYCLE_VERIFICATION_PY
   export TEST_LEASE_KUBECTL NODE_LIFECYCLE_KUBECTL
 

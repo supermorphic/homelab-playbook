@@ -83,6 +83,8 @@ assert_status 2 "$repo_root/scripts/playbook.sh" pihole unknown
 [[ ! -s "$uv_log" ]] || fail 'unknown action invoked uv'
 assert_status 2 "$repo_root/scripts/playbook.sh" pihole update unknown
 [[ ! -s "$uv_log" ]] || fail 'unknown inventory invoked uv'
+assert_status 2 "$repo_root/scripts/playbook.sh" talos maintenance-check staging
+[[ ! -s "$uv_log" ]] || fail 'unsupported Talos inventory invoked uv'
 
 for tls_action in provision renew verify; do
   for unsupported_inventory in staging frozen/k3s; do
@@ -135,6 +137,17 @@ printf '%s\n' \
   -vv \
   --- >"$test_root/expected-uv.log"
 assert_file_equals "$test_root/expected-uv.log" "$uv_log"
+
+: >"$uv_log"
+request="$test_root/talos-request.json"
+printf '%s\n' '{}' >"$request"
+(cd "$test_root/outside" && \
+  PATH="$fake_bin:$PATH" FAKE_UV_LOG="$uv_log" \
+  "$repo_root/scripts/playbook.sh" talos maintenance-check production -e "@$request" --check)
+rg -q '^scripts/talos_gateway.py$' "$uv_log" || fail 'Talos command did not route through its fixed gateway'
+if rg -q '^ansible-playbook$' "$uv_log"; then
+  fail 'Talos shell gateway invoked ambient ansible-playbook directly'
+fi
 
 for proxy_action in provision verify; do
   : >"$uv_log"

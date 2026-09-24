@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import json
+import stat
 import re
 import shutil
 import subprocess
@@ -14,6 +17,7 @@ import yaml
 
 
 SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
+CACHE_FILES = {"manifest.json", "cilium.tgz", "cert-manager.tgz", "metallb.tgz", "envoy-gateway.tgz", "external-dns.tgz"}
 
 
 class SourceError(ValueError):
@@ -107,6 +111,70 @@ def _parse_probe_target(path: Path) -> tuple[str, str]:
     return hostnames[0], f"https://{hostnames[0]}/"
 
 
+def _copy_recovery_cache(source: Path, destination: Path, revision: str) -> Path:
+    if not source.is_dir() or source.is_symlink():
+        raise SourceError("prepared recovery chart cache is missing")
+    entries = list(source.iterdir())
+    files = {entry.name for entry in entries if entry.is_file() and not entry.is_symlink()}
+    preparation_dirs = {f"pull-{name.removesuffix('.tgz')}" for name in CACHE_FILES if name.endswith(".tgz")}
+    if (
+        files != CACHE_FILES
+        or any(entry.is_symlink() for entry in entries)
+        or any(entry.is_dir() and (entry.name not in preparation_dirs or any(entry.iterdir())) for entry in entries)
+        or any(not entry.is_file() and not entry.is_dir() for entry in entries)
+    ):
+        raise SourceError("prepared recovery chart cache layout is invalid")
+    source_stats: dict[str, os.stat_result] = {}
+    for name in CACHE_FILES:
+        metadata = (source / name).lstat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise SourceError("prepared recovery chart cache file is not private and regular")
+        source_stats[name] = metadata
+    destination.mkdir(parents=True, mode=0o700)
+    for name in sorted(CACHE_FILES):
+        source_path = source / name
+        try:
+            descriptor = os.open(source_path, os.O_RDONLY | os.O_NOFOLLOW)
+            source_stat = os.fstat(descriptor)
+            expected = source_stats[name]
+            if ((source_stat.st_dev, source_stat.st_ino, source_stat.st_size, source_stat.st_mtime_ns, source_stat.st_nlink) !=
+                    (expected.st_dev, expected.st_ino, expected.st_size, expected.st_mtime_ns, expected.st_nlink)):
+                raise SourceError("prepared recovery chart cache changed during private copy")
+            with os.fdopen(descriptor, "rb") as source_handle:
+                data = source_handle.read()
+                final_stat = os.fstat(source_handle.fileno())
+            if ((final_stat.st_size, final_stat.st_mtime_ns, final_stat.st_nlink) !=
+                    (source_stat.st_size, source_stat.st_mtime_ns, source_stat.st_nlink)):
+                raise SourceError("prepared recovery chart cache changed during private copy")
+            destination_path = destination / name
+            destination_path.write_bytes(data)
+            os.chmod(destination_path, 0o600)
+        except OSError as error:
+            raise SourceError("prepared recovery chart cache changed during private copy") from error
+    for name, expected in source_stats.items():
+        current = (source / name).lstat()
+        if ((current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns, current.st_nlink) !=
+                (expected.st_dev, expected.st_ino, expected.st_size, expected.st_mtime_ns, expected.st_nlink)):
+            raise SourceError("prepared recovery chart cache changed during private copy")
+    try:
+        manifest = json.loads((destination / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise SourceError("prepared recovery chart manifest is invalid") from error
+    if not isinstance(manifest, dict) or manifest.get("schemaVersion") != 1 or manifest.get("sourceRevision") != revision:
+        raise SourceError("prepared recovery chart cache has the wrong source revision")
+    charts = manifest.get("charts")
+    if not isinstance(charts, dict) or set(charts) != {name.removesuffix(".tgz") for name in CACHE_FILES if name.endswith(".tgz")}:
+        raise SourceError("prepared recovery chart manifest entries are invalid")
+    for logical, value in charts.items():
+        if not isinstance(value, dict) or set(value) != {"file", "chartName", "version", "sha256"}:
+            raise SourceError("prepared recovery chart manifest entry is invalid")
+        archive = destination / str(value["file"])
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        if archive.name != f"{logical}.tgz" or value["sha256"] != digest:
+            raise SourceError("prepared recovery chart digest is invalid")
+    return destination
+
+
 def prepare_source(source_dir: Path, revision: str, destination: Path, trusted_origin: str) -> dict:
     source_dir = source_dir.resolve()
     if not source_dir.is_dir() or source_dir.is_symlink():
@@ -157,6 +225,11 @@ def prepare_source(source_dir: Path, revision: str, destination: Path, trusted_o
             raise SourceError("private snapshot revision mismatch")
         api_server, nodes, endpoints = _parse_desired(destination / wanted)
         probe_dns_name, probe_https_url = _parse_probe_target(destination / probe)
+        recovery_cache = _copy_recovery_cache(
+            source_dir / ".cache/recovery-helm",
+            destination / ".cache/recovery-helm",
+            revision,
+        )
     except BaseException:
         shutil.rmtree(destination, ignore_errors=True)
         raise
@@ -169,4 +242,5 @@ def prepare_source(source_dir: Path, revision: str, destination: Path, trusted_o
         "talos_endpoints": endpoints,
         "probe_dns_name": probe_dns_name,
         "probe_https_url": probe_https_url,
+        "recovery_helm_cache": str(recovery_cache),
     }

@@ -116,8 +116,9 @@ def _require_talos_context(path: Path, context: str) -> None:
 
 
 def has_controlling_terminal() -> bool:
+    terminal = os.environ.get("TALOS_LIFECYCLE_TTY_PATH", "/dev/tty")
     try:
-        descriptor = os.open("/dev/tty", os.O_RDONLY | os.O_NOCTTY)
+        descriptor = os.open(terminal, os.O_RDONLY | os.O_NOCTTY)
     except OSError:
         return False
     os.close(descriptor)

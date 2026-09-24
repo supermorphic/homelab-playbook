@@ -34,8 +34,9 @@ def run_command(argv: list[str]) -> str:
 
 
 def tty_prompt(message: str, timeout_seconds: int = 900) -> str:
+    terminal = os.environ.get("TALOS_LIFECYCLE_TTY_PATH", "/dev/tty")
     try:
-        descriptor = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+        descriptor = os.open(terminal, os.O_RDWR | os.O_NOCTTY)
     except OSError as error:
         raise ScenarioFailure("a controlling terminal is required") from error
     try:

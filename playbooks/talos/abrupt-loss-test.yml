@@ -1,0 +1,10 @@
+---
+- name: Test attended abrupt Talos node loss
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  roles:
+    - role: talos_lifecycle
+      vars:
+        talos_lifecycle_action: abrupt-loss-test

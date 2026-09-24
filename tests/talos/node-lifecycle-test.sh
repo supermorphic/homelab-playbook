@@ -4,6 +4,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 export REPO_ROOT
+export NODE_EXPECTED_NAMES=$'node-a\nnode-b\nnode-c'
 source "$REPO_ROOT/roles/talos_lifecycle/files/lib/node-lifecycle-state.sh"
 source "$REPO_ROOT/roles/talos_lifecycle/files/node/common.sh"
 source "$REPO_ROOT/roles/talos_lifecycle/files/node/longhorn.sh"
@@ -85,6 +86,7 @@ CONFIG_PATH="$state_dir/cleanup.log" yq -n -o=json \
     "talos_talosconfig":strenv(CONFIG_PATH), "talos_kube_context":"fixture",
     "talos_talos_context":"fixture", "talos_confirmation":"accept:node-a:reboot",
     "talos_endpoints":["192.0.2.10","192.0.2.11","192.0.2.12"],
+    "nodes":{"node-a":"192.0.2.10","node-b":"192.0.2.11","node-c":"192.0.2.12"},
     "tools":{"kubectl":"kubectl","talosctl":"talosctl","python3":"python3"}
   }' >"$state_dir/prepared.json"
 cleanup_status=0
@@ -333,7 +335,7 @@ recovery_talosctl() {
 verify_etcd_recovery fake-talosconfig
 etcd_members_fixture="$(printf '%s\n' "$etcd_members_fixture" | awk '$3 != "node-c"')"
 assert_fails_with 'A missing etcd member did not block node maintenance.' \
-  'Expected etcd members node-a, node-b, and node-c' \
+  'etcd member names differ from validated desired source' \
   verify_etcd_recovery fake-talosconfig
 etcd_members_fixture="$healthy_etcd_members_fixture"
 etcd_status_fixture="$(printf '%s\n' "$etcd_status_fixture" | awk '$2 != "member-3"')"
@@ -927,7 +929,7 @@ assert_fails 'Rejected recovery was reported as a successful reboot.' \
 # The abrupt-loss adapter joins the root holder and cannot acquire, renew, or release it.
 source "$REPO_ROOT/roles/talos_lifecycle/files/node/abrupt-loss-bridge.sh"
 cat >"$state_dir/abrupt-prepared.json" <<EOF
-{"talos_kubeconfig":"/operator/kube","talos_talosconfig":"/operator/talos","talos_kube_context":"fixture","talos_talos_context":"fixture","node":"node-a","address":"192.0.2.10","holder":"root-holder","talos_endpoints":["192.0.2.10","192.0.2.11","192.0.2.12"],"tools":{"kubectl":"/tools/kubectl","talosctl":"/tools/talosctl","python3":"/tools/python"}}
+{"talos_kubeconfig":"/operator/kube","talos_talosconfig":"/operator/talos","talos_kube_context":"fixture","talos_talos_context":"fixture","node":"node-a","address":"192.0.2.10","holder":"root-holder","talos_endpoints":["192.0.2.10","192.0.2.11","192.0.2.12"],"nodes":{"node-a":"192.0.2.10","node-b":"192.0.2.11","node-c":"192.0.2.12"},"tools":{"kubectl":"/tools/kubectl","talosctl":"/tools/talosctl","python3":"/tools/python"}}
 EOF
 bridge_calls=''
 bridge_call() { bridge_calls+="${bridge_calls:+ }$1"; }

@@ -19,8 +19,8 @@ verify_expected_node_health() {
   local nodes_json names states pressures
   nodes_json="$(node_kubectl "$kubeconfig" get nodes --output json)" || return 1
   names="$(yq -r '.items[].metadata.name' - <<<"$nodes_json" | sort)"
-  [[ "$names" == $'node-a\nnode-b\nnode-c' ]] || {
-    echo 'Expected exactly Kubernetes Nodes node-a, node-b, and node-c.' >&2
+  [[ "$names" == "${NODE_EXPECTED_NAMES:?}" ]] || {
+    echo 'Kubernetes Node names differ from the validated desired source.' >&2
     return 1
   }
   states="$(yq -r '
@@ -29,7 +29,7 @@ verify_expected_node_health() {
     ([.status.conditions[]? | select(.type == "Ready") | .status][0] // "Unknown") + " " +
     ((.spec.unschedulable // false) | tostring)
   ' <<<"$nodes_json" | sort)"
-  [[ "$states" == $'node-a True false\nnode-b True false\nnode-c True false' ]] || {
+  [[ "$(awk '$2 == "True" && $3 == "false" {count++} END {print count + 0}' <<<"$states")" == 3 ]] || {
     printf 'All established Nodes must be Ready and schedulable:\n%s\n' "$states" >&2
     return 1
   }
@@ -271,6 +271,7 @@ node_lifecycle_main() (
   talosconfig="$(yq -r '.talos_talosconfig' "$prepared_json")"
   holder="$(yq -r '.holder' "$prepared_json")"
   NODE_CLUSTER_ENDPOINTS="$(yq -r '.talos_endpoints | join(",")' "$prepared_json")"
+  NODE_EXPECTED_NAMES="$(yq -r '.nodes | keys | .[]' "$prepared_json" | sort)"
   TALOS_LIFECYCLE_KUBE_CONTEXT="$(yq -r '.talos_kube_context' "$prepared_json")"
   TALOS_LIFECYCLE_TALOS_CONTEXT="$(yq -r '.talos_talos_context' "$prepared_json")"
   NODE_KUBECTL="$(yq -r '.tools.kubectl' "$prepared_json")"
@@ -280,7 +281,7 @@ node_lifecycle_main() (
   NODE_PYTHON="$(yq -r '.tools.python3' "$prepared_json")"
   TALOS_LIFECYCLE_PREPARED_JSON="$prepared_json"
   TALOS_LIFECYCLE_VERIFICATION_PY="$lifecycle_node_dir/../verification.py"
-  export NODE_NAME NODE_IP NODE_CLUSTER_ENDPOINTS TALOS_LIFECYCLE_KUBE_CONTEXT
+  export NODE_NAME NODE_IP NODE_CLUSTER_ENDPOINTS NODE_EXPECTED_NAMES TALOS_LIFECYCLE_KUBE_CONTEXT
   export TALOS_LIFECYCLE_TALOS_CONTEXT NODE_KUBECTL NODE_TALOSCTL NODE_PYTHON
   export TEST_LEASE_KUBECTL NODE_LIFECYCLE_KUBECTL
   export TALOS_LIFECYCLE_PREPARED_JSON TALOS_LIFECYCLE_VERIFICATION_PY

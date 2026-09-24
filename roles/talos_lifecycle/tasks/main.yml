@@ -1,0 +1,62 @@
+---
+- name: Reject simulated Talos mutation
+  ansible.builtin.assert:
+    that:
+      - talos_lifecycle_action == 'maintenance-check' or not ansible_check_mode
+    fail_msg: Use maintenance-check for observational validation; mutation cannot run in check mode.
+  check_mode: false
+
+- name: Run Talos lifecycle from a private request
+  block:
+    - name: Create private Talos lifecycle request directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: talos-lifecycle-
+      register: talos_lifecycle_private
+      check_mode: false
+      no_log: true
+
+    - name: Write normalized Talos lifecycle request
+      ansible.builtin.copy:
+        content: "{{ talos_lifecycle_request | to_json(sort_keys=true) }}\n"
+        dest: "{{ talos_lifecycle_private.path }}/request.json"
+        mode: '0600'
+      check_mode: false
+      diff: false
+      no_log: true
+
+    - name: Execute Talos lifecycle transaction
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ role_path }}/files/runtime.py"
+          - --action
+          - "{{ talos_lifecycle_action }}"
+          - --request
+          - "{{ talos_lifecycle_private.path }}/request.json"
+      register: talos_lifecycle_result
+      environment:
+        TALOS_LIFECYCLE_TTY_PATH: "{{ talos_lifecycle_tty_path }}"
+        TALOS_LIFECYCLE_TOOL_PATHS: "{{ talos_lifecycle_tool_paths | to_json(sort_keys=true) }}"
+        TALOS_LIFECYCLE_MISE_DATA_DIR: "{{ talos_lifecycle_mise_data_dir }}"
+        TALOS_LIFECYCLE_CANCEL_PATH: "{{ talos_lifecycle_cancel_path }}"
+        TALOS_LIFECYCLE_TRUSTED_ORIGIN: "{{ talos_lifecycle_trusted_origin }}"
+      check_mode: false
+      changed_when: talos_lifecycle_action != 'maintenance-check'
+      no_log: true
+
+    - name: Report bounded Talos lifecycle outcome
+      ansible.builtin.debug:
+        msg:
+          action: "{{ talos_lifecycle_action }}"
+          node: "{{ talos_lifecycle_request.talos_node }}"
+          outcome: passed
+      changed_when: false
+  always:
+    - name: Remove private Talos lifecycle request directory
+      ansible.builtin.file:
+        path: "{{ talos_lifecycle_private.path | default('') }}"
+        state: absent
+      when: talos_lifecycle_private.path | default('') | length > 0
+      check_mode: false
+      no_log: true
