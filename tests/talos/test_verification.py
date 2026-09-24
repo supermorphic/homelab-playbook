@@ -190,6 +190,64 @@ class ResponseTests(unittest.TestCase):
                 invoke_verifier(source, request("prepare"), deadline_seconds=10)
             self.assert_process_stopped(int(pid_path.read_text(encoding="utf-8")))
 
+    def test_signal_during_spawn_is_deferred_until_verifier_can_be_reaped(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cache = root / "cache"
+            cache.mkdir()
+            child_pid = root / "verifier.pid"
+            mise = root / "mise"
+            mise.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
+            mise.chmod(0o700)
+            runner = (
+                "import importlib.util,json,os,pathlib,signal,sys; "
+                "spec=importlib.util.spec_from_file_location('verification_under_test',sys.argv[1]); "
+                "module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+                "real=module.subprocess.Popen; "
+                "pid_path=pathlib.Path(sys.argv[2]); "
+                "spawn=lambda *args,**kwargs: signal_after_spawn(real,pid_path,*args,**kwargs); "
+                "module.subprocess.Popen=spawn; "
+                "source=json.loads(sys.argv[3]); request=json.loads(sys.argv[4]); "
+                "exec(\"try:\\n module.invoke_verifier(source,request,deadline_seconds=10)\\n"
+                "except module.VerificationError as error:\\n"
+                " raise SystemExit(0 if 'cancelled' in str(error) else 2)\\n"
+                "raise SystemExit(3)\")"
+            )
+            helper = (
+                "def signal_after_spawn(real,pid_path,*args,**kwargs):\n"
+                " process=real(*args,**kwargs)\n"
+                " pid_path.write_text(str(process.pid))\n"
+                " os.kill(os.getpid(),signal.SIGTERM)\n"
+                " return process\n"
+            )
+            source = {
+                "verification_dir": str(root),
+                "mise": str(mise),
+                "bash": "/bin/bash",
+                "recovery_helm_cache": str(cache),
+            }
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    helper + runner,
+                    str(FILES / "verification.py"),
+                    str(child_pid),
+                    json.dumps(source),
+                    json.dumps(request("prepare")),
+                ],
+                check=False,
+                timeout=10,
+            )
+            pid = int(child_pid.read_text(encoding="utf-8"))
+            if process.returncode != 0:
+                try:
+                    os.killpg(pid, __import__("signal").SIGKILL)
+                except ProcessLookupError:
+                    pass
+            self.assertEqual(process.returncode, 0)
+            self.assert_process_stopped(pid)
+
 
 if __name__ == "__main__":
     unittest.main()

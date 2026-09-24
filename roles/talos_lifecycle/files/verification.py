@@ -179,28 +179,37 @@ def invoke_verifier(source: dict, request: dict, *, deadline_seconds: int) -> di
         if not recovery_cache.is_absolute() or not recovery_cache.is_dir() or recovery_cache.is_symlink():
             raise VerificationError("prepared recovery chart cache is unavailable")
         environment["RECOVERY_HELM_CACHE"] = str(recovery_cache)
-        try:
-            process = subprocess.Popen(
-                [str(mise), "exec", "--", "just", "kube", "recovery-verify", str(request_path)],
-                cwd=verification_dir,
-                env=environment,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                start_new_session=True,
-            )
-        except OSError as error:
-            raise VerificationError("observational verifier was unavailable") from error
         previous_handlers: dict[int, Any] = {}
+        process: subprocess.Popen[str] | None = None
+        pending_signal: int | None = None
 
         def interrupted(signum: int, _frame: object) -> None:
-            raise _InvocationInterrupted(signum)
+            nonlocal pending_signal
+            pending_signal = signum
+            if process is not None:
+                raise _InvocationInterrupted(signum)
 
         try:
             previous_handlers = {
                 signum: signal.signal(signum, interrupted)
                 for signum in (signal.SIGINT, signal.SIGTERM)
             }
+            try:
+                process = subprocess.Popen(
+                    [str(mise), "exec", "--", "just", "kube", "recovery-verify", str(request_path)],
+                    cwd=verification_dir,
+                    env=environment,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    start_new_session=True,
+                )
+            except OSError as error:
+                if pending_signal is not None:
+                    raise _InvocationInterrupted(pending_signal) from error
+                raise VerificationError("observational verifier was unavailable") from error
+            if pending_signal is not None:
+                raise _InvocationInterrupted(pending_signal)
             deadline = time.monotonic() + deadline_seconds
             cancel_path = Path(os.environ.get("TALOS_LIFECYCLE_CANCEL_PATH", ""))
             while True:
@@ -217,13 +226,19 @@ def invoke_verifier(source: dict, request: dict, *, deadline_seconds: int) -> di
         except _InvocationInterrupted as error:
             raise VerificationError("observational verifier was cancelled") from error
         finally:
-            for signum in previous_handlers:
-                signal.signal(signum, signal.SIG_IGN)
-            try:
-                _stop_process_group(process)
-            finally:
+            if process is not None:
+                for signum in previous_handlers:
+                    signal.signal(signum, signal.SIG_IGN)
+                try:
+                    _stop_process_group(process)
+                finally:
+                    for signum, handler in previous_handlers.items():
+                        signal.signal(signum, handler)
+            else:
                 for signum, handler in previous_handlers.items():
                     signal.signal(signum, handler)
+        if process is None:
+            raise VerificationError("observational verifier was unavailable")
         result = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
     try:
         response = json.loads(result.stdout, object_pairs_hook=_unique_pairs)
