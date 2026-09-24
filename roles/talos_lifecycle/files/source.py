@@ -116,12 +116,11 @@ def _copy_recovery_cache(source: Path, destination: Path, revision: str) -> Path
         raise SourceError("prepared recovery chart cache is missing")
     entries = list(source.iterdir())
     files = {entry.name for entry in entries if entry.is_file() and not entry.is_symlink()}
-    preparation_dirs = {f"pull-{name.removesuffix('.tgz')}" for name in CACHE_FILES if name.endswith(".tgz")}
     if (
         files != CACHE_FILES
+        or len(entries) != len(CACHE_FILES)
         or any(entry.is_symlink() for entry in entries)
-        or any(entry.is_dir() and (entry.name not in preparation_dirs or any(entry.iterdir())) for entry in entries)
-        or any(not entry.is_file() and not entry.is_dir() for entry in entries)
+        or any(not entry.is_file() for entry in entries)
     ):
         raise SourceError("prepared recovery chart cache layout is invalid")
     source_stats: dict[str, os.stat_result] = {}

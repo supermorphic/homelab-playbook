@@ -114,6 +114,12 @@ class SourceTests(unittest.TestCase):
         with self.assertRaises(SourceError):
             self.prepare(destination=Path(self.temporary.name) / "symlink-cache")
 
+    def test_extra_recovery_cache_entry_is_rejected(self) -> None:
+        cache = self.source / ".cache/recovery-helm"
+        (cache / "pull-cilium").mkdir()
+        with self.assertRaises(SourceError):
+            self.prepare(destination=Path(self.temporary.name) / "extra-cache-entry")
+
     def test_hardlinked_or_changing_recovery_cache_is_rejected(self) -> None:
         cache = self.source / ".cache/recovery-helm"
         archive = cache / "cilium.tgz"
