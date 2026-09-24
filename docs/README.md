@@ -17,11 +17,15 @@ specifications record design decisions and integration contracts.
   certificate issuance and renewal with Cloudflare DNS and direct local access.
 - [Private HTTPS routes through Caddy](guides/reverse-proxy.md) — Configure device
   and monitoring routes, verify private HTTPS access, and recover proxy service.
+- [Talos node maintenance](guides/talos-maintenance.md) — Run guarded node
+  maintenance, reboot, recovery, and the attended abrupt-loss test.
 
 ## Reference
 
 - [Off-cluster TLS automation](../playbooks/tls/README.md) — Install the host
   issuer, configure its disabled timer, and prepare the fixed Caddy integration.
+- [Talos lifecycle playbooks](../playbooks/talos/README.md) — Use the canonical
+  gateway for the supported controller-side Talos actions.
 - [Repository command lifecycle](reference/repository-command-lifecycle.md) —
   Classify command behavior, safeguards, execution authority, and evidence.
 

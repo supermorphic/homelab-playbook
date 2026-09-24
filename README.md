@@ -141,6 +141,24 @@ enrolled. Backups run daily at 03:00 host-local; successful dumps trigger NAS
 transfer, with retries every four hours at :15. See the
 [recovery guide](docs/guides/semaphore-recovery.md) for an isolated restore drill.
 
+### Talos node maintenance commands
+
+Talos lifecycle actions run on the controller and select the node from an
+absolute private request file. Production is the only supported inventory.
+
+| Command | Purpose |
+| --- | --- |
+| `mise run playbook -- talos maintenance-check production -e @/absolute/private/request.json --check` | Observe admission without acquiring the write Lease or changing the cluster. |
+| `mise run playbook -- talos maintenance-enter production -e @/absolute/private/request.json` | Evacuate, contain, and shut down one node for physical maintenance. |
+| `mise run playbook -- talos maintenance-exit production -e @/absolute/private/request.json` | Accept a powered-on node and remove its exact supported containment record after recovery checks. |
+| `mise run playbook -- talos reboot production -e @/absolute/private/request.json` | Perform one guarded reboot and recovery transaction. |
+| `mise run playbook -- talos abrupt-loss-test production -e @/absolute/private/request.json` | Run the attended controlled abrupt-loss experiment in a real terminal. |
+
+Mutating actions and the controlled test require explicit authorization for the
+target and action. Prepare the exact desired-source chart cache before use. See
+the [Talos maintenance guide](docs/guides/talos-maintenance.md) for the request
+schema, confirmations, terminal behavior, physical steps, and recovery limits.
+
 ### Retained playbook commands
 
 The repository also retains these command families. They have no active

@@ -253,6 +253,24 @@ mode also needs explicit operator authorization for the selected NAS target and
 temporary recovery resources. A confirmation argument guards execution intent;
 it does not supply authorization. No experiment performs production cutover.
 
+### Talos node lifecycle
+
+`talos maintenance-check` follows the live-observation profile. It reads the
+selected Kubernetes and Talos contexts and simulates drain, without acquiring
+the write Lease or changing the target.
+
+`maintenance-enter`, `maintenance-exit`, and `reboot` are purpose-specific live
+mutations. They repeat safety admission under the shared Lease, bind all actions
+to one node resolved from an approved desired-source revision, and require an
+exact target confirmation. A confirmation records execution intent and does not
+supply authorization.
+
+`abrupt-loss-test` is an attended controlled experiment. It requires a real
+terminal, contains one selected node, records bounded evidence, and preserves
+containment when recovery cannot be proved. Its physical power steps remain
+operator actions. Offline synthetic gateway tests provide CI evidence; they do
+not authorize or substitute for a live experiment.
+
 ## Command and failure contracts
 
 - Validate public arguments and registered targets before starting an operation.

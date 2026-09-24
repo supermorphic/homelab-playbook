@@ -1,7 +1,7 @@
 # Specification 011: Talos node maintenance
 
-Status: design approved for implementation planning. Implementation and live
-acceptance are pending.
+Status: implemented with offline acceptance. Live acceptance is pending explicit
+operator authorization.
 
 Issue: [#55](https://github.com/supermorphic/homelab-playbook/issues/55).
 
@@ -305,9 +305,12 @@ identity locally. Keep evidence in a private unique subdirectory of the supplied
 root, defaulting to this checkout's `.tmp/talos-evidence/`; preserve it after
 transaction cleanup. Neither confirmation grants live-operation authority. Before
 acquiring the Lease or accessing mutation APIs, require a usable controlling
-terminal. Prompts use that terminal explicitly because Ansible captures child
-stdin/stdout. Keep the scenario in the foreground process tree and prove this
-path through the actual gateway with a synthetic pseudo-terminal. Reject
+terminal. The gateway derives the terminal device from its own standard input
+and passes that fixed internal path through local Ansible to the runtime. Public
+inputs and inherited environment cannot select the path. Run-owned children use
+dedicated process groups so interruption can cancel and reap the complete local
+process tree while prompts continue to use the gateway-bound terminal. Prove
+this path through the actual gateway with a synthetic pseudo-terminal. Reject
 noninteractive execution before disruption; do not add an alternate launcher.
 
 One transaction acquires and renews the common Lease for the full scenario.
