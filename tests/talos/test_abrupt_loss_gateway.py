@@ -73,6 +73,7 @@ class AbruptLossGatewayTests(unittest.TestCase):
         self._write_executable("mise", """#!/usr/bin/env python3
 import json,sys
 p=json.load(open(sys.argv[-1])); c=p['credentials']; mode=p['mode']
+if mode=='recovery' and __import__('pathlib').Path('__FAKE_STATE__/verifier-fail').exists(): raise SystemExit(77)
 print(json.dumps({'schemaVersion':1,'requestId':p['requestId'],'mode':mode,'node':p['node'],'sourceRevision':p['sourceRevision'],'kubeContext':c['kubeContext'],'talosContext':c['talosContext'],'checks':{'source':'passed','cilium':'not-run' if mode=='prepare' else 'passed','foundation':'not-run' if mode=='prepare' else 'passed'}}))
 """)
         self._write_executable("talosctl", r"""#!/usr/bin/env python3
@@ -81,6 +82,11 @@ from pathlib import Path
 a=sys.argv[1:]; off=(Path('__FAKE_STATE__')/'power-off').exists()
 nodes=a[a.index('--nodes')+1] if '--nodes' in a else ''
 target=nodes=='192.0.2.10'
+if 'shutdown' in a and target: (Path('__FAKE_STATE__')/'power-off').write_text('1'); raise SystemExit
+if 'reboot' in a and target: (Path('__FAKE_STATE__')/'rebooting').write_text('1'); raise SystemExit
+if 'version' in a and target and (Path('__FAKE_STATE__')/'rebooting').exists():
+ (Path('__FAKE_STATE__')/'rebooting').unlink(); raise SystemExit(1)
+off=off or (Path('__FAKE_STATE__')/'rebooting').exists()
 if off and target and (('version' in a) or ('status' in a)):
  print('connection refused',file=sys.stderr); raise SystemExit(1)
 if 'hostname' in a: print('spec:\n  hostname: node-a')
@@ -93,20 +99,27 @@ elif 'status' in a:
 elif 'alarm' in a: print('H')
 """)
         self._write_executable("kubectl", r"""#!/usr/bin/env python3
-import json,os,sys
+import json,os,subprocess,sys
 from pathlib import Path
-s=Path('__FAKE_STATE__'); a=sys.argv[1:]; off=(s/'power-off').exists(); contained=(s/'contained').exists()
+s=Path('__FAKE_STATE__'); a=sys.argv[1:]; off=(s/'power-off').exists() or (s/'rebooting').exists(); contained=(s/'contained').exists()
 with (s/'calls.log').open('a') as h: h.write(' '.join(a)+'\n')
 def node(name):
  ready=not(off and name=='node-a'); ann={}
- if contained and name=='node-a': ann['homelab.supermorphic.com/node-lifecycle']='{"schemaVersion":1,"kind":"abrupt-loss"}'
+ if contained and name=='node-a': ann['homelab.supermorphic.com/node-lifecycle']=(s/'contained').read_text()
  return {'apiVersion':'v1','kind':'Node','metadata':{'name':name,'uid':'uid-'+name,'resourceVersion':'10','annotations':ann},'spec':{'unschedulable':contained and name=='node-a'},'status':{'allocatable':{'cpu':'4','memory':'8Gi','pods':'100'},'conditions':[{'type':'Ready','status':'True' if ready else 'False'},{'type':'MemoryPressure','status':'False'},{'type':'DiskPressure','status':'False'},{'type':'PIDPressure','status':'False'}]}}
+if 'delete' in a and 'lease' in a:
+ (s/'lease.json').unlink(missing_ok=True); raise SystemExit
 if 'replace' in a or 'create' in a:
- data=json.load(sys.stdin)
- if data.get('kind')=='Lease': (s/'lease.json').write_text(json.dumps(data))
+ raw=sys.stdin.read()
+ try: data=json.loads(raw)
+ except json.JSONDecodeError: data=json.loads(subprocess.check_output(['yq','-o=json','.','-'],input=raw,text=True))
+ if data.get('kind')=='Lease':
+  p=s/'lease.json'; t=s/'lease.tmp'; t.write_text(json.dumps(data)); t.replace(p)
+ elif 'allowScheduling' in data.get('spec',{}): (s/'longhorn-node.json').write_text(json.dumps(data))
  elif data.get('kind')=='Node':
   rec=data.get('metadata',{}).get('annotations',{}).get('homelab.supermorphic.com/node-lifecycle')
-  (s/'contained').write_text('1') if rec else (s/'contained').unlink(missing_ok=True)
+  (s/'contained').write_text(rec) if rec else (s/'contained').unlink(missing_ok=True)
+  with (s/'calls.log').open('a') as h: h.write('node-mutation '+data.get('metadata',{}).get('name','')+' '+('set' if rec else 'clear')+'\n')
  print(json.dumps(data)); raise SystemExit
 if 'get' in a and 'lease' in a:
  p=s/'lease.json'
@@ -116,7 +129,8 @@ if 'get' in a and any(value.startswith('--raw') for value in a):
  print('ok' if any(value == '--raw=/readyz' for value in a) else json.dumps({'resources':[{'name':'pods/eviction','kind':'Eviction'}]})); raise SystemExit
 if 'get' in a and 'nodes.longhorn.io' in a:
  following=a[a.index('nodes.longhorn.io')+1:]
- if following and not following[0].startswith('-'): print(json.dumps({'spec':{'allowScheduling':True,'evictionRequested':False}}))
+ if following and not following[0].startswith('-'):
+  p=s/'longhorn-node.json'; print(p.read_text() if p.exists() else json.dumps({'apiVersion':'longhorn.io/v1beta2','kind':'Node','metadata':{'name':'node-a','resourceVersion':'10'},'spec':{'allowScheduling':True,'evictionRequested':False}}))
  else: print(json.dumps({'items':[{'status':{'conditions':[{'type':'Ready','status':'True'}]}} for _ in range(3)]}))
  raise SystemExit
 if 'get' in a and 'settings.longhorn.io' in a: print('block-if-contains-last-replica'); raise SystemExit
@@ -129,9 +143,13 @@ if 'get' in a and 'node' in a:
  raise SystemExit
 if 'get' in a and 'nodes' in a: print(json.dumps({'items':[node(x) for x in ('node-a','node-b','node-c')]})); raise SystemExit
 if 'get' in a and 'pods' in a and 'k8s-app=cilium' in a:
- print(json.dumps({'items':[{'spec':{'nodeName':n},'status':{'conditions':[{'type':'Ready','status':'True'}]}} for n in ('node-b','node-c')]})); raise SystemExit
+ names=('node-b','node-c') if off else ('node-a','node-b','node-c')
+ print(json.dumps({'items':[{'spec':{'nodeName':n},'status':{'conditions':[{'type':'Ready','status':'True'}]}} for n in names]})); raise SystemExit
 if 'get' in a and 'volumes.longhorn.io' in a: print(json.dumps({'items':[{'metadata':{'name':'volume-a'},'spec':{'numberOfReplicas':2},'status':{'state':'attached','robustness':'healthy'}}]})); raise SystemExit
-if 'get' in a and 'replicas.longhorn.io' in a: print(json.dumps({'items':[{'spec':{'volumeName':'volume-a','nodeID':'node-a','failedAt':''}},{'spec':{'volumeName':'volume-a','nodeID':'node-b','failedAt':''}}]})); raise SystemExit
+if 'get' in a and 'replicas.longhorn.io' in a:
+ evacuated=(s/'longhorn-node.json').exists()
+ first='node-c' if evacuated else 'node-a'
+ print(json.dumps({'items':[{'metadata':{'name':'replica-a'},'spec':{'volumeName':'volume-a','nodeID':first,'failedAt':''}},{'metadata':{'name':'replica-b'},'spec':{'volumeName':'volume-a','nodeID':'node-b','failedAt':''}}]})); raise SystemExit
 if 'get' in a and ('pods' in a or 'persistentvolumeclaims' in a or 'persistentvolumes' in a): print(json.dumps({'items':[]})); raise SystemExit
 raise SystemExit(0)
 """)
@@ -152,6 +170,31 @@ raise SystemExit(0)
         environment = dict(os.environ)
         environment.update({"PATH": f"{self.bin}:{environment['PATH']}", "FAKE_STATE": str(self.state)})
         return environment
+
+    def _action_request(self, action: str) -> Path:
+        value = json.loads(self.request.read_text())
+        value.pop("talos_test_confirmation", None)
+        value.pop("talos_evidence_dir", None)
+        confirmations = {
+            "maintenance-enter": "enter:node-a:192.0.2.10",
+            "maintenance-exit": "accept:node-a:maintenance",
+            "reboot": "reboot:node-a:192.0.2.10",
+        }
+        if action == "maintenance-check":
+            value.pop("talos_confirmation", None)
+        else:
+            value["talos_confirmation"] = confirmations[action]
+        path = self.root / f"{action}.json"
+        path.write_text(json.dumps(value), encoding="utf-8")
+        return path
+
+    def _run_action(self, repository: Path, action: str) -> subprocess.CompletedProcess[str]:
+        request = self._action_request(action)
+        command = [str(shutil.which("mise")), "run", "playbook", "--", "talos", action, "production", "-e", f"@{request}"]
+        environment = self._environment()
+        environment["FAKE_BIN"] = str(self.bin)
+        return subprocess.run(command, cwd=repository, env=environment, stdin=subprocess.DEVNULL,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
 
     def _repository_fixture(self) -> Path:
         fixture = self.root / "repository"
@@ -247,12 +290,7 @@ raise SystemExit(0)
 
     def test_real_gateway_check_has_no_api_mutation(self) -> None:
         repository = self._repository_fixture()
-        value = json.loads(self.request.read_text())
-        value.pop("talos_confirmation")
-        value.pop("talos_test_confirmation")
-        value.pop("talos_evidence_dir")
-        request = self.root / "check-request.json"
-        request.write_text(json.dumps(value), encoding="utf-8")
+        request = self._action_request("maintenance-check")
         command = [str(shutil.which("mise")), "run", "playbook", "--", "talos", "maintenance-check", "production",
                    "-e", f"@{request}", "--check"]
         environment = self._environment()
@@ -265,6 +303,39 @@ raise SystemExit(0)
                      if any(f" {verb} " in f" {line} " for verb in
                             ("create", "replace", "patch", "delete", "cordon", "uncordon"))]
         self.assertEqual(mutations, [], calls)
+
+    def test_real_gateway_mutations_bind_only_the_selected_target(self) -> None:
+        repository = self._repository_fixture()
+        entered = self._run_action(repository, "maintenance-enter")
+        diagnostics = entered.stdout
+        for name in ("calls.log", "bridge.log"):
+            path = self.state / name
+            if path.exists():
+                diagnostics += f"\n{name}:\n{path.read_text()}"
+        self.assertEqual(entered.returncode, 0, diagnostics)
+        self.assertTrue((self.state / "contained").exists())
+        self.assertTrue((self.state / "power-off").exists())
+        (self.state / "power-off").unlink()
+        exited = self._run_action(repository, "maintenance-exit")
+        self.assertEqual(exited.returncode, 0, exited.stdout)
+        self.assertFalse((self.state / "contained").exists())
+        rebooted = self._run_action(repository, "reboot")
+        self.assertEqual(rebooted.returncode, 0, rebooted.stdout)
+        self.assertFalse((self.state / "contained").exists())
+        calls = (self.state / "calls.log").read_text(encoding="utf-8")
+        mutations = [line for line in calls.splitlines() if line.startswith("node-mutation ")]
+        self.assertGreaterEqual(len(mutations), 4, calls)
+        self.assertEqual({line.split()[1] for line in mutations}, {"node-a"}, calls)
+
+    def test_real_gateway_failed_recovery_verifier_keeps_containment(self) -> None:
+        repository = self._repository_fixture()
+        (self.state / "verifier-fail").write_text("1")
+        result = self._run_action(repository, "reboot")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertTrue((self.state / "contained").exists(), result.stdout)
+        calls = (self.state / "calls.log").read_text(encoding="utf-8")
+        mutations = [line for line in calls.splitlines() if line.startswith("node-mutation ")]
+        self.assertEqual(mutations, ["node-mutation node-a set"], calls)
 
     def test_real_gateway_ansible_runtime_and_scenario_keep_tty_and_lease_alive(self) -> None:
         repository = self._repository_fixture()

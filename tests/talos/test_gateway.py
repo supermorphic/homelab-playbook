@@ -48,7 +48,8 @@ class GatewayTests(unittest.TestCase):
                     return 0
             injected = {"PYTHONPATH": "/attacker", "PYTHONINSPECT": "1", "GIT_CONFIG_GLOBAL": "/attacker/git",
                         "MISE_CONFIG_FILE": "/attacker/mise", "ANSIBLE_INVENTORY": "/attacker/inventory",
-                        "KUBECONFIG": "/attacker/kube", "TALOSCONFIG": "/attacker/talos", "SOPS_AGE_KEY": "secret"}
+                        "KUBECONFIG": "/attacker/kube", "TALOSCONFIG": "/attacker/talos", "SOPS_AGE_KEY": "secret",
+                        "TALOS_LIFECYCLE_TTY_PATH": "/dev/attacker"}
             with mock.patch.object(talos_gateway.subprocess, "Popen", Process), mock.patch.dict(os.environ, injected):
                 self.assertEqual(talos_gateway.run("maintenance-check", "production", ["-e", f"@{request}", "--check"]), 0)
             argv = captured["argv"]
@@ -89,7 +90,8 @@ class GatewayTests(unittest.TestCase):
                 with self.subTest(action=action, inventory=inventory), self.assertRaises(talos_gateway.GatewayError):
                     talos_gateway.run(action, inventory, arguments)
             value = json.loads(request.read_text())
-            for key in ("ansible_connection", "talos_lifecycle_action", "trusted_origin", "tool_path"):
+            for key in ("ansible_connection", "talos_lifecycle_action", "talos_lifecycle_tty_path",
+                        "trusted_origin", "tool_path"):
                 value[key] = "attacker-value"
                 request.write_text(json.dumps(value), encoding="utf-8")
                 with self.subTest(key=key), self.assertRaises(talos_gateway.GatewayError):
