@@ -18,7 +18,7 @@ abrupt_survivors_safe() {
 }
 
 abrupt_loss_bridge_main() {
-  [[ "$#" -eq 2 ]] || { echo 'Usage: abrupt-loss-bridge.sh contain|recover PREPARED_JSON' >&2; return 2; }
+  [[ "$#" -eq 2 ]] || { echo 'Usage: abrupt-loss-bridge.sh admit|contain|recover PREPARED_JSON' >&2; return 2; }
   local action="$1" prepared="$2" kubeconfig talosconfig node node_ip holder record
   [[ "$prepared" == /* && -f "$prepared" && ! -L "$prepared" ]] || return 2
   kubeconfig="$(yq -r '.talos_kubeconfig' "$prepared")"
@@ -44,6 +44,10 @@ abrupt_loss_bridge_main() {
   require_current_lease "$kubeconfig" "$holder"
   record='{"schemaVersion":1,"kind":"abrupt-loss"}'
   case "$action" in
+    admit)
+      assert_cluster_disruption_admissible "$kubeconfig"
+      [[ "$(node_kubectl "$kubeconfig" get node "$node" --output jsonpath='{.status.conditions[?(@.type=="Ready")].status}')" == True ]]
+      ;;
     contain)
       abrupt_survivors_safe "$kubeconfig" "$node"
       require_current_lease "$kubeconfig" "$holder"

@@ -21,7 +21,8 @@ class AbruptLossTests(unittest.TestCase):
                 "talos_talosconfig": "/operator/talos", "talos_talos_context": "talos",
                 "talos_confirmation": f"remove-power:{node}:{nodes[node]}",
                 "talos_test_confirmation": "chaos:node-abrupt-loss",
-                "tools": {"kubectl": "/tools/kubectl", "talosctl": "/tools/talosctl", "dig": "/tools/dig", "curl": "/tools/curl"},
+                "tools": {"python3": "/tools/python", "kubectl": "/tools/kubectl", "talosctl": "/tools/talosctl", "dig": "/tools/dig", "curl": "/tools/curl"},
+                "prepared_path": "/private/prepared.json",
                 "probe_dns_name": "echo.example.test", "probe_https_url": "https://echo.example.test/"}
 
     class Clock:
@@ -87,7 +88,7 @@ class AbruptLossTests(unittest.TestCase):
             controller.run()
             state = json.loads((Path(temporary) / "diagnostics" / abrupt.STATE_NAME).read_text())
             self.assertEqual(state["phase"], "recovered")
-            self.assertEqual(events, ["probes-start", "disconnect", "bridge:contain", "restore", "bridge:recover", "probes-stop"])
+            self.assertEqual(events, ["probes-start", "bridge:admit", "disconnect", "bridge:contain", "restore", "bridge:recover", "probes-stop"])
             self.assertEqual(state["workloadRecoverySeconds"]["apps/ReplicaSet/echo"], 0.0)
             self.assertEqual(len(state["passiveObservation"]), 120)
 
@@ -151,8 +152,9 @@ class AbruptLossTests(unittest.TestCase):
             self.assertEqual(baseline["affectedClaims"][0]["volumeUid"], "pv-uid")
             self.assertEqual(baseline["affectedVolumes"], ["lh-volume"])
             self.assertTrue(all("--context" in command for command in calls))
-            self.assertEqual(len(capacity_calls), 1)
-            self.assertNotIn("just", capacity_calls[0])
+            self.assertEqual(len(capacity_calls), 2)
+            self.assertIn("--mode", capacity_calls[0])
+            self.assertNotIn("just", capacity_calls[1])
 
     def test_missing_loss_signal_never_contains_and_reports_uncontained_loss(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -170,7 +172,7 @@ class AbruptLossTests(unittest.TestCase):
             self.assertEqual(recovery["status"], "failed")
             self.assertIn("uncontained", recovery["reason"])
 
-    def test_eof_before_disruption_does_not_contain_or_request_recovery(self) -> None:
+    def test_eof_after_removal_prompt_reports_possible_uncontained_loss(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             events: list[str] = []
             controller = abrupt.Controller(self.prepared(), Path(temporary), baseline=lambda: {},
@@ -180,8 +182,8 @@ class AbruptLossTests(unittest.TestCase):
                 controller.run()
             self.assertNotIn("contain", events)
             recovery = json.loads((Path(temporary) / "recovery.json").read_text())
-            self.assertEqual(recovery["status"], "passed")
-            self.assertIn("before disruption", recovery["reason"])
+            self.assertEqual(recovery["status"], "failed")
+            self.assertIn("possible uncontained", recovery["reason"])
 
     def test_primary_failure_and_recovery_failure_remain_separate(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -202,6 +204,25 @@ class AbruptLossTests(unittest.TestCase):
             self.assertEqual(events.count("recover"), 1)
             recovery = json.loads((Path(temporary) / "recovery.json").read_text())
             self.assertEqual(recovery["status"], "failed")
+
+    def test_auth_context_and_malformed_errors_do_not_prove_physical_loss(self) -> None:
+        for error in ("401 unauthorized", "forbidden", "invalid context selected", "malformed response"):
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as temporary:
+                def status(command: list[str]) -> tuple[int, str]:
+                    if command[0] == "/tools/talosctl":
+                        nodes = command[command.index("--nodes") + 1]
+                        if "," in nodes:
+                            return 0, "HEADER\nrow-one\nrow-two\n"
+                        return 1, error
+                    if "get" in command and command[command.index("get") + 1] == "node":
+                        return 0, json.dumps({"status": {"conditions": [{"type": "Ready", "status": "False"}]}})
+                    return 0, json.dumps({"items": []})
+                controller = abrupt.Controller(self.prepared(), Path(temporary), status_runner=status, monitor=self.Monitor([]))
+                observation = controller._observe()
+                self.assertFalse(observation["talosLost"])
+                self.assertFalse(observation["etcdTargetLost"])
+                self.assertTrue(observation["nodeNotReady"])
+                self.assertTrue(observation["quorumRetained"])
 
 
 if __name__ == "__main__":

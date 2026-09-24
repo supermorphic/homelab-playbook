@@ -34,7 +34,7 @@ def run_status(argv: list[str]) -> tuple[int, str]:
         result = subprocess.run(argv, text=True, capture_output=True, check=False, timeout=10)
     except subprocess.TimeoutExpired:
         return 124, ""
-    return result.returncode, result.stdout
+    return result.returncode, result.stdout + "\n" + result.stderr
 
 
 def bounded_seconds(name: str, default: int, maximum: int) -> int:
@@ -350,6 +350,16 @@ class Controller:
         return current == getattr(self, "affected_claims", [])
 
     def _baseline(self) -> dict[str, object]:
+        self.runner(
+            [
+                self.prepared["tools"]["python3"],
+                str(Path(__file__).resolve().parents[1] / "verification.py"),
+                "--prepared",
+                self.prepared["prepared_path"],
+                "--mode",
+                "baseline",
+            ]
+        )
         nodes = self._required_json_status(
             ["kubectl", "--kubeconfig", self.kubeconfig, "get", "nodes", "-o", "json"],
             "Kubernetes Nodes",
@@ -459,7 +469,7 @@ class Controller:
         }
 
     def _observe(self) -> dict[str, object]:
-        talos_code, _ = self._status(
+        talos_code, talos_output = self._status(
             [
                 "talosctl",
                 "version",
@@ -491,7 +501,7 @@ class Controller:
             ),
             "Unknown",
         )
-        target_etcd_code, _ = self._status(
+        target_etcd_code, target_etcd_output = self._status(
             [
                 "talosctl",
                 "etcd",
@@ -632,9 +642,9 @@ class Controller:
             )
         )
         return {
-            "talosLost": talos_code != 0,
+            "talosLost": self._target_unavailable(talos_code, talos_output),
             "nodeNotReady": ready != "True",
-            "etcdTargetLost": target_etcd_code != 0,
+            "etcdTargetLost": self._target_unavailable(target_etcd_code, target_etcd_output),
             "quorumRetained": quorum_code == 0 and quorum_rows == 2,
             "readySurvivors": ready_survivors,
             "readyCiliumSurvivors": ready_cilium_survivors,
@@ -666,6 +676,18 @@ class Controller:
         )
 
     @staticmethod
+    def _target_unavailable(code: int, output: str) -> bool:
+        if code == 0:
+            return False
+        lowered = output.lower()
+        if any(marker in lowered for marker in ("unauthorized", "forbidden", "permission denied", "invalid context", "certificate", "authentication")):
+            return False
+        return code == 124 or any(
+            marker in lowered
+            for marker in ("connection refused", "no route to host", "i/o timeout", "context deadline exceeded", "deadline exceeded", "network is unreachable")
+        )
+
+    @staticmethod
     def _loss_observed(observation: dict[str, object]) -> bool:
         return all(
             observation.get(key) is True
@@ -691,6 +713,7 @@ class Controller:
         }
         atomic_write_json(self.state_path, state)
         disruption_started = False
+        removal_prompt_issued = False
         loss_proven = False
         contained = False
         restore_requested = False
@@ -698,6 +721,8 @@ class Controller:
         primary_error: ScenarioFailure | None = None
         self.monitor.start()
         try:
+            self.bridge_fn("admit")
+            removal_prompt_issued = True
             self.prompt(
                 f"Physically disconnect electrical input from {self.node}, then press Enter. "
                 "Do not use its power button: "
@@ -774,7 +799,7 @@ class Controller:
             )
             state["phase"] = "failed"
             state["failure"] = str(error)
-            if disruption_started and not restore_requested:
+            if removal_prompt_issued and not restore_requested:
                 try:
                     self.prompt(
                         f"Restore electrical input to {self.node} now, then press Enter. "
@@ -791,7 +816,7 @@ class Controller:
                     pass
                 else:
                     contained = True
-            if not disruption_started:
+            if not removal_prompt_issued:
                 write_recovery(
                     self.run_dir,
                     "passed",
@@ -823,7 +848,7 @@ class Controller:
                 write_recovery(
                     self.run_dir,
                     "failed",
-                    f"unresolved uncontained abrupt loss for {self.node}",
+                    f"unresolved possible uncontained abrupt loss for {self.node}",
                 )
         finally:
             samples = self.monitor.stop()

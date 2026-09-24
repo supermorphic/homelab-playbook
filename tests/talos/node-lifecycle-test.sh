@@ -942,6 +942,10 @@ remove_node_containment_and_uncordon() { bridge_call uncordon; }
 acquire_test_lease() { fail 'abrupt bridge tried to acquire a second Lease'; }
 start_test_lease_renewal() { fail 'abrupt bridge tried to renew the root Lease'; }
 release_test_lease() { fail 'abrupt bridge tried to release the root Lease'; }
+node_kubectl() { printf '%s\n' True; }
+abrupt_loss_bridge_main admit "$state_dir/abrupt-prepared.json"
+[[ "$bridge_calls" == 'join current recovery-admission current' ]]
+bridge_calls=''
 abrupt_loss_bridge_main contain "$state_dir/abrupt-prepared.json"
 [[ "$bridge_calls" == 'join current survivors current contain current' ]]
 bridge_calls=''
