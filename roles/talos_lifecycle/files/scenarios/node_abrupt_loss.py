@@ -482,7 +482,7 @@ class Controller:
                 self.talosconfig,
             ]
         )
-        node = self._json_status(
+        node_code, node_output = self._status(
             [
                 "kubectl",
                 "--kubeconfig",
@@ -494,14 +494,22 @@ class Controller:
                 "json",
             ]
         )
-        ready = next(
-            (
-                condition.get("status")
-                for condition in node.get("status", {}).get("conditions", [])
-                if condition.get("type") == "Ready"
-            ),
-            "Unknown",
-        )
+        node_not_ready = False
+        if node_code == 0:
+            try:
+                node = json.loads(node_output)
+                conditions = node["status"]["conditions"]
+                ready_conditions = [
+                    condition
+                    for condition in conditions
+                    if isinstance(condition, dict) and condition.get("type") == "Ready"
+                ]
+                node_not_ready = (
+                    len(ready_conditions) == 1
+                    and ready_conditions[0].get("status") in {"False", "Unknown"}
+                )
+            except (json.JSONDecodeError, KeyError, TypeError):
+                node_not_ready = False
         target_etcd_code, target_etcd_output = self._status(
             [
                 "talosctl",
@@ -644,7 +652,7 @@ class Controller:
         )
         return {
             "talosLost": self._target_unavailable(talos_code, talos_output),
-            "nodeNotReady": ready != "True",
+            "nodeNotReady": node_not_ready,
             "etcdTargetLost": self._target_unavailable(target_etcd_code, target_etcd_output),
             "quorumRetained": quorum_code == 0 and quorum_rows == 2,
             "readySurvivors": ready_survivors,
@@ -750,8 +758,10 @@ class Controller:
             atomic_write_json(self.state_path, state)
 
             passive_deadline = self.monotonic() + self.passive_seconds
+            final_observation: dict[str, object] | None = None
             while self.monotonic() < passive_deadline:
                 observation = self.observe_fn()
+                final_observation = observation
                 state["passiveObservation"].append(observation)
                 if observation.get("quorumRetained") is not True:
                     raise ScenarioFailure("surviving etcd members lost quorum")
@@ -780,6 +790,25 @@ class Controller:
                     key = f"{workload.get('namespace', '')}/{workload.get('ownerKind', '')}/{workload.get('ownerName', '')}"
                     recovery_times.setdefault(key, elapsed)
                 self.sleep(self.poll_seconds)
+
+            expected_workloads = getattr(self, "target_workloads", [])
+            final_workloads = (
+                final_observation.get("workloads", [])
+                if isinstance(final_observation, dict)
+                else []
+            )
+            if expected_workloads and (
+                not isinstance(final_workloads, list)
+                or len(final_workloads) != len(expected_workloads)
+                or any(
+                    not isinstance(workload, dict)
+                    or workload.get("state") != "ready-on-survivor"
+                    for workload in final_workloads
+                )
+            ):
+                raise ScenarioFailure(
+                    "captured workloads were not Ready on surviving Nodes at the passive deadline"
+                )
 
             self.prompt(
                 f"Restore electrical input to {self.node}; require firmware automatic power-on, "

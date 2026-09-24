@@ -154,10 +154,13 @@ persists containment. Authentication or malformed client output does not prove
 physical loss.
 
 The scenario observes two ready survivors, Cilium, Longhorn availability, and
-external DNS/HTTPS paths for the full bounded passive window. At the restoration
-prompt, restore electrical input and require firmware automatic power-on, then
-press Enter. Final recovery uses the same guarded acceptance as exit. Evidence
-is written atomically in a unique private run directory.
+external DNS/HTTPS paths for the full 600-second passive window. Every workload
+owner captured on the target before loss must have a Ready replacement on a
+surviving node in the final sample before that deadline. Pending or absent
+replacements are allowed during earlier samples. At the restoration prompt,
+restore electrical input and require firmware automatic power-on, then press
+Enter. Final recovery uses the same guarded acceptance as exit. Evidence is
+written atomically in a unique private run directory.
 
 EOF, timeout, or a signal after the removal prompt reports unresolved possible
 loss, requests physical restoration when an interactive failure can still be

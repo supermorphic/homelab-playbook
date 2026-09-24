@@ -235,6 +235,98 @@ class AbruptLossTests(unittest.TestCase):
             recovery = json.loads((Path(temporary) / "recovery.json").read_text())
             self.assertEqual(recovery["status"], "failed")
 
+    def test_workloads_must_be_ready_on_survivors_at_passive_deadline(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            clock = self.Clock()
+            events: list[str] = []
+            loss = {
+                "talosLost": True,
+                "nodeNotReady": True,
+                "etcdTargetLost": True,
+                "quorumRetained": True,
+            }
+            stable = {
+                "quorumRetained": True,
+                "readySurvivors": 2,
+                "readyCiliumSurvivors": 2,
+                "workloads": [
+                    {
+                        "namespace": "apps",
+                        "ownerKind": "ReplicaSet",
+                        "ownerName": "echo",
+                        "state": "pending",
+                    }
+                ],
+                "storage": {
+                    "survivingReplicaAvailable": True,
+                    "pvcIdentityPreserved": True,
+                },
+            }
+            observations = [loss, stable]
+            controller = abrupt.Controller(
+                self.prepared(),
+                Path(temporary),
+                baseline=lambda: {},
+                observe=lambda: observations.pop(0) if observations else stable,
+                bridge=lambda action: events.append(action),
+                prompt=lambda _message: "",
+                monotonic=clock.now,
+                sleep=clock.sleep,
+                monitor=self.Monitor(events),
+                passive_seconds=5,
+                poll_seconds=5,
+            )
+            controller.target_workloads = [
+                {
+                    "namespace": "apps",
+                    "ownerKind": "ReplicaSet",
+                    "ownerName": "echo",
+                    "ownerUid": "owner-uid",
+                }
+            ]
+            with self.assertRaisesRegex(abrupt.ScenarioFailure, "workloads were not Ready"):
+                controller.run()
+            self.assertEqual(events.count("recover"), 1)
+            recovery = json.loads((Path(temporary) / "recovery.json").read_text())
+            self.assertEqual(recovery["status"], "passed")
+
+    def test_transient_pending_workload_may_recover_by_passive_deadline(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            clock = self.Clock()
+            loss = {
+                "talosLost": True,
+                "nodeNotReady": True,
+                "etcdTargetLost": True,
+                "quorumRetained": True,
+            }
+            pending = {
+                "quorumRetained": True,
+                "readySurvivors": 2,
+                "readyCiliumSurvivors": 2,
+                "workloads": [{"state": "pending"}],
+                "storage": {"survivingReplicaAvailable": True, "pvcIdentityPreserved": True},
+            }
+            ready = {
+                **pending,
+                "workloads": [{"state": "ready-on-survivor"}],
+            }
+            observations = [loss, pending, ready]
+            controller = abrupt.Controller(
+                self.prepared(),
+                Path(temporary),
+                baseline=lambda: {},
+                observe=lambda: observations.pop(0),
+                bridge=lambda _action: None,
+                prompt=lambda _message: "",
+                monotonic=clock.now,
+                sleep=clock.sleep,
+                monitor=self.Monitor([]),
+                passive_seconds=10,
+                poll_seconds=5,
+            )
+            controller.target_workloads = [{"ownerUid": "owner-uid"}]
+            controller.run()
+
     def test_auth_context_and_malformed_errors_do_not_prove_physical_loss(self) -> None:
         for error in ("401 unauthorized", "forbidden", "invalid context selected", "malformed response"):
             with self.subTest(error=error), tempfile.TemporaryDirectory() as temporary:
@@ -253,6 +345,52 @@ class AbruptLossTests(unittest.TestCase):
                 self.assertFalse(observation["etcdTargetLost"])
                 self.assertTrue(observation["nodeNotReady"])
                 self.assertTrue(observation["quorumRetained"])
+
+    def test_node_loss_requires_successful_explicit_ready_false_or_unknown(self) -> None:
+        cases = {
+            "api failure": (1, "forbidden", False),
+            "malformed JSON": (0, "not-json", False),
+            "missing conditions": (0, json.dumps({"status": {}}), False),
+            "missing Ready": (
+                0,
+                json.dumps({"status": {"conditions": [{"type": "DiskPressure", "status": "False"}]}}),
+                False,
+            ),
+            "invalid Ready": (
+                0,
+                json.dumps({"status": {"conditions": [{"type": "Ready", "status": "invalid"}]}}),
+                False,
+            ),
+            "Ready False": (
+                0,
+                json.dumps({"status": {"conditions": [{"type": "Ready", "status": "False"}]}}),
+                True,
+            ),
+            "Ready Unknown": (
+                0,
+                json.dumps({"status": {"conditions": [{"type": "Ready", "status": "Unknown"}]}}),
+                True,
+            ),
+        }
+        for name, (node_code, node_output, expected) in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
+                def status(command: list[str]) -> tuple[int, str]:
+                    if command[0] == "/tools/talosctl":
+                        nodes = command[command.index("--nodes") + 1]
+                        if "," in nodes:
+                            return 0, "HEADER\nrow-one\nrow-two\n"
+                        return 124, "context deadline exceeded"
+                    if "get" in command and command[command.index("get") + 1] == "node":
+                        return node_code, node_output
+                    return 0, json.dumps({"items": []})
+
+                controller = abrupt.Controller(
+                    self.prepared(),
+                    Path(temporary),
+                    status_runner=status,
+                    monitor=self.Monitor([]),
+                )
+                self.assertIs(controller._observe()["nodeNotReady"], expected)
 
 
 if __name__ == "__main__":

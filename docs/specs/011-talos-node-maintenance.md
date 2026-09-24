@@ -350,7 +350,10 @@ cannot select an existing holder. Keep the following scenario behavior:
 4. Observe passively for 600 seconds, sampling every 5 seconds. Preserve exactly
    two Ready survivors, Cilium on both, surviving Longhorn replicas, PVC/PV
    identity, owner UIDs, workload placement/readiness, and timing evidence.
-   Do not force pod deletion, volume detachment, or failover settings.
+   Every captured workload owner must have a Ready replacement on a survivor in
+   the final sample before the 600-second deadline; earlier samples may be
+   pending, absent, or replacing. Do not force pod deletion, volume detachment,
+   or failover settings.
 5. Monitor API readiness, DNS, and HTTPS throughout the disruption and recovery.
    Preserve the 60-second no-success threshold and failure evidence. Resolve
    endpoints from validated desired inputs; never use ambient contexts.
