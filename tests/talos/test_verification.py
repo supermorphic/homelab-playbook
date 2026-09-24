@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -55,6 +58,20 @@ def response(value: dict[str, object]) -> dict[str, object]:
 
 
 class ResponseTests(unittest.TestCase):
+    def assert_process_stopped(self, pid: int) -> None:
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            state = subprocess.run(
+                ["ps", "-o", "state=", "-p", str(pid)],
+                text=True,
+                capture_output=True,
+                check=False,
+            ).stdout.strip()
+            if not state or state.startswith("Z"):
+                return
+            time.sleep(0.05)
+        self.fail(f"verifier descendant {pid} survived cleanup")
+
     def test_exact_prepare_baseline_and_recovery_results_are_accepted(self) -> None:
         for mode in ("prepare", "baseline", "recovery"):
             value = request(mode)
@@ -93,15 +110,85 @@ class ResponseTests(unittest.TestCase):
             root = Path(temporary)
             cache = root / "cache"
             cache.mkdir()
-            source = {"verification_dir": str(root), "mise": sys.executable, "bash": "/bin/bash",
+            mise = root / "mise"
+            source = {"verification_dir": str(root), "mise": str(mise), "bash": "/bin/bash",
                       "recovery_helm_cache": str(cache)}
             value = request("prepare")
             for stdout in ("not-json", "{}\n{}\n"):
-                completed = mock.Mock(returncode=0, stdout=stdout, stderr="")
-                with mock.patch("verification.subprocess.run", return_value=completed), self.assertRaises(VerificationError):
+                mise.write_text(
+                    "#!/bin/sh\n"
+                    f"printf '%b' {json.dumps(stdout)}\n",
+                    encoding="utf-8",
+                )
+                mise.chmod(0o700)
+                with self.assertRaises(VerificationError):
                     invoke_verifier(source, value, deadline_seconds=10)
-            with mock.patch("verification.subprocess.run", side_effect=__import__("subprocess").TimeoutExpired("just", 1)), self.assertRaises(VerificationError):
+            mise.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
+            mise.chmod(0o700)
+            with self.assertRaisesRegex(VerificationError, "timed out"):
                 invoke_verifier(source, value, deadline_seconds=1)
+
+    def test_timeout_stops_and_waits_for_owned_verifier_descendants(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cache = root / "cache"
+            cache.mkdir()
+            pid_path = root / "observer.pid"
+            mise = root / "mise"
+            mise.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os,pathlib,signal,subprocess,sys,time\n"
+                "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'], start_new_session=True)\n"
+                f"pathlib.Path({str(pid_path)!r}).write_text(str(child.pid))\n"
+                "def stop(_signum,_frame):\n"
+                " os.killpg(child.pid,signal.SIGTERM); child.wait(); raise SystemExit(143)\n"
+                "signal.signal(signal.SIGTERM,stop)\n"
+                "time.sleep(60)\n",
+                encoding="utf-8",
+            )
+            mise.chmod(0o700)
+            source = {
+                "verification_dir": str(root),
+                "mise": str(mise),
+                "bash": "/bin/bash",
+                "recovery_helm_cache": str(cache),
+            }
+            with self.assertRaisesRegex(VerificationError, "timed out"):
+                invoke_verifier(source, request("prepare"), deadline_seconds=1)
+            self.assert_process_stopped(int(pid_path.read_text(encoding="utf-8")))
+
+    def test_cancellation_stops_and_waits_for_owned_verifier_descendants(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cache = root / "cache"
+            cache.mkdir()
+            pid_path = root / "observer.pid"
+            cancel_path = root / "cancel"
+            mise = root / "mise"
+            mise.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os,pathlib,signal,subprocess,sys,time\n"
+                "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'], start_new_session=True)\n"
+                f"pathlib.Path({str(pid_path)!r}).write_text(str(child.pid))\n"
+                "def stop(_signum,_frame):\n"
+                " os.killpg(child.pid,signal.SIGTERM); child.wait(); raise SystemExit(143)\n"
+                "signal.signal(signal.SIGTERM,stop)\n"
+                f"pathlib.Path({str(cancel_path)!r}).write_text('cancel')\n"
+                "time.sleep(60)\n",
+                encoding="utf-8",
+            )
+            mise.chmod(0o700)
+            source = {
+                "verification_dir": str(root),
+                "mise": str(mise),
+                "bash": "/bin/bash",
+                "recovery_helm_cache": str(cache),
+            }
+            with mock.patch.dict(os.environ, {"TALOS_LIFECYCLE_CANCEL_PATH": str(cancel_path)}), self.assertRaisesRegex(
+                VerificationError, "cancelled"
+            ):
+                invoke_verifier(source, request("prepare"), deadline_seconds=10)
+            self.assert_process_stopped(int(pid_path.read_text(encoding="utf-8")))
 
 
 if __name__ == "__main__":

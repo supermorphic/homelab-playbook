@@ -6,8 +6,10 @@ from __future__ import annotations
 import json
 import argparse
 import os
+import signal
 import subprocess
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -28,6 +30,48 @@ CHECK_KEYS = {"source", "cilium", "foundation"}
 
 class VerificationError(RuntimeError):
     """The fixed observational verifier did not return bound acceptance."""
+
+
+class _InvocationInterrupted(BaseException):
+    def __init__(self, signum: int) -> None:
+        self.signum = signum
+
+
+def _process_group_exists(group: int) -> bool:
+    try:
+        os.killpg(group, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def _stop_process_group(process: subprocess.Popen[str], grace_seconds: float = 5) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+    deadline = time.monotonic() + grace_seconds
+    while _process_group_exists(process.pid) and time.monotonic() < deadline:
+        if process.poll() is None:
+            try:
+                process.communicate(timeout=min(0.1, max(0.01, deadline - time.monotonic())))
+            except subprocess.TimeoutExpired:
+                pass
+        else:
+            time.sleep(0.05)
+    if _process_group_exists(process.pid):
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    try:
+        process.communicate(timeout=grace_seconds)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        process.wait()
 
 
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -136,18 +180,51 @@ def invoke_verifier(source: dict, request: dict, *, deadline_seconds: int) -> di
             raise VerificationError("prepared recovery chart cache is unavailable")
         environment["RECOVERY_HELM_CACHE"] = str(recovery_cache)
         try:
-            result = subprocess.run(
+            process = subprocess.Popen(
                 [str(mise), "exec", "--", "just", "kube", "recovery-verify", str(request_path)],
                 cwd=verification_dir,
                 env=environment,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=deadline_seconds,
-                check=False,
+                start_new_session=True,
             )
-        except (OSError, subprocess.TimeoutExpired) as error:
-            raise VerificationError("observational verifier was unavailable or timed out") from error
+        except OSError as error:
+            raise VerificationError("observational verifier was unavailable") from error
+        previous_handlers: dict[int, Any] = {}
+
+        def interrupted(signum: int, _frame: object) -> None:
+            raise _InvocationInterrupted(signum)
+
+        try:
+            previous_handlers = {
+                signum: signal.signal(signum, interrupted)
+                for signum in (signal.SIGINT, signal.SIGTERM)
+            }
+            deadline = time.monotonic() + deadline_seconds
+            cancel_path = Path(os.environ.get("TALOS_LIFECYCLE_CANCEL_PATH", ""))
+            while True:
+                if cancel_path.is_absolute() and cancel_path.exists():
+                    raise VerificationError("observational verifier was cancelled")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise VerificationError("observational verifier timed out")
+                try:
+                    stdout, stderr = process.communicate(timeout=min(0.1, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+        except _InvocationInterrupted as error:
+            raise VerificationError("observational verifier was cancelled") from error
+        finally:
+            for signum in previous_handlers:
+                signal.signal(signum, signal.SIG_IGN)
+            try:
+                _stop_process_group(process)
+            finally:
+                for signum, handler in previous_handlers.items():
+                    signal.signal(signum, handler)
+        result = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
     try:
         response = json.loads(result.stdout, object_pairs_hook=_unique_pairs)
     except (json.JSONDecodeError, UnicodeError) as error:
