@@ -9,10 +9,14 @@ forgejo_postgres_major: '17'
 forgejo_hostname: ''
 forgejo_backend_port: 18081
 forgejo_certificate_name: infra
+# Exact source observed through the selected host's rootless forwarding path.
+forgejo_proxy_source: ''
 forgejo_database_name: forgejo
 forgejo_database_user: forgejo
 forgejo_state_root: /var/lib/svc-forgejo/forgejo
 forgejo_helper_root: /usr/local/libexec/forgejo
+forgejo_quadlet_root: "/etc/containers/systemd/users/{{ forgejo_foundation_account.uid | default(0) }}"
+forgejo_user_unit_root: /var/lib/svc-forgejo/.config/systemd/user
 forgejo_health_timeout_seconds: 60
 forgejo_backup_timeout_seconds: 1800
 forgejo_recovery_timeout_seconds: 300

@@ -1,0 +1,7 @@
+---
+- name: Validate Forgejo deployment prerequisites
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Stop before unimplemented runtime reconciliation
+  ansible.builtin.fail:
+    msg: Forgejo runtime reconciliation is not installed in this intermediate change

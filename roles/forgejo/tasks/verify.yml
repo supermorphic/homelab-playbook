@@ -1,0 +1,7 @@
+---
+- name: Observe Forgejo deployment prerequisites
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Stop before unimplemented runtime verification
+  ansible.builtin.fail:
+    msg: Forgejo runtime verification is not installed in this intermediate change

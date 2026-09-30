@@ -1,0 +1,90 @@
+---
+- name: Validate Forgejo foundation declaration
+  ansible.builtin.assert:
+    that:
+      - forgejo_account_name == 'svc-forgejo'
+      - forgejo_foundation_account is mapping
+      - forgejo_foundation_account.keys() | list | sort == ['gid', 'name', 'subgid_count', 'subgid_start', 'subuid_count', 'subuid_start', 'uid']
+      - forgejo_foundation_account.name == forgejo_account_name
+      - forgejo_foundation_account.uid is integer
+      - forgejo_foundation_account.gid is integer
+      - forgejo_foundation_account.uid > 0
+      - forgejo_foundation_account.gid > 0
+      - forgejo_foundation_account.subuid_start is integer
+      - forgejo_foundation_account.subgid_start is integer
+      - forgejo_foundation_account.subuid_count is integer
+      - forgejo_foundation_account.subgid_count is integer
+      - forgejo_foundation_account.subuid_count >= 65536
+      - forgejo_foundation_account.subgid_count >= 65536
+      - forgejo_foundation_account.subuid_start > 0
+      - forgejo_foundation_account.subgid_start > 0
+      - forgejo_foundation_account.subuid_start + forgejo_foundation_account.subuid_count <= 4294967295
+      - forgejo_foundation_account.subgid_start + forgejo_foundation_account.subgid_count <= 4294967295
+    fail_msg: Forgejo needs an explicit separately provisioned foundation allocation
+
+- name: Validate public Forgejo configuration
+  ansible.builtin.assert:
+    that:
+      - forgejo_image is match('^codeberg[.]org/forgejo/forgejo:15[.][0-9]+[.][0-9]+-rootless@sha256:[0-9a-f]{64}$')
+      - forgejo_postgres_image is match('^docker[.]io/library/postgres:17[.][0-9]+@sha256:[0-9a-f]{64}$')
+      - forgejo_rclone_image is match('^docker[.]io/rclone/rclone:[0-9]+[.][0-9]+[.][0-9]+@sha256:[0-9a-f]{64}$')
+      - forgejo_postgres_major | string == '17'
+      - forgejo_backend_port is integer
+      - forgejo_backend_port >= 1024 and forgejo_backend_port <= 65535
+      - forgejo_hostname is match('^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$')
+      - forgejo_certificate_name is match('^[A-Za-z0-9][A-Za-z0-9_-]*$')
+      - forgejo_database_name == 'forgejo'
+      - forgejo_database_user == 'forgejo'
+      - forgejo_state_root == '/var/lib/svc-forgejo/forgejo'
+      - forgejo_helper_root == '/usr/local/libexec/forgejo'
+      - forgejo_proxy_source is match('^(?:[0-9]{1,3}[.]){3}[0-9]{1,3}/32$|^::1/128$')
+      - >-
+        forgejo_proxy_source == '::1/128'
+        or forgejo_proxy_source.split('/')[0].split('.') | map('int') | max <= 255
+      - forgejo_rclone_remote is match('^[A-Za-z0-9_-]+:[A-Za-z0-9][A-Za-z0-9_./-]*$')
+      - "'..' not in forgejo_rclone_remote"
+      - forgejo_quadlet_root == '/etc/containers/systemd/users/' ~ (forgejo_foundation_account.uid | string)
+      - forgejo_user_unit_root == '/var/lib/svc-forgejo/.config/systemd/user'
+    fail_msg: Forgejo public configuration is unsafe or incomplete
+
+- name: Require exact existing shared proxy route
+  ansible.builtin.assert:
+    that:
+      - >-
+        {'hostname': forgejo_hostname, 'backend_port': forgejo_backend_port,
+         'certificate_name': forgejo_certificate_name} in reverse_proxy_routes | default([])
+      - >-
+        reverse_proxy_routes | default([])
+        | selectattr('hostname', 'equalto', forgejo_hostname) | list | length == 1
+      - >-
+        reverse_proxy_routes | default([]) | selectattr('backend_port', 'defined')
+        | selectattr('backend_port', 'equalto', forgejo_backend_port) | list | length == 1
+    fail_msg: The shared proxy must declare the exact unique Forgejo route
+
+- name: Require private stable Forgejo inputs without disclosure
+  ansible.builtin.assert:
+    that:
+      - lookup('vars', item, default='') is string
+      - lookup('vars', item, default='') | length > 0
+      - "'\n' not in lookup('vars', item, default='')"
+      - "'\r' not in lookup('vars', item, default='')"
+    fail_msg: A required protected Forgejo input is absent or malformed
+  loop:
+    - forgejo_database_admin_password
+    - forgejo_database_password
+    - forgejo_admin_login
+    - forgejo_admin_password
+    - forgejo_admin_email
+    - forgejo_secret_key
+    - forgejo_internal_token
+    - forgejo_lfs_jwt_secret
+    - forgejo_oauth2_jwt_secret
+  no_log: true
+
+- name: Require protected NAS configuration
+  ansible.builtin.assert:
+    that:
+      - forgejo_rclone_config | default('') is string
+      - forgejo_rclone_config | default('') | length > 0
+    fail_msg: Forgejo NAS configuration must be enrolled separately
+  no_log: true
