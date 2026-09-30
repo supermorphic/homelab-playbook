@@ -33,11 +33,7 @@ Follow-up ownership:
   Forgejo Runner infrastructure.
 - [#58](https://github.com/supermorphic/homelab-playbook/issues/58) owns this
   repository's CI parity, collaboration migration and authority cutover.
-- [homelab-talos#292](https://github.com/supermorphic/homelab-talos/issues/292)
-  owns that consumer's CI parity and collaboration migration. Flux changes remain
-  separately reviewed consumer work.
-- Other consumers own their migration records and private deployment details in
-  their own repositories.
+- Downstream Git source changes require separate review and acceptance.
 - [#8](https://github.com/supermorphic/homelab-playbook/issues/8) owns reviewed
   dependency discovery; [#9](https://github.com/supermorphic/homelab-playbook/issues/9)
   owns broader reconstruction and off-site application-backup recovery.
@@ -380,7 +376,5 @@ consumer repository Forgejo-authoritative or claim CI parity for future runners.
 - [Database preparation](https://forgejo.org/docs/v15.0/admin/installation/database-preparation/)
 - [Backup and upgrade guidance](https://forgejo.org/docs/v15.0/admin/upgrade/#backup)
 - [Configuration and native mirror scheduling](https://forgejo.org/docs/v15.0/admin/config-cheat-sheet/)
-- [Pinned upstream mirror scheduler](https://codeberg.org/forgejo/forgejo/src/tag/v15.0.9/services/cron/tasks_basic.go)
-- [Pinned upstream mirror eligibility](https://codeberg.org/forgejo/forgejo/src/tag/v15.0.9/models/repo/pushmirror.go)
 - [Repository mirroring](https://forgejo.org/docs/v15.0/user/repo-mirror/)
 - [Branch and tag protection](https://forgejo.org/docs/v15.0/user/repository/protection/)
