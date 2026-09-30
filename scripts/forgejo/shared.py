@@ -9,7 +9,7 @@ DIRECTORY = ROOT / 'roles/forgejo/files'
 previous = sys.path[:]
 try:
     sys.path.insert(0, str(DIRECTORY))
-    for name in ('service', 'archive', 'backup', 'transfer'):
+    for name in ('service', 'archive', 'backup', 'transfer', 'mirror_status'):
         module = importlib.import_module(name)
         if Path(module.__file__).resolve() != (DIRECTORY / (name + '.py')).resolve():
             raise RuntimeError('host helper module origin differs from this checkout')

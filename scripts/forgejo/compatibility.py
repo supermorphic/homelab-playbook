@@ -39,7 +39,8 @@ def database_sql(password: str) -> str:
 class Application:
     """A synthetic instance; every resource belongs to the supplied experiment."""
 
-    def __init__(self, run: Run, directory: Path, *, suffix: str = "source", auth_dir: Path | None = None):
+    def __init__(self, run: Run, directory: Path, *, suffix: str = "source", auth_dir: Path | None = None,
+                 extra_environment: tuple[str, ...] = (), additional_volumes: tuple[str, ...] = ()):
         self.run = run
         self.directory = directory
         self.suffix = suffix
@@ -70,6 +71,8 @@ class Application:
         self.app = run.create("container", f"{suffix}-app", [
             "--userns=keep-id:uid=1000,gid=1000", "--user", "1000:1000",
             *extra_volumes,
+            *[argument for value in extra_environment for argument in ('--env', value)],
+            *[argument for value in additional_volumes for argument in ('--volume', value)],
             "--network", self.network,
             "--env", "GITEA_APP_INI=/etc/gitea/app.ini",
             "--publish", "127.0.0.1::3000",
@@ -99,6 +102,9 @@ class Application:
         }
         for name, value in keys.items():
             self.run.private_file(self.config, name, value)
+        self.run.private_file(self.config, 'mirror-credentials', '')
+        self.run.private_file(self.config, 'mirror-credential-helper.sh',
+            (ROOT / 'roles/forgejo/files/mirror-credential-helper.sh').read_text()).chmod(0o700)
         template = ROOT / "roles/forgejo/templates/app.ini.j2"
         return Template(template.read_text()).render(**values) + "\n"
 
@@ -130,6 +136,12 @@ class Application:
             raise RuntimeError(f"application API returned HTTP {error.code}") from error
 
     def wait(self):
+        # A stop/start can reallocate a randomly assigned fixture host port.
+        published = self.run.command([self.run.podman, 'port', self.app, '3000/tcp']).stdout.strip()
+        port = published.rsplit(':', 1)[-1]
+        if not port.isdigit():
+            raise RuntimeError('application loopback port was not assigned')
+        self.url = 'http://127.0.0.1:' + port
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             try:
@@ -201,6 +213,9 @@ def run() -> int:
                 "pg_dump --version && pg_restore --version && command -v tar && command -v gzip && command -v sha256sum"])
             phase = "rootless forwarded client identity"
             probe_forwarded_source(experiment, application, Path(scratch))
+            phase = 'native HTTPS nightly mirror experiment'
+            from scripts.forgejo.mirror import run_fixture
+            run_fixture(experiment)
     except (OSError, RuntimeError, ValueError, KeyError) as failure:
         error = f"{phase}: {failure}"
     finally:
@@ -209,7 +224,7 @@ def run() -> int:
     if error or cleanup:
         print(json.dumps({"operation_error": error, "cleanup_errors": cleanup}))
         return 1
-    print("Forgejo/PostgreSQL compatibility and protected initialization passed")
+    print("Forgejo/PostgreSQL compatibility, protected initialization and native HTTPS mirroring passed")
     return 0
 
 

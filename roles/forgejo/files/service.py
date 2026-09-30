@@ -21,13 +21,16 @@ import time
 import uuid
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
+import mirror_status
 
 STATE = Path("/var/lib/svc-forgejo/forgejo")
 HELPERS = Path("/usr/local/libexec/forgejo")
 LOCK = Path("/run/forgejo/operation.lock")
 ACCOUNT = "svc-forgejo"
 REQUIRED_FILES = (
-    "manifest.json", "config/app.ini", "config/database-password", "config/secret-key",
+    "manifest.json", "config/app.ini", "config/mirror-credentials", "config/mirror-credential-helper.sh",
+    "config/database-password", "config/secret-key",
     "config/internal-token", "config/lfs-jwt-secret", "config/oauth2-jwt-secret",
     "credentials/postgres-admin-password", "credentials/postgres.env",
     "credentials/admin.json", "credentials/rclone.conf", "quadlets/forgejo.network",
@@ -218,6 +221,8 @@ def publish_files(candidate: Path, targets: dict[str, Path], allocation: dict) -
     for name, target in targets.items():
         protected = name.startswith(("config/", "credentials/"))
         mode = 0o600 if protected else 0o640
+        if name == 'config/mirror-credential-helper.sh':
+            mode = 0o700
         uid = allocation["uid"] if protected else os.geteuid()
         gid = allocation["gid"]
         content = safe_read(candidate / name)
@@ -540,6 +545,8 @@ def verify() -> dict:
     for name, path in targets_for(allocation).items():
         protected = name.startswith(("config/", "credentials/"))
         regular(path, private=protected, owner=allocation["uid"] if protected else os.geteuid())
+        if name == 'config/mirror-credential-helper.sh' and stat.S_IMODE(path.stat().st_mode) != 0o700:
+            raise ValueError('private mirror askpass program is not executable')
         if path.stat().st_gid != allocation["gid"]:
             raise ValueError("deployment file has unexpected group")
         if hashlib.sha256(safe_read(path)).hexdigest() != settings["checksums"][name]:
@@ -571,7 +578,10 @@ def verify() -> dict:
         backup = {"recovery": "incomplete"}
     transfer_status = STATE / "transfer-status.json"
     transfer = json.loads(safe_read(transfer_status, private=True, owner=allocation["uid"])) if transfer_status.exists() else "pending"
-    return {"ready": True, "backup": backup, "transfer": transfer, "mirror": "pending",
+    mirrors = mirror_status.summarize(json.loads(database_command(allocation,
+        mirror_status.QUERY, user='forgejo', database='forgejo')), datetime.now(timezone.utc))
+    return {"ready": True, "backup": backup, "transfer": transfer,
+            "mirror": mirrors if mirrors else 'unconfigured',
             "acceptance_complete": False}
 
 

@@ -14,6 +14,7 @@
     - {variable: forgejo_lfs_jwt_secret, path: config/lfs-jwt-secret}
     - {variable: forgejo_oauth2_jwt_secret, path: config/oauth2-jwt-secret}
     - {variable: forgejo_database_admin_password, path: credentials/postgres-admin-password}
+    - {variable: forgejo_mirror_credentials, path: config/mirror-credentials}
   register: forgejo_observed_inputs
   changed_when: false
   no_log: true

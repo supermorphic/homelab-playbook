@@ -15,6 +15,8 @@
         get_mime: false
       loop:
         - {path: /var/lib/svc-forgejo/forgejo/config/app.ini, uid: 2202, gid: 2202, mode: '0600'}
+        - {path: /var/lib/svc-forgejo/forgejo/config/mirror-credentials, uid: 2202, gid: 2202, mode: '0600'}
+        - {path: /var/lib/svc-forgejo/forgejo/config/mirror-credential-helper.sh, uid: 2202, gid: 2202, mode: '0700'}
         - {path: /var/lib/svc-forgejo/forgejo/credentials/postgres.env, uid: 2202, gid: 2202, mode: '0600'}
         - {path: /etc/containers/systemd/users/2202/forgejo.container, uid: 0, gid: 2202, mode: '0640'}
         - {path: /var/lib/svc-forgejo/.config/systemd/user/forgejo-backup.service, uid: 0, gid: 2202, mode: '0640'}

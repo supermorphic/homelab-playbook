@@ -81,6 +81,11 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual("fixture-only\n",
                          self.targets["config/secret-key"].read_text())
 
+    def test_private_askpass_program_is_executable_without_exposing_credentials(self):
+        self.service.publish_files(self.candidate, self.targets, self.allocation)
+        self.assertEqual(0o700, self.targets['config/mirror-credential-helper.sh'].stat().st_mode & 0o777)
+        self.assertEqual(0o600, self.targets['config/mirror-credentials'].stat().st_mode & 0o777)
+
     def test_changed_stable_key_is_rejected_before_any_publication(self):
         self.service.publish_files(self.candidate, self.targets, self.allocation)
         (self.candidate / "config/secret-key").write_text("changed-fixture-only\n")
@@ -182,7 +187,7 @@ class ServiceTests(unittest.TestCase):
                 ("validate_generator", lambda *args: None), ("manager", manager),
                 ("user_command", user), ("initialize_database", lambda *args: None),
                 ("initialize_administrator", lambda *args: None),
-                ("database_command", lambda *args, **kwargs: "f|f|f|f"),
+                ("database_command", lambda allocation, sql, **kwargs: "f|f|f|f" if 'rolsuper' in sql else '[]'),
                 ("wait_health", lambda *args: None),
                 ("enable_unit_links", lambda *args: False)):
             patcher = patch.object(self.service, name, value)

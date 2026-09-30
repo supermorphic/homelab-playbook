@@ -31,6 +31,7 @@
     - {variable: forgejo_lfs_jwt_secret, path: config/lfs-jwt-secret}
     - {variable: forgejo_oauth2_jwt_secret, path: config/oauth2-jwt-secret}
     - {variable: forgejo_database_admin_password, path: credentials/postgres-admin-password}
+    - {variable: forgejo_mirror_credentials, path: config/mirror-credentials}
   no_log: true
   diff: false
   changed_when: false
@@ -49,4 +50,13 @@
     - {source: rclone.conf.j2, path: credentials/rclone.conf}
   no_log: true
   diff: false
+  changed_when: false
+
+- name: Stage read-only Git credential lookup helper
+  ansible.builtin.copy:
+    src: mirror-credential-helper.sh
+    dest: "{{ forgejo_candidate.path }}/config/mirror-credential-helper.sh"
+    owner: root
+    group: root
+    mode: '0600'
   changed_when: false

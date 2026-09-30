@@ -51,6 +51,10 @@ ENABLED = false
 [mirror]
 DEFAULT_INTERVAL = 8h
 
+[git.config]
+core.askPass = /etc/gitea/mirror-credential-helper.sh
+credential.useHttpPath = true
+
 [cron.update_mirrors]
 SCHEDULE = 0 0 2 * * *
 RUN_AT_START = false

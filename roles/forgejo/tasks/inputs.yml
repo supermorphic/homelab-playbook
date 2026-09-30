@@ -95,3 +95,15 @@
       - forgejo_rclone_config | default('') | length > 0
     fail_msg: Forgejo NAS configuration must be enrolled separately
   no_log: true
+
+- name: Require private HTTPS Git credential-store syntax
+  ansible.builtin.assert:
+    that:
+      - forgejo_mirror_credentials is string
+      - "'\r' not in forgejo_mirror_credentials"
+      - >-
+        forgejo_mirror_credentials.splitlines() | reject('equalto', '')
+        | reject('match', '^https://[A-Za-z0-9_.%~-]+:[A-Za-z0-9_.%~-]+@[A-Za-z0-9.-]+(?::[0-9]+)?/[A-Za-z0-9_./%-]+$')
+        | list | length == 0
+    fail_msg: Optional mirror credentials need private HTTPS credential-store entries
+  no_log: true

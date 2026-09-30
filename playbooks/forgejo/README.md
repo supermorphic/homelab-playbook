@@ -38,6 +38,25 @@ Protected inventory supplies these inputs through the existing SOPS workflow:
   `forgejo_oauth2_jwt_secret`; and
 - `forgejo_rclone_config`, with separately selected `forgejo_rclone_remote`.
 
+Optional `forgejo_mirror_credentials` supplies a protected Git credential-store
+file. Leave it empty until separately authorized mirror enrollment. Entries use
+HTTPS credential URLs scoped to one destination repository. The role installs a
+read-only `core.askPass` lookup, so failed authentication cannot erase declared inputs.
+The complete private configuration directory remains inside the backup boundary.
+
+Enroll each native push mirror with a credential-free HTTPS destination URL,
+`interval: 8h` and `sync_on_commit: false`. The shipped native scan runs once at
+02:00 in the host timezone, with startup synchronization disabled. Initial/manual
+synchronization requires separate operator direction. Verification reads native
+attempt/error metadata without requesting synchronization. A failed attempt is
+reported as failed; without a first success the status remains pending. Successful
+evidence older than 36 hours is stale. No configured targets means unconfigured.
+
+Native Git mirroring can force-update branches and delete destination refs. Review
+the exact destination, visibility and protections before enrollment. Issues, PRs,
+reviews and other collaboration data remain in the database backup boundary.
+Mirrored LFS authentication and object transfer need separate acceptance evidence.
+
 Application keys and administrator credentials remain stable on ordinary
 provisioning. Retain the protected inputs matching each backup generation
 independently. Agents do not read or enroll protected inventory values.

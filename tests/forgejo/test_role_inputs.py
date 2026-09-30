@@ -118,6 +118,7 @@ class InputTests(unittest.TestCase):
                 "config/lfs-jwt-secret": "lfs_jwt_secret",
                 "config/oauth2-jwt-secret": "oauth2_jwt_secret",
                 "credentials/postgres-admin-password": "database_admin_password",
+                "config/mirror-credentials": "mirror_credentials",
             }
             for path, variable in names.items():
                 target = state / path

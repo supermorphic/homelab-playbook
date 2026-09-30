@@ -24,3 +24,5 @@ forgejo_transfer_timeout: 2h
 forgejo_local_retention_days: 7
 forgejo_remote_retention_days: 90
 forgejo_rclone_remote: ''
+# Optional protected Git credential-store content; empty until mirror enrollment.
+forgejo_mirror_credentials: ''
