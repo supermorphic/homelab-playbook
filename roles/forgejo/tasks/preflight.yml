@@ -77,6 +77,13 @@
     - /usr/local
     - /usr/local/libexec
     - "{{ forgejo_helper_root }}"
+    - "{{ forgejo_helper_root }}/candidates"
+    - /var/lib/svc-forgejo/.config
+    - /var/lib/svc-forgejo/.config/systemd
+    - "{{ forgejo_user_unit_root }}"
+    - "{{ forgejo_user_unit_root }}/timers.target.wants"
+    - "{{ forgejo_quadlet_root }}"
+    - /run/forgejo
   register: forgejo_boundaries
 
 - name: Reject linked or unexpectedly owned existing boundaries
@@ -85,7 +92,17 @@
       - not item.stat.exists or item.stat.isdir
       - not item.stat.exists or not item.stat.islnk
       - not item.stat.exists or item.stat.uid in [0, forgejo_foundation_account.uid]
+      - not item.stat.exists or (not item.stat.wgrp and not item.stat.woth)  # codespell:ignore woth
       - not item.item.startswith('/usr/local') or not item.stat.exists or item.stat.uid == 0
+      - >-
+        not item.item.startswith(forgejo_state_root) or not item.stat.exists
+        or (item.stat.uid == forgejo_foundation_account.uid
+            and item.stat.gid == forgejo_foundation_account.gid and item.stat.mode == '0700')
+      - >-
+        item.item not in [forgejo_quadlet_root, forgejo_user_unit_root,
+                         forgejo_user_unit_root + '/timers.target.wants',
+                         '/var/lib/svc-forgejo/.config/systemd', '/run/forgejo']
+        or not item.stat.exists or item.stat.uid == 0
     fail_msg: An existing Forgejo boundary has an unsafe type or owner
   loop: "{{ forgejo_boundaries.results }}"
   loop_control:

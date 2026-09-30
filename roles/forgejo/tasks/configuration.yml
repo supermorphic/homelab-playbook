@@ -1,0 +1,52 @@
+---
+- name: Create one private run-owned configuration candidate
+  ansible.builtin.tempfile:
+    state: directory
+    path: "{{ forgejo_helper_root }}/candidates"
+    prefix: candidate-
+  register: forgejo_candidate
+  changed_when: false
+
+- name: Establish private candidate sections
+  ansible.builtin.file:
+    path: "{{ forgejo_candidate.path }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  loop: [config, credentials, quadlets, units]
+  changed_when: false
+
+- name: Stage protected Forgejo input files
+  ansible.builtin.copy:
+    content: "{{ lookup('vars', item.variable) }}"
+    dest: "{{ forgejo_candidate.path }}/{{ item.path }}"
+    owner: root
+    group: root
+    mode: '0600'
+  loop:
+    - {variable: forgejo_database_password, path: config/database-password}
+    - {variable: forgejo_secret_key, path: config/secret-key}
+    - {variable: forgejo_internal_token, path: config/internal-token}
+    - {variable: forgejo_lfs_jwt_secret, path: config/lfs-jwt-secret}
+    - {variable: forgejo_oauth2_jwt_secret, path: config/oauth2-jwt-secret}
+    - {variable: forgejo_database_admin_password, path: credentials/postgres-admin-password}
+  no_log: true
+  diff: false
+  changed_when: false
+
+- name: Stage private configuration documents
+  ansible.builtin.template:
+    src: "{{ item.source }}"
+    dest: "{{ forgejo_candidate.path }}/{{ item.path }}"
+    owner: root
+    group: root
+    mode: '0600'
+  loop:
+    - {source: app.ini.j2, path: config/app.ini}
+    - {source: postgres.env.j2, path: credentials/postgres.env}
+    - {source: admin.json.j2, path: credentials/admin.json}
+    - {source: rclone.conf.j2, path: credentials/rclone.conf}
+  no_log: true
+  diff: false
+  changed_when: false

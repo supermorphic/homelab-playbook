@@ -14,8 +14,9 @@ mise run playbook -- forgejo verify production --limit <host>
 Both actions require key-only SSH and passwordless sudo for `ansible`. The
 playbooks target the `forgejo` inventory group. Staging is inactive and frozen
 inventory is unsupported. The interface rejects password and task-selection
-overrides. This intermediate change establishes preflight only; runtime
-reconciliation and verification follow in the service implementation task.
+overrides. Provisioning reconciles private configuration and rootless services
+under one host operation lock. Verification observes installed state without
+pulling images, restarting services, or repairing configuration.
 
 Declare `forgejo_foundation_account` with the exact existing foundation fields:
 `name`, `uid`, `gid`, `subuid_start`, `subuid_count`, `subgid_start`, and

@@ -14,6 +14,8 @@ import time
 import urllib.error
 import urllib.request
 
+from jinja2 import Template
+
 from scripts.forgejo.runtime import Run, defaults
 
 
@@ -54,7 +56,8 @@ class Application:
             "POSTGRES_USER=postgres\nPOSTGRES_DB=postgres\n"
             f"POSTGRES_PASSWORD={secrets.token_urlsafe(32)}\n")
         self.db = run.create("container", f"{suffix}-postgres", [
-            "--network", self.network, "--env-file", str(self.postgres_env),
+            "--network", self.network, "--network-alias", "forgejo-postgres",
+            "--env-file", str(self.postgres_env),
             "--publish", "127.0.0.1::5432",
             "--volume", f"{self.database_volume}:/var/lib/postgresql/data",
             self.pins["forgejo_postgres_image"], "postgres", "-c", "log_connections=on",
@@ -79,47 +82,22 @@ class Application:
         self.wait()
 
     def configuration(self) -> str:
-        return f"""APP_NAME = Fixture Forgejo
-RUN_MODE = prod
-WORK_PATH = /var/lib/gitea
-[database]
-DB_TYPE = postgres
-HOST = {self.db}:5432
-NAME = forgejo
-USER = forgejo
-PASSWD = {self.db_password}
-SSL_MODE = disable
-[server]
-DOMAIN = forgejo.infra.example.com
-ROOT_URL = http://forgejo.infra.example.com/
-HTTP_ADDR = 0.0.0.0
-HTTP_PORT = 3000
-DISABLE_SSH = true
-LFS_START_SERVER = true
-LFS_JWT_SECRET = {secrets.token_urlsafe(32)}
-[security]
-INSTALL_LOCK = true
-SECRET_KEY = {secrets.token_hex(32)}
-INTERNAL_TOKEN = {secrets.token_urlsafe(64)}
-REVERSE_PROXY_TRUSTED_PROXIES = 127.0.0.1/32,::1/128
-[oauth2]
-JWT_SECRET = {secrets.token_urlsafe(32)}
-[service]
-DISABLE_REGISTRATION = true
-ENABLE_REVERSE_PROXY_AUTHENTICATION = false
-[actions]
-ENABLED = false
-[packages]
-ENABLED = false
-[cron.update_mirrors]
-SCHEDULE = 0 0 2 * * *
-RUN_AT_START = false
-[mirror]
-DEFAULT_INTERVAL = 8h
-[log]
-MODE = console
-LEVEL = Warn
-"""
+        from scripts.forgejo.runtime import ROOT
+        values = {
+            "forgejo_hostname": "forgejo.infra.example.com",
+            "forgejo_proxy_source": "127.0.0.1/32",
+        }
+        keys = {
+            "database-password": self.db_password,
+            "secret-key": secrets.token_hex(32),
+            "internal-token": secrets.token_urlsafe(64),
+            "lfs-jwt-secret": secrets.token_urlsafe(32),
+            "oauth2-jwt-secret": secrets.token_urlsafe(32),
+        }
+        for name, value in keys.items():
+            self.run.private_file(self.config, name, value)
+        template = ROOT / "roles/forgejo/templates/app.ini.j2"
+        return Template(template.read_text()).render(**values) + "\n"
 
     def sql(self, text: str) -> str:
         return self.run.command([

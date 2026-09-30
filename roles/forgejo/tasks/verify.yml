@@ -2,6 +2,21 @@
 - name: Observe Forgejo deployment prerequisites
   ansible.builtin.import_tasks: preflight.yml
 
-- name: Stop before unimplemented runtime verification
-  ansible.builtin.fail:
-    msg: Forgejo runtime verification is not installed in this intermediate change
+- name: Compare declared private inputs observationally
+  ansible.builtin.import_tasks: verify-definitions.yml
+
+- name: Compare declared public inputs observationally
+  ansible.builtin.import_tasks: verify-public.yml
+
+- name: Observe effective Forgejo service state without repair
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - "{{ forgejo_helper_root }}/service.py"
+      - verify
+  register: forgejo_verification
+  changed_when: false
+
+- name: Report Forgejo observation and pending acceptance
+  ansible.builtin.debug:
+    msg: "{{ forgejo_verification.stdout | from_json }}"

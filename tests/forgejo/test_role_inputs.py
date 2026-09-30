@@ -36,8 +36,8 @@ class InputTests(unittest.TestCase):
                         forgejo_rclone_config="[nas]\ntype = smb\nhost = fixture\n")
         return settings
 
-    def evaluate(self, values):
-        self.assertTrue(INPUTS.is_file(), "Forgejo input assertions are missing")
+    def evaluate(self, values, task_file=INPUTS):
+        self.assertTrue(task_file.is_file(), "Forgejo assertions are missing")
         scratch_root = ROOT / ".tmp/forgejo"
         scratch_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch_root) as name:
@@ -51,7 +51,7 @@ class InputTests(unittest.TestCase):
             playbook.write_text(yaml.safe_dump([{
                 "name": "Validate synthetic Forgejo inputs", "hosts": "localhost",
                 "gather_facts": False, "tasks": [{"name": "Evaluate input assertions",
-                    "ansible.builtin.import_tasks": str(INPUTS)}],
+                    "ansible.builtin.import_tasks": str(task_file)}],
             }]))
             environment = {key: value for key, value in os.environ.items()
                 if not key.startswith(("SOPS_AGE_", "ANSIBLE_SOPS_", "ANSIBLE_VAULT_"))}
@@ -96,6 +96,57 @@ class InputTests(unittest.TestCase):
         values = self.settings()
         values["forgejo_database_password"] = "synthetic\nsecond-line"
         self.assertNotEqual(0, self.evaluate(values))
+
+    def test_verify_detects_private_input_drift_without_repair(self):
+        values = self.settings()
+        root = ROOT / ".tmp/forgejo"
+        root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=root) as directory:
+            state = Path(directory)
+            values["forgejo_state_root"] = str(state)
+            for folder in ("config", "credentials"):
+                (state / folder).mkdir(mode=0o700)
+            names = {
+                "config/database-password": "database_password",
+                "config/secret-key": "secret_key",
+                "config/internal-token": "internal_token",
+                "config/lfs-jwt-secret": "lfs_jwt_secret",
+                "config/oauth2-jwt-secret": "oauth2_jwt_secret",
+                "credentials/postgres-admin-password": "database_admin_password",
+            }
+            for path, variable in names.items():
+                target = state / path
+                target.write_text(values["forgejo_" + variable])
+                target.chmod(0o600)
+            task_file = ROOT / "roles/forgejo/tasks/verify-definitions.yml"
+            self.assertEqual(0, self.evaluate(values, task_file),
+                             "matching private inputs must pass observational comparison")
+            changed = state / "config/secret-key"
+            changed.write_text("different-synthetic-value")
+            code = self.evaluate(values, task_file)
+            self.assertNotEqual(0, code)
+            self.assertEqual("different-synthetic-value", changed.read_text())
+
+    def test_verify_detects_public_declaration_drift_without_repair(self):
+        values = self.settings()
+        root = ROOT / ".tmp/forgejo"
+        root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=root) as directory:
+            state = Path(directory)
+            values["forgejo_helper_root"] = str(state)
+            manifest = {"schema": 1, "allocation": values["forgejo_foundation_account"],
+                "hostname": values["forgejo_hostname"], "backend_port": values["forgejo_backend_port"],
+                "proxy_source": values["forgejo_proxy_source"],
+                "health_timeout_seconds": values["forgejo_health_timeout_seconds"],
+                "image": values["forgejo_image"], "postgres_image": values["forgejo_postgres_image"],
+                "rclone_image": values["forgejo_rclone_image"]}
+            target = state / "desired.json"
+            target.write_text(json.dumps(manifest))
+            task_file = ROOT / "roles/forgejo/tasks/verify-public.yml"
+            self.assertEqual(0, self.evaluate(values, task_file))
+            values["forgejo_hostname"] = "other.infra.example.com"
+            self.assertNotEqual(0, self.evaluate(values, task_file))
+            self.assertEqual(manifest, json.loads(target.read_text()))
 
 
 if __name__ == "__main__":
