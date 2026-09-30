@@ -98,6 +98,12 @@ class ArchiveTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.archive.validate_archive(self.path, False)
 
+    def test_noncanonical_tar_path_is_rejected(self):
+        self.write_tar('data/./file', b'fixture')
+        self.finish()
+        with self.assertRaises(ValueError):
+            self.archive.validate_archive(self.path, False)
+
     def test_unknown_payload_and_symlink_are_rejected(self):
         (self.path / 'extra').write_text('unexpected')
         with self.assertRaises(ValueError):

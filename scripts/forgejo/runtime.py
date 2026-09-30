@@ -46,15 +46,18 @@ class Run:
             raise ValueError("invalid resource suffix")
         return f"forgejo-test-{self.run_id}-{suffix}"
 
-    def create(self, kind: str, suffix: str, arguments: list[str]) -> str:
+    def reserve(self, kind: str, suffix: str) -> str:
         if kind not in ("container", "volume", "network"):
             raise ValueError("unsupported resource kind")
         name = self.name(suffix)
         exists = self.command([self.podman, kind, "exists", name], check=False)
         if exists.returncode != 1:
             raise RuntimeError("resource already exists or cannot be inspected")
-        # Register before execution: interruption after creation still owns cleanup.
         self.resources.append((kind, name))
+        return name
+
+    def create(self, kind: str, suffix: str, arguments: list[str]) -> str:
+        name = self.reserve(kind, suffix)
         if kind == "container":
             argv = [self.podman, "run", "--detach", "--name", name]
         else:
@@ -63,6 +66,17 @@ class Run:
         self.command([*argv, "--label", f"{self.label}={self.run_id}",
                       *arguments, *positional])
         return name
+
+    def foreground(self, suffix: str, arguments: list[str], **kwargs):
+        name = self.reserve("container", suffix)
+        return self.command([self.podman, "run", "--rm", "--name", name,
+            "--label", f"{self.label}={self.run_id}", *arguments], **kwargs)
+
+    def stream(self, suffix: str, arguments: list[str], **kwargs):
+        from scripts.forgejo.shared import backup
+        name = self.reserve("container", suffix)
+        backup.stream_command([self.podman, "run", "--rm", "--name", name,
+            "--label", f"{self.label}={self.run_id}", *arguments], **kwargs)
 
     def private_file(self, directory: Path, name: str, value: str) -> Path:
         if Path(name).name != name:

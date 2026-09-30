@@ -62,7 +62,8 @@ def validate_tar(path: Path):
         for item in stream:
             name = PurePosixPath(item.name)
             if (name.is_absolute() or '..' in name.parts or not name.parts
-                    or name.parts[0] not in LAYOUT or item.name in names
+                    or name.parts[0] not in LAYOUT or item.name != name.as_posix()
+                    or item.name in names
                     or not (item.isfile() or item.isdir())
                     or item.mode & 0o7000 or item.uid != 1000 or item.gid != 1000):
                 raise ValueError('file archive contains unsupported path, type or ownership')

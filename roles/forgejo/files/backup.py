@@ -224,7 +224,7 @@ class Host:
                 '--userns=keep-id:uid=1000,gid=1000', '--user', '1000:1000', '--read-only',
                 '--volume', f'{self.state}/data:/archive/data:ro',
                 '--volume', f'{self.state}/config:/archive/config:ro', '--entrypoint', 'tar',
-                self.settings['image'], '--hard-dereference', '-czf', '-', '-C', '/archive', 'data', 'config'],
+                self.settings['postgres_image'], '--hard-dereference', '-czf', '-', '-C', '/archive', 'data', 'config'],
                 output=path, environment=self.environment)
         finally:
             exists = service.user_command(['/usr/bin/podman', 'container', 'exists', name], self.allocation, check=False)

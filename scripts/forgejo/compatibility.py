@@ -39,7 +39,7 @@ def database_sql(password: str) -> str:
 class Application:
     """A synthetic instance; every resource belongs to the supplied experiment."""
 
-    def __init__(self, run: Run, directory: Path, *, suffix: str = "source"):
+    def __init__(self, run: Run, directory: Path, *, suffix: str = "source", auth_dir: Path | None = None):
         self.run = run
         self.directory = directory
         self.suffix = suffix
@@ -66,7 +66,10 @@ class Application:
         self.sql(database_sql(self.db_password))
         self.ini = self.configuration()
         run.private_file(self.config, "app.ini", self.ini)
+        extra_volumes = ["--volume", f"{auth_dir}:/test-auth:ro,U"] if auth_dir else []
         self.app = run.create("container", f"{suffix}-app", [
+            "--userns=keep-id:uid=1000,gid=1000", "--user", "1000:1000",
+            *extra_volumes,
             "--network", self.network,
             "--env", "GITEA_APP_INI=/etc/gitea/app.ini",
             "--publish", "127.0.0.1::3000",
