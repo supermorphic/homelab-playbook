@@ -18,5 +18,6 @@
     - {key: image, value: "{{ forgejo_image }}"}
     - {key: postgres_image, value: "{{ forgejo_postgres_image }}"}
     - {key: rclone_image, value: "{{ forgejo_rclone_image }}"}
+    - {key: rclone_remote, value: "{{ forgejo_rclone_remote }}"}
   loop_control:
     label: "{{ item.key }}"

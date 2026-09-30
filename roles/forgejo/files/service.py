@@ -33,6 +33,7 @@ REQUIRED_FILES = (
     "credentials/admin.json", "credentials/rclone.conf", "quadlets/forgejo.network",
     "quadlets/forgejo-postgres.container", "quadlets/forgejo.container",
     "units/forgejo-backup.service", "units/forgejo-backup.timer", "units/forgejo-recover.service",
+    "units/forgejo-transfer.service", "units/forgejo-transfer.timer",
 )
 STABLE_INPUTS = (
     "config/database-password", "config/secret-key", "config/internal-token",
@@ -74,6 +75,9 @@ def validate_candidate(candidate: Path, allocation: dict) -> dict:
     if not isinstance(manifest.get("hostname"), str) or re.fullmatch(
             r"[A-Za-z0-9][A-Za-z0-9.-]*", manifest["hostname"]) is None:
         raise ValueError("invalid hostname")
+    remote = manifest.get("rclone_remote", "")
+    if re.fullmatch(r"[A-Za-z0-9_-]+:[A-Za-z0-9][A-Za-z0-9_./-]*", remote) is None or ".." in remote:
+        raise ValueError("invalid transfer prefix")
     port = manifest.get("backend_port")
     if type(port) is not int or not 1024 <= port <= 65535:
         raise ValueError("invalid backend port")
@@ -426,7 +430,7 @@ def initialize_administrator(settings: dict, allocation: dict):
 def enable_unit_links(allocation: dict):
     root = Path("/var/lib/svc-forgejo/.config/systemd/user")
     changed = False
-    for target, unit in (("timers.target", "forgejo-backup.timer"),
+    for target, unit in (("timers.target", "forgejo-backup.timer"), ("timers.target", "forgejo-transfer.timer"),
                          ("default.target", "forgejo-recover.service")):
         directory = root / (target + ".wants")
         parent = open_directory(directory)
@@ -515,9 +519,10 @@ def reconcile(candidate: Path) -> dict:
         wait_health(settings["backend_port"], settings["health_timeout_seconds"])
         initialize_administrator(settings, allocation)
         changed = enable_unit_links(allocation) or changed
-        if manager(["is-active", "forgejo-backup.timer"], check=False).returncode:
-            manager(["start", "forgejo-backup.timer"])
-            changed = True
+        for timer in ("forgejo-backup.timer", "forgejo-transfer.timer"):
+            if manager(["is-active", timer], check=False).returncode:
+                manager(["start", timer])
+                changed = True
         result = verify()
         result["changed"] = changed
         return result
@@ -559,11 +564,14 @@ def verify() -> dict:
         raise ValueError("application database role has excessive authority")
     wait_health(settings["backend_port"], 5)
     manager(["is-active", "forgejo-backup.timer"])
+    manager(["is-active", "forgejo-transfer.timer"])
     backup_status = STATE / "backup-status.json"
     backup = json.loads(safe_read(backup_status, private=True, owner=allocation["uid"])) if backup_status.exists() else "pending"
     if (STATE / "restart-intent.json").exists() or (STATE / "recovery-failed").exists():
         backup = {"recovery": "incomplete"}
-    return {"ready": True, "backup": backup, "mirror": "pending",
+    transfer_status = STATE / "transfer-status.json"
+    transfer = json.loads(safe_read(transfer_status, private=True, owner=allocation["uid"])) if transfer_status.exists() else "pending"
+    return {"ready": True, "backup": backup, "transfer": transfer, "mirror": "pending",
             "acceptance_complete": False}
 
 

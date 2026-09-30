@@ -10,4 +10,6 @@
     - {source: backup.service.j2, name: forgejo-backup.service}
     - {source: backup.timer.j2, name: forgejo-backup.timer}
     - {source: recover.service.j2, name: forgejo-recover.service}
+    - {source: transfer.service.j2, name: forgejo-transfer.service}
+    - {source: transfer.timer.j2, name: forgejo-transfer.timer}
   changed_when: false

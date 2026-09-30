@@ -144,7 +144,8 @@ class InputTests(unittest.TestCase):
                 "proxy_source": values["forgejo_proxy_source"],
                 "health_timeout_seconds": values["forgejo_health_timeout_seconds"],
                 "image": values["forgejo_image"], "postgres_image": values["forgejo_postgres_image"],
-                "rclone_image": values["forgejo_rclone_image"]}
+                "rclone_image": values["forgejo_rclone_image"],
+                "rclone_remote": values["forgejo_rclone_remote"]}
             target = state / "desired.json"
             target.write_text(json.dumps(manifest))
             task_file = ROOT / "roles/forgejo/tasks/verify-public.yml"

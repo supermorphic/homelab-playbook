@@ -1,0 +1,10 @@
+[Unit]
+Description=Independent Forgejo NAS backlog transfer
+
+[Timer]
+OnCalendar=*-*-* 00/4:45:00
+Persistent=true
+Unit=forgejo-transfer.service
+
+[Install]
+WantedBy=timers.target

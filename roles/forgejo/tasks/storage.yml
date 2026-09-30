@@ -66,4 +66,4 @@
     owner: root
     group: svc-forgejo
     mode: '0640'
-  loop: [service.py, archive.py, backup.py]
+  loop: [service.py, archive.py, backup.py, transfer.py]

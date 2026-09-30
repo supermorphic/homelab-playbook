@@ -33,6 +33,7 @@ class ServiceTests(unittest.TestCase):
         self.manifest = {"schema": 1, "allocation": self.allocation,
             "hostname": "forgejo.infra.example.com", "backend_port": 18081,
             "proxy_source": "127.0.0.1/32", "health_timeout_seconds": 60,
+            "rclone_remote": "nas:fixture-forgejo",
             "image": "codeberg.org/forgejo/forgejo:15.0.9-rootless@sha256:" + "a" * 64,
             "postgres_image": "docker.io/library/postgres:17.11@sha256:" + "b" * 64,
             "rclone_image": "docker.io/rclone/rclone:1.75.1@sha256:" + "c" * 64}
