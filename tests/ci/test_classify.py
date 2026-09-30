@@ -637,7 +637,7 @@ class ClassifierCliTests(unittest.TestCase):
         self.assertEqual(head, payload["head_sha"])
         self.assertFalse(payload["include_worktree"])
         self.assertEqual("selective", payload["molecule_plan"]["mode"])
-        self.assertEqual(2, len(payload["molecule_plan"]["matrix"]["include"]))
+        self.assertEqual(3, len(payload["molecule_plan"]["matrix"]["include"]))
         summary_text = summary.read_text()
         for expected in (base, head, "reverse_proxy/default", "debian13",
                          "roles/reverse_proxy/tasks/new.yml"):
@@ -776,7 +776,7 @@ class ChangedRunnerTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("Selected validation depth: full", result.stdout)
         self.assertIn("Escalated validation depth: fast -> full", result.stdout)
-        self.assertEqual(9, result.stdout.count("Would run:"))
+        self.assertEqual(12, result.stdout.count("Would run:"))
         self.assertIn(
             "Would run: mise run test:molecule -- system_maintenance/default",
             result.stdout,

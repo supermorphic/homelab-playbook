@@ -1,6 +1,21 @@
 {
   "rules": [
     {
+      "prefixes": ["roles/forgejo/molecule/default/"],
+      "selectors": ["forgejo/default"],
+      "reason": "Forgejo scenario coverage"
+    },
+    {
+      "prefixes": ["roles/forgejo/", "playbooks/forgejo/", "scripts/forgejo/", "tests/forgejo/"],
+      "selectors": ["forgejo/default"],
+      "reason": "Forgejo deployment and helpers require definitions, supervision and stock runtime recovery"
+    },
+    {
+      "prefixes": ["roles/podman_foundation/", "playbooks/podman/", "roles/reverse_proxy/", "playbooks/reverse-proxy/", "roles/tls_automation/", "playbooks/tls/"],
+      "selectors": ["forgejo/default"],
+      "reason": "Forgejo preparation consumes the foundation allocation, proxy route and TLS certificate contracts"
+    },
+    {
       "prefixes": ["roles/system_maintenance/"],
       "selectors": ["system_maintenance/default", "system_maintenance/baseline"],
       "reason": "maintenance role is exercised by both maintenance scenarios"

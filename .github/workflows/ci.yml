@@ -183,6 +183,11 @@ jobs:
           mise run test:semaphore -- compatibility
           mise run test:semaphore -- fixture
           mise run test:semaphore -- controller
+      - name: Test upstream Forgejo runtime and recovery
+        if: matrix.selector == 'forgejo/default' && matrix.platform == 'debian13'
+        run: |
+          mise run test:forgejo -- compatibility
+          mise run test:forgejo -- fixture
 
   merge-gate:
     name: merge-gate

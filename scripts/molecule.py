@@ -83,6 +83,18 @@ SEMAPHORE_PLATFORMS = tuple(
     for platform in DEFAULT_PLATFORMS
 )
 
+FORGEJO_PLATFORMS = tuple(
+    Platform(
+        name=item.name,
+        base_image=item.base_image,
+        image=f"localhost/homelab-playbook-forgejo-{item.name}:local",
+        container=f"homelab-playbook-forgejo-{item.name}",
+        container_command=item.container_command,
+        containerfile=item.containerfile,
+    )
+    for item in DEFAULT_PLATFORMS
+)
+
 
 @dataclass(frozen=True)
 class Scenario:
@@ -93,6 +105,12 @@ class Scenario:
 
 
 SCENARIOS: Mapping[str, Scenario] = MappingProxyType({
+    "forgejo/default": Scenario(
+        selector="forgejo/default",
+        role_name="forgejo",
+        scenario_name="default",
+        platforms=FORGEJO_PLATFORMS,
+    ),
     "system_maintenance/default": Scenario(
         selector="system_maintenance/default",
         role_name="system_maintenance",

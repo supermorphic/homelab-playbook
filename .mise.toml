@@ -94,4 +94,7 @@ mise run test:molecule -- semaphore/default
 mise run test:semaphore -- compatibility
 mise run test:semaphore -- fixture
 mise run test:semaphore -- controller
+mise run test:molecule -- forgejo/default
+mise run test:forgejo -- compatibility
+mise run test:forgejo -- fixture
 '''

@@ -1,0 +1,35 @@
+---
+- name: Prepare Forgejo definitions in the disposable OS fixture
+  hosts: forgejo
+  gather_facts: true
+  become: true
+  vars_files:
+    - vars/main.yml
+  tasks:
+    # Stock runtime tests run outside this nested namespace boundary.
+    - name: Prepare actual role candidates
+      ansible.builtin.include_role:
+        name: forgejo
+        tasks_from: "{{ item }}"
+      loop: [preflight.yml, storage.yml, configuration.yml, definitions.yml, backups.yml]
+
+    - name: Install administrator-owned fixture publication helper
+      ansible.builtin.copy:
+        src: definition_probe.py
+        dest: /usr/local/libexec/forgejo-definition-probe.py
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Publish actual role definitions without starting nested containers
+      ansible.builtin.command:
+        argv: [python3, /usr/local/libexec/forgejo-definition-probe.py, "{{ forgejo_candidate.path }}"]
+      register: forgejo_fixture_publication
+      changed_when: (forgejo_fixture_publication.stdout | from_json).changed
+      no_log: true
+
+    - name: Remove this fixture candidate
+      ansible.builtin.file:
+        path: "{{ forgejo_candidate.path }}"
+        state: absent
+      changed_when: false
