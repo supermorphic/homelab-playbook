@@ -13,6 +13,9 @@
     - name: Stage Forgejo service definitions
       ansible.builtin.import_tasks: definitions.yml
 
+    - name: Stage Forgejo backup and recovery definitions
+      ansible.builtin.import_tasks: backups.yml
+
     - name: Reconcile Forgejo runtime
       ansible.builtin.import_tasks: services.yml
   always:

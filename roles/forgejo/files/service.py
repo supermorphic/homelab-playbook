@@ -32,6 +32,7 @@ REQUIRED_FILES = (
     "credentials/postgres-admin-password", "credentials/postgres.env",
     "credentials/admin.json", "credentials/rclone.conf", "quadlets/forgejo.network",
     "quadlets/forgejo-postgres.container", "quadlets/forgejo.container",
+    "units/forgejo-backup.service", "units/forgejo-backup.timer", "units/forgejo-recover.service",
 )
 STABLE_INPUTS = (
     "config/database-password", "config/secret-key", "config/internal-token",
@@ -265,12 +266,14 @@ def user_command(arguments: list[str], allocation: dict, **kwargs):
         "HOME": "/var/lib/svc-forgejo", "USER": ACCOUNT, "LOGNAME": ACCOUNT,
         "XDG_RUNTIME_DIR": f"/run/user/{allocation['uid']}"}
     environment.update(kwargs.pop("extra_environment", {}))
-    return execute(["/usr/sbin/runuser", "-u", ACCOUNT, "--", *arguments],
+    command = arguments if os.geteuid() == allocation["uid"] else ["/usr/sbin/runuser", "-u", ACCOUNT, "--", *arguments]
+    return execute(command,
                    environment=environment, **kwargs)
 
 
 def manager(arguments: list[str], **kwargs):
-    return execute(["/usr/bin/systemctl", "--user", "--machine=svc-forgejo@.host", *arguments], **kwargs)
+    scope = ["--machine=svc-forgejo@.host"] if os.geteuid() == 0 else []
+    return execute(["/usr/bin/systemctl", "--user", *scope, *arguments], **kwargs)
 
 
 def wait_health(port: int, timeout: int):
@@ -315,12 +318,12 @@ def check_boundaries(allocation: dict):
         item = directory.lstat()
         if not stat.S_ISDIR(item.st_mode) or item.st_uid != 0 or item.st_mode & 0o022:
             raise ValueError("administrator-owned lifecycle boundary is unsafe")
-    check_lock_metadata(LOCK, allocation["gid"])
+    check_lock_metadata(LOCK, allocation["gid"], owner=0)
 
 
-def check_lock_metadata(path: Path, group: int):
+def check_lock_metadata(path: Path, group: int, *, owner: int | None = None):
     item = path.lstat()
-    if (not stat.S_ISREG(item.st_mode) or item.st_uid != os.geteuid()
+    if (not stat.S_ISREG(item.st_mode) or item.st_uid != (os.geteuid() if owner is None else owner)
             or item.st_gid != group or stat.S_IMODE(item.st_mode) != 0o660):
         raise ValueError("operation lock metadata differs from its declaration")
 
@@ -420,6 +423,29 @@ def initialize_administrator(settings: dict, allocation: dict):
     pending.unlink()
 
 
+def enable_unit_links(allocation: dict):
+    root = Path("/var/lib/svc-forgejo/.config/systemd/user")
+    changed = False
+    for target, unit in (("timers.target", "forgejo-backup.timer"),
+                         ("default.target", "forgejo-recover.service")):
+        directory = root / (target + ".wants")
+        parent = open_directory(directory)
+        try:
+            expected = "../" + unit
+            try:
+                current = os.readlink(unit, dir_fd=parent)
+            except FileNotFoundError:
+                os.symlink(expected, unit, dir_fd=parent)
+                os.chown(unit, 0, allocation["gid"], dir_fd=parent, follow_symlinks=False)
+                changed = True
+            else:
+                if current != expected:
+                    raise ValueError("managed timer or recovery link differs")
+        finally:
+            os.close(parent)
+    return changed
+
+
 def reconcile(candidate: Path) -> dict:
     if not candidate.is_absolute() or candidate.parent != HELPERS / "candidates":
         raise ValueError("candidate is outside the fixed administrator staging boundary")
@@ -488,6 +514,10 @@ def reconcile(candidate: Path) -> dict:
             changed = True
         wait_health(settings["backend_port"], settings["health_timeout_seconds"])
         initialize_administrator(settings, allocation)
+        changed = enable_unit_links(allocation) or changed
+        if manager(["is-active", "forgejo-backup.timer"], check=False).returncode:
+            manager(["start", "forgejo-backup.timer"])
+            changed = True
         result = verify()
         result["changed"] = changed
         return result
@@ -528,7 +558,12 @@ def verify() -> dict:
             "FROM pg_roles WHERE rolname='forgejo';", user="forgejo", database="forgejo") != "f|f|f|f":
         raise ValueError("application database role has excessive authority")
     wait_health(settings["backend_port"], 5)
-    return {"ready": True, "backup": "pending", "mirror": "pending",
+    manager(["is-active", "forgejo-backup.timer"])
+    backup_status = STATE / "backup-status.json"
+    backup = json.loads(safe_read(backup_status, private=True, owner=allocation["uid"])) if backup_status.exists() else "pending"
+    if (STATE / "restart-intent.json").exists() or (STATE / "recovery-failed").exists():
+        backup = {"recovery": "incomplete"}
+    return {"ready": True, "backup": backup, "mirror": "pending",
             "acceptance_complete": False}
 
 

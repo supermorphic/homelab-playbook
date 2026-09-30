@@ -29,6 +29,13 @@
       - forgejo_postgres_image is match('^docker[.]io/library/postgres:17[.][0-9]+@sha256:[0-9a-f]{64}$')
       - forgejo_rclone_image is match('^docker[.]io/rclone/rclone:[0-9]+[.][0-9]+[.][0-9]+@sha256:[0-9a-f]{64}$')
       - forgejo_postgres_major | string == '17'
+      - forgejo_health_timeout_seconds is integer
+      - forgejo_health_timeout_seconds >= 1 and forgejo_health_timeout_seconds <= 300
+      - forgejo_backup_timeout_seconds == 1800
+      - forgejo_recovery_timeout_seconds == 300
+      - forgejo_transfer_timeout == '2h'
+      - forgejo_local_retention_days == 7
+      - forgejo_remote_retention_days == 90
       - forgejo_backend_port is integer
       - forgejo_backend_port >= 1024 and forgejo_backend_port <= 65535
       - forgejo_hostname is match('^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$')

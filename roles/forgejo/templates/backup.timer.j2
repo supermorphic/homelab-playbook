@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly Forgejo backup at 03:30 host-local
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+Unit=forgejo-backup.service
+
+[Install]
+WantedBy=timers.target

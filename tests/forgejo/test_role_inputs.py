@@ -67,6 +67,11 @@ class InputTests(unittest.TestCase):
     def test_declared_synthetic_inputs_are_accepted(self):
         self.assertEqual(0, self.evaluate(self.settings()))
 
+    def test_unbounded_backup_budget_is_rejected(self):
+        values = self.settings()
+        values["forgejo_backup_timeout_seconds"] = 7200
+        self.assertNotEqual(0, self.evaluate(values))
+
     def test_missing_allocation_is_rejected(self):
         values = self.settings()
         values["forgejo_foundation_account"] = {}

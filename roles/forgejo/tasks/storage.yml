@@ -57,11 +57,13 @@
     - /var/lib/svc-forgejo/.config/systemd
     - "{{ forgejo_user_unit_root }}"
     - "{{ forgejo_user_unit_root }}/timers.target.wants"
+    - "{{ forgejo_user_unit_root }}/default.target.wants"
 
 - name: Install trusted Forgejo lifecycle helper
   ansible.builtin.copy:
-    src: service.py
-    dest: "{{ forgejo_helper_root }}/service.py"
+    src: "{{ item }}"
+    dest: "{{ forgejo_helper_root }}/{{ item }}"
     owner: root
     group: svc-forgejo
     mode: '0640'
+  loop: [service.py, archive.py, backup.py]

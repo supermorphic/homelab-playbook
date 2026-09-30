@@ -18,6 +18,7 @@ Volume=/etc/localtime:/etc/localtime:ro
 NoNewPrivileges=true
 
 [Service]
+ExecStartPre=/usr/bin/python3 {{ forgejo_helper_root }}/backup.py guard
 ExecStartPre=/bin/sh -ec 'for attempt in $(seq 1 {{ forgejo_health_timeout_seconds }}); do /usr/bin/podman healthcheck run forgejo-postgres && exit 0; sleep 1; done; exit 1'
 Restart=on-failure
 RestartSec=5s

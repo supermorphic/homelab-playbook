@@ -182,7 +182,8 @@ class ServiceTests(unittest.TestCase):
                 ("user_command", user), ("initialize_database", lambda *args: None),
                 ("initialize_administrator", lambda *args: None),
                 ("database_command", lambda *args, **kwargs: "f|f|f|f"),
-                ("wait_health", lambda *args: None)):
+                ("wait_health", lambda *args: None),
+                ("enable_unit_links", lambda *args: False)):
             patcher = patch.object(self.service, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
