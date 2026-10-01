@@ -98,7 +98,9 @@ def recover_locked(host):
     identifier = saved.get('archive_id')
     if identifier is not None:
         archive.archive_time(identifier)
-        archive.validate_archive(host.backups / identifier, False)
+        # Capture sealed and fsynced this generation before recording its ID.
+        # Transfer independently verifies its payloads. Availability recovery
+        # must not hash or decompress archive-sized data under its 300s budget.
     intent.unlink(missing_ok=True)
     (host.state / 'recovery-failed').unlink(missing_ok=True)
     if identifier is not None:
@@ -180,6 +182,8 @@ class Host:
         self.environment = {'PATH': '/usr/bin:/bin', 'HOME': '/var/lib/svc-forgejo',
             'LANG': 'C.UTF-8', 'XDG_RUNTIME_DIR': f"/run/user/{self.allocation['uid']}"}
     def preflight(self):
+        if (service.HELPERS / 'activation-pending.json').exists():
+            raise RuntimeError('configuration activation must complete before capture')
         if service.account_allocation() != self.settings['allocation']:
             raise ValueError('foundation allocation changed')
         service.check_boundaries(self.allocation)

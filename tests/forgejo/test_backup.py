@@ -6,6 +6,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from test_archive import ROOT, FILES, load
 sys.path.insert(0, str(FILES))
@@ -120,6 +121,21 @@ class BackupTests(unittest.TestCase):
         self.host.events.clear()
         self.backup.recover(self.host)
         self.assertEqual([], self.host.events)
+
+    def test_recovery_completes_without_archive_sized_validation(self):
+        result = self.backup.capture_locked(self.host)
+        self.assertFalse(self.host.running)
+        def too_slow(*args):
+            raise RuntimeError('archive verification exceeds availability budget')
+        with patch.object(self.backup.archive, 'validate_archive', too_slow):
+            try:
+                self.backup.recover(self.host)
+            except RuntimeError as error:
+                self.fail('availability recovery repeated archive verification: ' + str(error))
+        self.assertTrue(self.host.running)
+        self.assertFalse((self.host.state / 'restart-intent.json').exists())
+        self.assertIn('transfer', self.host.events)
+        self.assertTrue((self.host.backups / result['archive_id'] / 'SHA256SUMS').exists())
 
     def test_failed_restart_preserves_distinct_recovery_failure(self):
         self.host.fail = 'restart'
