@@ -1,0 +1,24 @@
+semaphore_database_password: ENC[AES256_GCM,data:W34x25MEoi7MLHQT7JIIRGT1yMj9SNZ0DNmhyX4DUrSfkX1UK7gDkg==,iv:EinFOIn9+lLtZmhucCIjNwr8RarGQOfGA38KvVTPTaA=,tag:DSPWUsbHFxqbd2gceUq/Yw==,type:str]
+semaphore_admin_login: ENC[AES256_GCM,data:jX3jErk=,iv:uuNW8HlsYMqGvM0lRKSoSesNXjQDOn/ZrqSzOXX7EcA=,tag:/rMGLG4IB4rRt+CijD2lXg==,type:str]
+semaphore_admin_password: ENC[AES256_GCM,data:hbxKdnEOBCPRnISvpvGytncTf6yfWJ2FUpwZ50k6D5huRZ3kA56DdQ==,iv:StHQ5NGroWFZqGw6bzrkPKMMgLllaeqv4Z84HpdUEdE=,tag:0Y+ou3f0z5DDCJfHxk4iDg==,type:str]
+semaphore_admin_name: ENC[AES256_GCM,data:vvfgU9EXcSowHPpqVQ==,iv:rrzMvvnmOVfZfT4Fxp7qO6VGHt4S1s+p6xbQqLXhvfY=,tag:EzDX3Oi0gB+ae5UNIDG+KQ==,type:str]
+semaphore_admin_email: ENC[AES256_GCM,data:WcHaRxgA7jl+ulEPljslTVYVxHVz8rimQcH7BQPL28EXIQ==,iv:NVNv/Qina9zIDpxsFRN3S6zHz0gQE3UDRpfe3e/Isug=,tag:BpeKc826FQLNSTygJfqw6w==,type:str]
+semaphore_cookie_hash: ENC[AES256_GCM,data:3CccIAXZt0Yhnu89VIsywgwjEKym1tocGFRiHMn3uV7p/YjQAbflKoTLTzg=,iv:oAiF1yFML7ly1JwzadSOQ/cXp0sCAv7r9p3QUfz7Up4=,tag:opZYXWxxQ8K9puh+yabuBg==,type:str]
+semaphore_cookie_encryption: ENC[AES256_GCM,data:N2E3FFdCdvHAyvyxwjBzB23FfKwZxCyCR5UcKofTgv9ROpcPlW+N5Tw/X24=,iv:ueKJP/cMpqoDz0JvdT3Max3AKtiFbTq+ApMK1j4LYaI=,tag:QRNz6WtGxicr8K+8Q6ReAA==,type:str]
+semaphore_access_key_encryption: ENC[AES256_GCM,data:L6N4TnFVTyAKy+wqeAs2/G8qoSPHvZBreeGAlpw9FTWyDe/OM3wLzo6wX8M=,iv:7Z6iDXalYtk0lM+7TWXOV1pOz6oR22741677uXAlvDI=,tag:TO0uiHJM9qnx5AePP/z5eg==,type:str]
+semaphore_rclone_config: ENC[AES256_GCM,data:v7+LyTyq/3wSVBs1XKVW1l5FctZobl2qYA4KcvY5JlnJp7tdZUHwFwclnfwfY3HSo7hhpvccZI8xCIwFm1ETp7pXyaCSksZ2Rq50u9Cs6TDl,iv:ge/RT4lOz6oLcyxFeatV7ia+eOzV9Au6t6zhipE/cRY=,tag:/zunkX2oSrp+yItozUalwA==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBVaGpRSnhGTXJuVVN0OXBS
+            NExGMkF0c1JRZmVmYlB0OFdzanBRVGxYbUNZCnFLTXV4b1UyNmt3dUNJWG5lbTc1
+            SlF3cWZrT1VJRS9QQkxzRTRkcHRVck0KLS0tIE5zYmkvKzR1SDQ1MExtL0dzdFNl
+            QjFpRWllWW5IRVRmVzNUNTUrVi81SUEKLyrUy0H8nbplC1Y1Bq1HwfE77p2fRjSx
+            xip+vMg8CRP8Oicw8dNFK+I1444SCBtYxSQKRnQxKITu33S+Hwtafw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1ehm0ehd2v2emfuycf2p0suhg94ej29zcu96ffmh3t6afchhjd99sxc4984
+    encrypted_regex: ^(.*)$
+    lastmodified: "2026-10-01T22:38:15Z"
+    mac: ENC[AES256_GCM,data:lvOSz2rjTykKwZ0D9xNt3savjIqsQ2GHEfUD1j2ETUzz9wVSS6P4lAIJmulAxttUuFxP6DrNibvrA6fWfo7bcZ5PwRyiRucUh7wsibc5/25KRHqkMebbUUIEGVV98EImPUf5k/Z/QuY46/w/DYWKm7+gknrDM4o6mrOpCsG0XZ8=,iv:9o2YxXxy6OIRhNvcdo4OIvvOGSCpSkubG8iD/ijbxeQ=,tag:hPnvcuobPUiOOR0II+Uryw==,type:str]
+    version: 3.13.2
