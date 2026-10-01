@@ -253,6 +253,30 @@ mode also needs explicit operator authorization for the selected NAS target and
 temporary recovery resources. A confirmation argument guards execution intent;
 it does not supply authorization. No experiment performs production cutover.
 
+### Forgejo deployment and recovery
+
+`forgejo provision` and `forgejo verify` use `mise run playbook` and the same
+authority boundaries as the existing service commands. Provision changes host
+configuration, services and persistent backup schedules, then observes the result.
+Verify observes existing state, including native mirror metadata, without repair,
+backup creation or synchronization.
+
+`mise run test:forgejo -- unit` validates local synthetic inputs.
+`compatibility` and `fixture` conduct bounded upstream-container, HTTPS-mirror
+and SMB/archive/restore experiments with private synthetic credentials. Each
+invocation labels its resources and preserves cleanup failure separately.
+`mise run test:molecule -- forgejo/default` checks Debian role definitions and
+actual systemd supervision using owned stand-ins.
+
+`mise run test:forgejo -- restore --attended` requires exact archive, NAS prefix,
+matching private settings, independent expected state, new destination and run
+selection. The repeated run identifier binds intent; authorization remains an
+operator decision. The experiment preserves the source, isolates restored
+software before startup and removes only owned resources. It performs no live
+cutover. See the [recovery guide](../guides/forgejo-recovery.md) for every flag.
+Internal capture, recovery and transfer helpers run within the managed lifecycle;
+they are not alternate operator gateways.
+
 ## Command and failure contracts
 
 - Validate public arguments and registered targets before starting an operation.

@@ -61,5 +61,82 @@ Application keys and administrator credentials remain stable on ordinary
 provisioning. Retain the protected inputs matching each backup generation
 independently. Agents do not read or enroll protected inventory values.
 
+## Deployment order
+
+Each live command needs direction for its exact host, action and arguments.
+Follow the existing [foundation](../podman/README.md), [TLS](../tls/README.md)
+and [proxy](../reverse-proxy/README.md) procedures:
+
+1. Inspect approved allocations and the forwarding source. Enroll foundation
+   declarations, Forgejo group membership and protected application, NAS and
+   proxy inputs. Preserve unrelated accounts and routes.
+2. Provision and verify the Podman foundation on that host.
+3. Prepare the TLS issuer and shared certificate. Initial issuance needs separate
+   authorization. Prepare Caddy and its matching route declaration.
+4. Provision Forgejo, then activate its route through proxy provisioning.
+5. Verify Forgejo, proxy and TLS, then perform the attended checks in the
+   [recovery guide](../../docs/guides/forgejo-recovery.md).
+
+Provisioning rejects identity changes, stable key/database credential changes,
+unknown existing storage, PostgreSQL major changes and runtime pin changes.
+Those changes need a reviewed recovery or migration procedure.
+
+## Backup operation and diagnosis
+
+| Operation | Host-local schedule | Bound |
+| --- | --- | --- |
+| Native push-mirror scan | Once nightly at 02:00 | Eight-hour eligibility; no startup or push trigger |
+| Local backup | Daily at 03:30 | 30-minute capture; separate five-minute recovery |
+| NAS transfer | Every four hours at :45, plus successful backup recovery | Two hours, independent of downtime |
+
+Persistent backup/transfer timers catch missed activations. Backup stops Forgejo
+while PostgreSQL stays running, captures the database and complete application
+and configuration files, then restores intended availability. Persistent intent
+and a separate recovery service handle interruption and boot. A timer does not
+start an application that was deliberately stopped.
+
+`/var/lib/svc-forgejo/forgejo/backups` holds completed local generations. Retain
+local archives for seven days from creation, deleting them only after remote
+verification. Retain NAS archives for 90 days from creation. Failed transfers
+preserve the backlog. Generations older than remote
+retention, unexpected files and unresolved recovery state need operator review;
+the helper fails instead of broadening deletion or overwriting another archive.
+
+`forgejo verify` reports readiness, backup/transfer evidence and native mirror
+status. Missing first evidence stays pending; `acceptance_complete` stays false
+because live acceptance is independent. Review capture, recovery and transfer
+unit results separately in the `svc-forgejo` user manager. Use bounded journal
+reads and keep private configuration and upstream errors out of public logs.
+
+For failed capture, establish whether recovery restored availability. For failed
+recovery, preserve intent and storage, identify the failed precondition, and
+authorize recovery separately. Do not remove the recovery guard to force
+provisioning. For NAS failure, restore declared access and capacity, then observe
+the independent retry. Prove recoverability with an exact restore drill.
+
+## Offline validation
+
+```sh
+mise run test:forgejo -- unit
+mise run test:forgejo -- compatibility
+mise run test:forgejo -- fixture
+mise run test:molecule -- forgejo/default
+mise run ci:changed
+```
+
+Compatibility checks the pinned upstream images and disposable HTTPS mirrors.
+Fixture mode checks consistent capture, SMB outage/backlog transfer and recovery
+with original authentication, refs, collaboration objects, attachments and LFS.
+Both modes report owned cleanup separately from operation failure.
+
+Molecule checks Debian installation, idempotence, generated units, permissions
+and actual systemd recovery supervision with a separate disposable service
+account. Nested namespaces prevent product container startup there; stock
+container experiments supply runtime evidence. Physical reboot, trusted HTTPS,
+real NAS access and real GitHub mirrors remain attended checks.
+Ordinary Forgejo changes select its scenario and both runtime modes. Shared
+consumer contracts add affected scenarios; CI/dependency/framework changes
+require the full suite. Unrelated mapped services do not select Forgejo.
+
 See [specification 010](../../docs/specs/010-forgejo-service.md) and the
 [command lifecycle](../../docs/reference/repository-command-lifecycle.md).

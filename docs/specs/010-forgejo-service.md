@@ -2,7 +2,8 @@
 
 Issue: [#7 Forgejo self-hosted Git](https://github.com/supermorphic/homelab-playbook/issues/7)
 
-Status: design for operator review; implementation and live acceptance are pending.
+Status: approved design, implemented locally. Offline validation and live service
+acceptance are separate evidence; live acceptance remains pending.
 
 ## Purpose and delivery boundary
 
@@ -45,11 +46,11 @@ Follow-up ownership:
 
 Use the maintained upstream rootless Forgejo image and a dedicated PostgreSQL 17
 container under `svc-forgejo`. Select the supported Forgejo LTS line. Research on
-2026-09-30 identified Forgejo 15.0.9 as the current LTS patch; implementation must
-review the selected release and resolve immutable image digests before accepting
-runtime compatibility. Record exact application, database and client versions and
-image digests in Git. No floating image updates or custom application image is
-introduced.
+2026-09-30 selected Forgejo 15.0.9-rootless, PostgreSQL 17.11 and rclone 1.75.1.
+Reviewed immutable multi-architecture image digests are recorded in role defaults.
+Stock-container compatibility checks cover protected initialization, database
+privileges, persistence and native HTTPS mirroring. No floating image updates or
+custom application image is introduced.
 
 SQLite is supported and recommended upstream for low to moderate activity. The
 operator chose PostgreSQL to reuse the existing database operating pattern and
@@ -97,8 +98,11 @@ inventory itself.
 Use local application accounts and closed registration. Disable the interactive
 installation page after managed initialization. Bootstrap the first administrator
 idempotently; ordinary provisioning must neither reset an existing administrator
-nor regenerate stable application keys. Use an upstream-supported protected input
-mechanism for account creation; never interpolate passwords into process arguments.
+nor regenerate stable application keys. The pinned CLI creates a random initial
+password captured privately; an authenticated API update installs the protected
+initial password. Retain interrupted bootstrap state, and require operator
+recovery when an existing account lacks completion evidence. Never interpolate
+passwords into process arguments.
 Document independent administrator recovery without requiring an external identity
 provider or SMTP service.
 
@@ -213,6 +217,13 @@ Test the combination against the pinned version, including restart and failure b
 An attended initial/manual synchronization is separate from routine scheduling.
 Do not silently substitute an every-few-minutes schedule or a drifting 24-hour
 timer for the selected nightly behavior.
+
+Native Git uses credential-free HTTPS destination URLs and a private read-only
+`core.askPass` program. Pinned Forgejo disables Git credential helpers; askpass
+reads destination-scoped protected credentials without exposing them in process
+arguments or erasing declared inputs after failed authentication. Keep that
+configuration inside the archive boundary. LFS authentication and transfer need
+separate acceptance.
 
 The installed service starts with no declared production mirror targets. A
 separately authorized representative repository demonstrates initial enrollment,
@@ -351,6 +362,16 @@ during implementation, and `mise run ci:changed` before claiming completion.
 Offline PR validation uses synthetic inputs and no production credentials.
 
 ## Acceptance and evidence boundaries
+
+Registered stock-container experiments validate consistent database/files capture,
+SMB backlog transfer, exact isolated recovery and native HTTPS nightly mirroring.
+The mirror experiment retains the shipped schedule and epoch clock, using a
+disposable named TZif zone to exercise local 02:00 without waiting overnight.
+It checks eligibility, disabled startup/push triggers, completion rounding,
+authentication failure/retry and native branch force-update/tag deletion.
+Molecule checks installed definitions and actual recovery supervision with a
+separate disposable account. These results do not prove physical host boot or
+live destination access. Execution logs remain uncommitted under `.tmp/`.
 
 Repository implementation acceptance requires the selected offline validation and
 real fixture backup/restore evidence. Service acceptance additionally requires

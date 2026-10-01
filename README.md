@@ -141,6 +141,25 @@ enrolled. Backups run daily at 03:00 host-local; successful dumps trigger NAS
 transfer, with retries every four hours at :15. See the
 [recovery guide](docs/guides/semaphore-recovery.md) for an isolated restore drill.
 
+### Forgejo commands
+
+Forgejo targets the `forgejo` group and consumes an existing `svc-forgejo`
+foundation allocation. Enroll its protected application/NAS inputs and matching
+proxy route separately. Examples use the synthetic hostname
+`forgejo.infra.example.com`, backend `18081` and shared `infra` certificate.
+
+| Command | Purpose |
+| --- | --- |
+| `mise run playbook -- forgejo provision production --limit <host>` | Reconcile rootless Forgejo, dedicated PostgreSQL and backup/transfer units, then verify. |
+| `mise run playbook -- forgejo verify production --limit <host>` | Observe definitions, storage, containers, timers and backup/mirror evidence without repair. |
+
+HTTPS serves web and Git; Actions, SSH and packages remain disabled. Backups
+capture database and files daily at 03:30 with bounded downtime. Native mirrors
+scan once nightly at 02:00 after separately authorized enrollment. See the
+[Forgejo README](playbooks/forgejo/README.md) for dependency order and diagnosis,
+and the [recovery guide](docs/guides/forgejo-recovery.md) for an exact isolated
+NAS restore and separate attended acceptance.
+
 ### Retained playbook commands
 
 The repository also retains these command families. They have no active
@@ -258,6 +277,13 @@ See the [Semaphore playbooks](playbooks/semaphore/README.md) for prerequisites,
 controller configuration, and backup operation, and the
 [recovery guide](docs/guides/semaphore-recovery.md) for isolated restore tests
 and replacement-host recovery.
+
+`mise run test:molecule -- forgejo/default` checks Forgejo definitions,
+idempotence and systemd recovery supervision on Debian. Selected Forgejo changes
+also run `test:forgejo` compatibility and SMB/archive/restore fixture modes with
+the pinned upstream images. Physical reboot and live NAS/HTTPS/mirror acceptance
+remain separate operator evidence. Shared CI/framework changes require full
+validation; ordinary Forgejo changes use the existing scenario classifier.
 
 ## GitHub main protection
 

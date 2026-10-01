@@ -13,6 +13,8 @@ specifications record design decisions and integration contracts.
   provision, verify, maintain, and recover an off-cluster Ansible-managed host.
 - [SOPS secrets](guides/sops-secrets.md) — Set up and recover the operator age
   identity, edit protected inventory, and manage recipients.
+- [Forgejo recovery](guides/forgejo-recovery.md) — Select an exact archive,
+  validate an isolated replacement and perform attended service acceptance.
 - [UniFi TLS certificates](guides/unifi-tls.md) — Configure native UniFi OS
   certificate issuance and renewal with Cloudflare DNS and direct local access.
 - [Private HTTPS routes through Caddy](guides/reverse-proxy.md) — Configure device
@@ -52,6 +54,6 @@ specifications record design decisions and integration contracts.
 - [009 — Semaphore infrastructure automation](specs/009-semaphore-infrastructure-automation.md)
   — Defines application deployment, PostgreSQL backups, isolated recovery and
   the optional controller job.
-- [010 — Forgejo service](specs/010-forgejo-service.md) — Defines the proposed
+- [010 — Forgejo service](specs/010-forgejo-service.md) — Defines the
   HTTPS-only Forgejo/PostgreSQL service, backups, isolated recovery, nightly
   mirroring and change-directed validation, with repository migration separate.
