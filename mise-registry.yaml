@@ -1,0 +1,39 @@
+---
+# SOPS 3.13.2 release metadata, with the signer from its published provenance.
+# https://github.com/getsops/sops/blob/v3.13.2/.github/workflows/release.yml
+# Review the signer and this version constraint when updating the SOPS pin.
+packages:
+  - type: github_release
+    repo_owner: getsops
+    repo_name: sops
+    description: Simple and flexible tool for managing secrets
+    version_constraint: "false"
+    version_overrides:
+      - version_constraint: Version == "v3.13.2"
+        asset: sops-{{.Version}}.{{.OS}}.{{.Arch}}
+        format: raw
+        checksum:
+          type: github_release
+          asset: sops-{{.Version}}.checksums.txt
+          algorithm: sha256
+          cosign:
+            bundle:
+              type: github_release
+              asset: sops-{{.Version}}.checksums.sigstore.json
+            opts:
+              - --certificate-identity-regexp
+              - https://github.com/getsops
+              - --certificate-oidc-issuer
+              - https://token.actions.githubusercontent.com
+              - --certificate-github-workflow-repository
+              - getsops/sops
+              - --certificate-github-workflow-ref
+              - refs/tags/{{.Version}}
+        slsa_provenance:
+          type: github_release
+          asset: sops-{{.Version}}.intoto.jsonl
+          signer_identity: https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@refs/tags/v2.1.0
+          signer_issuer: https://token.actions.githubusercontent.com
+        overrides:
+          - goos: windows
+            asset: sops-{{.Version}}.{{.Arch}}

@@ -4,6 +4,7 @@ import importlib.util
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -114,6 +115,9 @@ class SemaphoreTestCommandTests(unittest.TestCase):
             fixture = Path(temporary)
             runner._fixture(fixture)
             self.assertEqual(0o700, fixture.stat().st_mode & 0o777)
+            config = tomllib.loads((fixture / ".mise.toml").read_text())
+            for registry in config["settings"].get("aqua", {}).get("registries", []):
+                self.assertTrue((fixture / registry).is_file(), registry)
             argv = runner._container(
                 run, run.name("private-fixture"), [f"{fixture}:/fixture:ro"], "true"
             )

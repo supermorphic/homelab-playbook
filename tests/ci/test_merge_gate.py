@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import sys
+import tomllib
 import unittest
 from pathlib import Path
 from types import ModuleType
@@ -394,6 +395,23 @@ class WorkflowContractTests(unittest.TestCase):
         for line in self.workflow.splitlines():
             if "uses:" in line:
                 self.assertRegex(line, r"@[0-9a-f]{40}(?:\s+#.*)?$")
+
+    def test_ci_mise_versions_are_explicit_consistent_and_supported(self) -> None:
+        versions = []
+        for job in (self.classify, self.fast, self.ansible, self.molecule, self.merge_gate):
+            step = named_step_block(job, "Install locked tools")
+            values = direct_mapping_values(step, "version", 10)
+            self.assertEqual(1, len(values), "each CI job must pin its Mise binary")
+            version = values[0].strip("\"'")
+            self.assertRegex(version, r"^[0-9]+\.[0-9]+\.[0-9]+$")
+            versions.append(version)
+        self.assertEqual(1, len(set(versions)), "CI jobs must use the same Mise binary")
+        config = tomllib.loads((REPOSITORY_ROOT / ".mise.toml").read_text())
+        minimum = config["min_version"]["hard"]
+        self.assertGreaterEqual(
+            tuple(map(int, versions[0].split("."))),
+            tuple(map(int, minimum.split("."))),
+        )
 
     def test_classifier_propagates_all_outputs_and_uses_event_specific_shas(self) -> None:
         expected_outputs = (

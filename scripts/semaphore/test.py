@@ -44,6 +44,7 @@ MISE_ASSETS = {
 FIXTURE_FILES = (
     ".mise.toml",
     "mise.lock",
+    "mise-registry.yaml",
     "pyproject.toml",
     "uv.lock",
     "requirements.yml",

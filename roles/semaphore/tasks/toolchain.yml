@@ -59,6 +59,7 @@
     semaphore_toolchain_fingerprint_inputs:
       - ".mise.toml\u0000{{ lookup('file', role_path ~ '/../../.mise.toml', rstrip=false) }}"
       - "mise.lock\u0000{{ lookup('file', role_path ~ '/../../mise.lock', rstrip=false) }}"
+      - "mise-registry.yaml\u0000{{ lookup('file', role_path ~ '/../../mise-registry.yaml', rstrip=false) }}"
       - "pyproject.toml\u0000{{ lookup('file', role_path ~ '/../../pyproject.toml', rstrip=false) }}"
       - "uv.lock\u0000{{ lookup('file', role_path ~ '/../../uv.lock', rstrip=false) }}"
       - "requirements.yml\u0000{{ lookup('file', role_path ~ '/../../requirements.yml', rstrip=false) }}"
@@ -149,6 +150,7 @@
   loop:
     - {src: .mise.toml, dest: .mise.toml, mode: '0600'}
     - {src: mise.lock, dest: mise.lock, mode: '0600'}
+    - {src: mise-registry.yaml, dest: mise-registry.yaml, mode: '0600'}
     - {src: pyproject.toml, dest: pyproject.toml, mode: '0600'}
     - {src: uv.lock, dest: uv.lock, mode: '0600'}
     - {src: requirements.yml, dest: requirements.yml, mode: '0600'}

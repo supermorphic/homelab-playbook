@@ -17,6 +17,11 @@ mise install
 mise run bootstrap
 ```
 
+CI pins the Mise binary separately from the action wrapper. The repository's
+[`mise-registry.yaml`](mise-registry.yaml) supplies the reviewed SOPS 3.13.2
+provenance signer; its release constraint and signer must be reviewed when the
+SOPS pin changes. The existing lockfile checksums and provenance remain required.
+
 ## Repository layout
 
 `playbooks/` contains host automation, `roles/` contains reusable Ansible roles,
