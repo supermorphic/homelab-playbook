@@ -8,6 +8,7 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 FILES = ROOT / 'roles/forgejo/files'
@@ -124,6 +125,27 @@ class ArchiveTests(unittest.TestCase):
         os.link(self.path / 'database.dump', self.path.parent / 'outside')
         with self.assertRaises(ValueError):
             self.archive.validate_archive(self.path, False)
+
+    def test_too_many_empty_members_are_rejected(self):
+        with tarfile.open(self.path / 'files.tar.gz', 'w:gz') as stream:
+            for number in range(4):
+                item = tarfile.TarInfo('data/empty-' + str(number))
+                item.uid = item.gid = 1000
+                stream.addfile(item)
+        with patch.object(self.archive, 'MAX_MEMBERS', 3, create=True):
+            with self.assertRaisesRegex(ValueError, 'limit'):
+                self.archive.validate_tar(self.path / 'files.tar.gz')
+
+    def test_expanded_content_limit_rejects_compressible_payload(self):
+        self.write_tar('data/large', b'x' * 4096)
+        with patch.object(self.archive, 'MAX_EXPANDED_BYTES', 3072, create=True):
+            with self.assertRaisesRegex(ValueError, 'limit'):
+                self.archive.validate_tar(self.path / 'files.tar.gz')
+
+    def test_decompressed_stream_limit_rejects_metadata_expansion(self):
+        with patch.object(self.archive, 'MAX_STREAM_BYTES', 1024, create=True):
+            with self.assertRaisesRegex(ValueError, 'limit'):
+                self.archive.validate_tar(self.path / 'files.tar.gz')
 
 
 if __name__ == '__main__':

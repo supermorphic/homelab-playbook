@@ -1,5 +1,7 @@
 """Shared exact-generation Forgejo archive contract; no runtime mutations."""
 from datetime import datetime, timezone
+from contextlib import contextmanager
+import gzip
 import hashlib
 import json
 import os
@@ -11,6 +13,46 @@ import tarfile
 PAYLOADS = ('database.dump', 'files.tar.gz', 'manifest.json', 'SHA256SUMS')
 LAYOUT = {'data': '/var/lib/gitea', 'config': '/etc/gitea'}
 NAME = re.compile(r'forgejo-(\d{8}T\d{6}Z)-([a-z0-9]{8,32})')
+MAX_MEMBERS = 100000
+MAX_EXPANDED_BYTES = 256 * 1024**3
+MAX_STREAM_BYTES = 257 * 1024**3
+MAX_NAME_BYTES = 32 * 1024**2
+
+
+class LimitedReader:
+    def __init__(self, stream):
+        self.stream = stream
+        self.count = 0
+
+    def read(self, size):
+        content = self.stream.read(min(size, MAX_STREAM_BYTES - self.count + 1))
+        self.count += len(content)
+        if self.count > MAX_STREAM_BYTES:
+            raise ValueError('archive decompressed stream limit exceeded')
+        return content
+
+
+class BoundedTarInfo(tarfile.TarInfo):
+    @classmethod
+    def frombuf(cls, buf, encoding, errors):
+        item = super().frombuf(buf, encoding, errors)
+        metadata = (tarfile.XHDTYPE, tarfile.XGLTYPE, tarfile.GNUTYPE_LONGNAME, tarfile.GNUTYPE_LONGLINK)
+        if item.type in metadata and item.size > 65536:
+            raise ValueError('archive extended header limit exceeded')
+        if item.size < 0 or item.type not in (*metadata, tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE):
+            raise ValueError('file archive contains unsupported type or size')
+        return item
+
+
+@contextmanager
+def checked_tar(path):
+    with gzip.open(path, 'rb') as inflated:
+        bounded = LimitedReader(inflated)
+        with tarfile.open(fileobj=bounded, mode='r|', stream=True, tarinfo=BoundedTarInfo) as stream:
+            yield stream
+        # Include trailing padding/data in the decompressed limit and check CRC.
+        while bounded.read(1024 * 1024):
+            pass
 
 
 def archive_time(name: str):
@@ -58,18 +100,40 @@ def digest_file(path: Path) -> dict:
 
 def validate_tar(path: Path):
     names = set()
-    with tarfile.open(path, 'r:gz') as stream:
+    nodes = set()
+    expanded = filesystem_bytes = name_bytes = 0
+    with checked_tar(path) as stream:
         for item in stream:
             name = PurePosixPath(item.name)
             if (name.is_absolute() or '..' in name.parts or not name.parts
                     or name.parts[0] not in LAYOUT or item.name != name.as_posix()
                     or item.name in names
+                    or len(name.parts) > 64 or len(item.name.encode()) > 4096
                     or not (item.isfile() or item.isdir())
                     or item.mode & 0o7000 or item.uid != 1000 or item.gid != 1000):
                 raise ValueError('file archive contains unsupported path, type or ownership')
+            if len(names) >= MAX_MEMBERS:
+                raise ValueError('archive member limit exceeded')
+            expanded += item.size
+            if expanded > MAX_EXPANDED_BYTES:
+                raise ValueError('archive expanded content limit exceeded')
             names.add(item.name)
+            for node in (name, *name.parents):
+                if node == PurePosixPath('.') or node in nodes:
+                    continue
+                if len(nodes) >= MAX_MEMBERS:
+                    raise ValueError('archive filesystem entry limit exceeded')
+                name_bytes += len(node.as_posix().encode())
+                if name_bytes > MAX_NAME_BYTES:
+                    raise ValueError('archive path memory limit exceeded')
+                nodes.add(node)
+                filesystem_bytes += 8192
+            if item.isfile():
+                filesystem_bytes += ((item.size + 4095) // 4096) * 4096
     if not names:
         raise ValueError('empty file archive')
+    return {'members': len(names), 'nodes': len(nodes), 'expanded_bytes': expanded,
+            'filesystem_bytes': filesystem_bytes}
 
 
 def validate_manifest(manifest: dict):
@@ -96,7 +160,7 @@ def completion(path: Path) -> dict:
             'files': {name: digest_file(path / name) for name in PAYLOADS}}
 
 
-def validate_archive(path: Path, require_complete: bool) -> dict:
+def validate_archive(path: Path, require_complete: bool, *, statistics=None) -> dict:
     metadata = path.lstat()
     if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.geteuid()
             or metadata.st_mode & 0o077):
@@ -117,7 +181,9 @@ def validate_archive(path: Path, require_complete: bool) -> dict:
     with (path / 'database.dump').open('rb') as stream:
         if stream.read(5) != b'PGDMP':
             raise ValueError('database archive is not PostgreSQL custom format')
-    validate_tar(path / 'files.tar.gz')
+    checked = validate_tar(path / 'files.tar.gz')
+    if statistics is not None:
+        statistics.update(checked)
     if 'COMPLETE' in expected and json.loads(read_file(path / 'COMPLETE')) != actual:
         raise ValueError('completion metadata differs from the verified payload set')
     return manifest

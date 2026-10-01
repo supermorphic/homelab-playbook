@@ -88,9 +88,52 @@ class RestoreTests(unittest.TestCase):
             self.preflight()
         self.assertEqual('independent sentinel', sentinel.read_text())
 
+    def test_parent_traversal_is_rejected_before_retrieval(self):
+        destination = fixtures.ROOT / '.tmp/forgejo/../../../outside/new-restore'
+        rclone = self.settings / 'rclone.conf'
+        rclone.write_text('[nas]\ntype = smb\n')
+        rclone.chmod(0o600)
+        expected = self.settings / 'expected.json'
+        expected.write_text(json.dumps({'schema': 1, 'username': 'fixture', 'repository': 'fixture',
+            'credential_file': str(self.settings / 'secret-key'), 'refs': {'refs/heads/main': 'a' * 40},
+            'issue': {'id': 1}, 'pull_request': {'id': 1}, 'comment': {'id': 1},
+            'attachment': {'id': 1, 'sha256': 'b' * 64},
+            'lfs': {'path': 'fixture.bin', 'sha256': 'c' * 64}}))
+        expected.chmod(0o600)
+        options = self.restore.Options(self.path.name, 'nas:fixture',
+            rclone, self.settings, expected,
+            destination, 'abcdef1234567890', 'abcdef1234567890')
+        with self.assertRaisesRegex(ValueError, 'restore destination'):
+            self.restore.validate_options(options)
+        self.assertFalse(destination.exists())
+
+    def test_destination_is_rechecked_before_creation(self):
+        self.destination = self.path.parent / '..' / self.path.parent.name / 'new-restore'
+        with self.assertRaisesRegex(ValueError, 'restore destination'):
+            self.preflight()
+        self.assertFalse(self.destination.exists())
+
     def test_insufficient_expansion_capacity_is_rejected(self):
         with patch.object(self.restore.shutil, 'disk_usage', return_value=type('Usage', (), {'free': 0})()):
             with self.assertRaises(ValueError):
+                self.preflight()
+        self.assertFalse(self.destination.exists())
+
+    def test_capacity_accounts_for_empty_entries_and_parent_directories(self):
+        with tarfile.open(self.path / 'files.tar.gz', 'r:gz') as source:
+            members = [(item, source.extractfile(item).read()) for item in source if item.isfile()]
+        with tarfile.open(self.path / 'files.tar.gz', 'w:gz') as stream:
+            for item, content in members:
+                stream.addfile(item, io.BytesIO(content))
+            for number in range(128):
+                item = tarfile.TarInfo('data/empty/' + str(number))
+                item.uid = item.gid = 1000
+                stream.addfile(item)
+        self.fixture.finish()
+        (self.path / 'COMPLETE').write_text(json.dumps(self.fixture.archive.completion(self.path)))
+        available = 256 * 1024 * 1024 + 4096
+        with patch.object(self.restore.shutil, 'disk_usage', return_value=type('Usage', (), {'free': available})()):
+            with self.assertRaisesRegex(ValueError, 'capacity'):
                 self.preflight()
         self.assertFalse(self.destination.exists())
 

@@ -42,21 +42,18 @@ def private_directory(path):
 
 
 def preflight_archive(path, settings_dir, pins, destination):
-    if destination.exists() or destination.is_symlink():
-        raise ValueError('restore destination already exists')
-    service.check_parent_chain(destination.parent)
+    checked_destination(destination)
     private_directory(settings_dir)
-    manifest = archive.validate_archive(path, True)
+    statistics = {}
+    manifest = archive.validate_archive(path, True, statistics=statistics)
     if any(manifest[key] != pins[key] for key in ('image', 'postgres_image', 'rclone_image')):
         raise ValueError('archive runtime pins differ from this tested controller revision')
     generation = json.loads(service.safe_read(settings_dir / 'generation.json', private=True, owner=os.geteuid()))
     if generation != {'schema': 1, 'recovery_generation': manifest['recovery_generation']}:
         raise ValueError('protected settings do not match the selected recovery generation')
-    expanded = 0
     found = set()
-    with tarfile.open(path / 'files.tar.gz', 'r:gz') as stream:
+    with archive.checked_tar(path / 'files.tar.gz') as stream:
         for item in stream:
-            expanded += item.size
             name = item.name.removeprefix('./')
             if name.startswith('config/') and name.split('/')[-1] in KEYS:
                 key = name.split('/')[-1]
@@ -71,7 +68,8 @@ def preflight_archive(path, settings_dir, pins, destination):
     parent = destination.parent
     while not parent.exists():
         parent = parent.parent
-    if shutil.disk_usage(parent).free < expanded + 256 * 1024 * 1024:
+    if (shutil.disk_usage(parent).free < statistics['filesystem_bytes'] + 256 * 1024 * 1024
+            or os.statvfs(parent).f_favail < statistics['nodes']):
         raise ValueError('insufficient capacity for exact archive expansion')
     return manifest
 
@@ -237,7 +235,7 @@ def assert_expected(client, expected):
 
 def extract(path, destination):
     destination.mkdir(mode=0o700)
-    with tarfile.open(path / 'files.tar.gz', 'r:gz') as stream:
+    with archive.checked_tar(path / 'files.tar.gz') as stream:
         stream.extractall(destination, filter='data')
     for target in destination.rglob('*'):
         target.chmod((target.stat().st_mode & 0o700) | (0o700 if target.is_dir() else 0o400))
@@ -265,6 +263,7 @@ def extract(path, destination):
 def restore_local(experiment, path, options, expected, *, ownership=None):
     pins = {key: defaults()['forgejo_' + key] for key in ('image', 'postgres_image', 'rclone_image')}
     manifest = preflight_archive(path, options.settings_dir, pins, options.destination)
+    checked_destination(options.destination)
     options.destination.mkdir(mode=0o700)
     if ownership is not None:
         item = options.destination.lstat()
@@ -300,6 +299,18 @@ def restore_local(experiment, path, options, expected, *, ownership=None):
     return manifest
 
 
+def checked_destination(destination):
+    boundary = ROOT / '.tmp/forgejo'
+    if not destination.is_absolute() or '..' in destination.parts:
+        raise ValueError('restore destination must be an absolute path without parent traversal')
+    service.check_parent_chain(destination.parent)
+    canonical = destination.resolve()
+    if canonical == boundary.resolve() or not canonical.is_relative_to(boundary.resolve()):
+        raise ValueError('restore destination must be under this checkout .tmp/forgejo')
+    if destination.exists() or destination.is_symlink():
+        raise ValueError('restore destination is occupied')
+
+
 def validate_options(options):
     archive.archive_time(options.archive_id)
     if re.fullmatch(r"[A-Za-z0-9_-]+:[A-Za-z0-9][A-Za-z0-9_./-]*", options.remote) is None or ".." in options.remote:
@@ -307,10 +318,7 @@ def validate_options(options):
     if options.confirm_restore_experiment != options.run_id:
         raise ValueError('confirmation must match the new owned run identifier')
     Run(run_id=options.run_id)
-    if not options.destination.is_absolute() or not options.destination.is_relative_to(ROOT / '.tmp/forgejo'):
-        raise ValueError('restore destination must be an absolute new path under this checkout .tmp/forgejo')
-    if options.destination.exists() or options.destination.is_symlink():
-        raise ValueError('restore destination is occupied')
+    checked_destination(options.destination)
     private_directory(options.settings_dir)
     service.safe_read(options.rclone_config, private=True, owner=os.geteuid())
     checked_expected(options.expected_state)
@@ -367,8 +375,7 @@ def run(options):
             cleanup = retrieval.cleanup()
             if cleanup:
                 raise RuntimeError('retrieval cleanup failed before restore startup')
-            if options.destination.exists() or options.destination.is_symlink():
-                raise ValueError('restore destination became occupied')
+            checked_destination(options.destination)
             restore_local(experiment, selected, options, expected, ownership=ownership)
     except (OSError, ValueError, RuntimeError, KeyError, tarfile.TarError):
         error = 'exact archive restore or independent application acceptance failed'
