@@ -87,8 +87,10 @@ mise run test:forgejo -- restore --attended \
 
 Retrieval finishes and its egress-enabled client is removed before restored
 software starts. PostgreSQL has `network=none`; Forgejo shares only that loopback
-namespace and publishes no host port. Restore scheduling and webhooks are
-disabled as an additional safeguard. Validation rejects unsafe paths, links,
+namespace and publishes no host port. The containers also share the database's
+rootless user namespace so private recovery files remain owned and readable by
+the controller. Restore scheduling and webhooks are disabled as an additional
+safeguard. Validation rejects unsafe paths, links,
 special files, incompatible pins/layouts, missing keys and insufficient capacity.
 Archive processing permits at most 100,000 filesystem entries, including parent
 directories, 256 GiB of contents and 257 GiB of decompressed tar data. Capacity

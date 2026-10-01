@@ -80,7 +80,9 @@ def database_arguments(env, volume, image):
 
 
 def application_arguments(database, data, config, auth, image):
-    return ['--network', 'container:' + database, '--user', '1000:1000', '--env', 'GITEA_APP_INI=/etc/gitea/app.ini',
+    # Keep private bind mounts owned by the controller under the database's UID map.
+    return ['--network', 'container:' + database, '--userns', 'container:' + database,
+            '--user', '1000:1000', '--env', 'GITEA_APP_INI=/etc/gitea/app.ini',
             '--volume', f'{data}:/var/lib/gitea:U', '--volume', f'{config}:/etc/gitea:U',
             '--volume', f'{auth}:/test-auth:ro,U', image]
 

@@ -191,6 +191,15 @@ class RestoreTests(unittest.TestCase):
         self.assertEqual('none', database[database.index('--network') + 1])
         self.assertNotIn('--publish', database)
 
+    def test_application_shares_database_uid_mapping_for_private_mounts(self):
+        args = self.restore.application_arguments('owned-database', Path('/synthetic/data'),
+            Path('/synthetic/config'), Path('/synthetic/auth'), self.pins['image'])
+        self.assertIn('--userns', args)
+        self.assertEqual('container:owned-database', args[args.index('--userns') + 1])
+        database = self.restore.database_arguments(Path('/synthetic/database.env'),
+            'owned-volume', self.pins['postgres_image'])
+        self.assertIn('--userns=keep-id:uid=1000,gid=1000', database)
+
 
 if __name__ == '__main__':
     unittest.main()
