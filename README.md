@@ -143,8 +143,7 @@ Provision the application, then reconcile its route with
 `mise run playbook -- reverse-proxy provision production --limit nuc4`.
 The controller remains disabled until its dedicated identity and inputs are
 enrolled. Backups run daily at 03:00 host-local; successful dumps trigger NAS
-transfer, with retries every four hours at :15. See the
-[recovery guide](docs/guides/semaphore-recovery.md) for an isolated restore drill.
+transfer, with retries every four hours at :15.
 
 ### Forgejo commands
 
@@ -161,9 +160,7 @@ proxy route separately. Examples use the synthetic hostname
 HTTPS serves web and Git; Actions, SSH and packages remain disabled. Backups
 capture database and files daily at 03:30 with bounded downtime. Native mirrors
 scan once nightly at 02:00 after separately authorized enrollment. See the
-[Forgejo README](playbooks/forgejo/README.md) for dependency order and diagnosis,
-and the [recovery guide](docs/guides/forgejo-recovery.md) for an exact isolated
-NAS restore and separate attended acceptance.
+[Forgejo README](playbooks/forgejo/README.md) for dependency order and diagnosis.
 
 ### Retained playbook commands
 
@@ -279,9 +276,7 @@ Separate `test:semaphore` modes exercise the pinned runtime and recovery with
 disposable containers whenever the Semaphore scenario is selected.
 
 See the [Semaphore playbooks](playbooks/semaphore/README.md) for prerequisites,
-controller configuration, and backup operation, and the
-[recovery guide](docs/guides/semaphore-recovery.md) for isolated restore tests
-and replacement-host recovery.
+controller configuration, and backup operation.
 
 `mise run test:molecule -- forgejo/default` checks Forgejo definitions,
 idempotence and systemd recovery supervision on Debian. Selected Forgejo changes

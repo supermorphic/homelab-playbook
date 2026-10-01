@@ -73,7 +73,7 @@ configuration fields, or quoted text solely to satisfy these style rules.
 - Treat `check` and `verify` commands as observational toward their targets.
   Use a registered `test` workflow when evidence requires a bounded temporary
   mutation. Classify new or renamed commands with the
-  [repository command lifecycle](docs/reference/repository-command-lifecycle.md).
+  [repository command lifecycle](docs/guides/repository-command-lifecycle.md).
 - Never execute a playbook against production or staging without explicit
   operator direction for that target and action. Reconfirm the playbook,
   action, inventory, and extra arguments immediately before execution.

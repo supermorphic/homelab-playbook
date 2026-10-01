@@ -119,9 +119,8 @@ sudo journalctl _UID="$(id -u svc-semaphore)" _SYSTEMD_USER_UNIT=semaphore-trans
 ```
 
 Do not print protected environment files or rclone configuration while diagnosing
-failures. Follow the [recovery guide](../../docs/guides/semaphore-recovery.md)
-to select and test an exact archive. Recovery tests use replacement storage and
-an isolated application; production cutover is a separate operator action.
+failures. Recovery tests select an exact archive and use replacement storage
+and an isolated application; production cutover is a separate operator action.
 
 Offline tests use synthetic credentials and run-owned resources. The supported-OS
 Molecule fixtures check preparation idempotence, filesystem metadata, generated

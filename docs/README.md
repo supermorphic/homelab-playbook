@@ -7,14 +7,14 @@ specifications record design decisions and integration contracts.
 
 ## Guides
 
+- [Repository command lifecycle](guides/repository-command-lifecycle.md) —
+  Classify command behavior, safeguards, execution authority, and evidence.
 - [GitHub main protection](guides/github-main-protection.md) — Inspect, verify,
   and recover the repository's protected-branch settings.
 - [Managed host onboarding](guides/managed-host-onboarding.md) — Prepare,
   provision, verify, maintain, and recover an off-cluster Ansible-managed host.
 - [SOPS secrets](guides/sops-secrets.md) — Set up and recover the operator age
   identity, edit protected inventory, and manage recipients.
-- [Forgejo recovery](guides/forgejo-recovery.md) — Select an exact archive,
-  validate an isolated replacement and perform attended service acceptance.
 - [UniFi TLS certificates](guides/unifi-tls.md) — Configure native UniFi OS
   certificate issuance and renewal with Cloudflare DNS and direct local access.
 - [Private HTTPS routes through Caddy](guides/reverse-proxy.md) — Configure device
@@ -24,8 +24,6 @@ specifications record design decisions and integration contracts.
 
 - [Off-cluster TLS automation](../playbooks/tls/README.md) — Install the host
   issuer, configure its disabled timer, and prepare the fixed Caddy integration.
-- [Repository command lifecycle](reference/repository-command-lifecycle.md) —
-  Classify command behavior, safeguards, execution authority, and evidence.
 
 ## Specifications
 

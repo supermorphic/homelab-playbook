@@ -295,6 +295,6 @@ on the intended supported host.
   [shared reverse proxy](008-shared-private-reverse-proxy.md).
 - [OS maintenance](003-os-maintenance-security-baseline.md).
 - [SOPS controller contract](../guides/sops-secrets.md#automation-controllers).
-- [Repository command lifecycle](../reference/repository-command-lifecycle.md).
+- [Repository command lifecycle](../guides/repository-command-lifecycle.md).
 - [Semaphore configuration](https://semaphoreui.com/docs/admin-guide/configuration).
 - [Quadlet reference](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html).

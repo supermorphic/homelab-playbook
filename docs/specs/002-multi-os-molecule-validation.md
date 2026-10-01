@@ -120,7 +120,7 @@ rootful service.
 
 ## Command lifecycle classification
 
-The [repository command lifecycle](../reference/repository-command-lifecycle.md)
+The [repository command lifecycle](../guides/repository-command-lifecycle.md)
 classifies a command by its effects. Molecule deliberately creates and removes
 bounded local containers to obtain executable evidence, so it is a controlled
 `test`, not a read-only `validate` command.

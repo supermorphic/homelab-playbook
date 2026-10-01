@@ -137,7 +137,7 @@ authority and precondition rules in `AGENTS.md`.
 For example, `os inspect` follows the live-observation profile, while `os
 provision` and `os maintain` follow the existing-state-reconciliation profile.
 The [OS playbook README](../../playbooks/os/README.md) describes the subsystem.
-The [managed host onboarding guide](../guides/managed-host-onboarding.md)
+The [managed host onboarding guide](managed-host-onboarding.md)
 documents the exact operator interface and safeguards.
 
 ### Host TLS and proxy operations
@@ -273,7 +273,7 @@ matching private settings, independent expected state, new destination and run
 selection. The repeated run identifier binds intent; authorization remains an
 operator decision. The experiment preserves the source, isolates restored
 software before startup and removes only owned resources. It performs no live
-cutover. See the [recovery guide](../guides/forgejo-recovery.md) for every flag.
+cutover.
 Internal capture, recovery and transfer helpers run within the managed lifecycle;
 they are not alternate operator gateways.
 

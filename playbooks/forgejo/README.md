@@ -74,8 +74,8 @@ and [proxy](../reverse-proxy/README.md) procedures:
 3. Prepare the TLS issuer and shared certificate. Initial issuance needs separate
    authorization. Prepare Caddy and its matching route declaration.
 4. Provision Forgejo, then activate its route through proxy provisioning.
-5. Verify Forgejo, proxy and TLS, then perform the attended checks in the
-   [recovery guide](../../docs/guides/forgejo-recovery.md).
+5. Verify Forgejo, proxy and TLS, then perform the attended checks in
+   [specification 010](../../docs/specs/010-forgejo-service.md#acceptance-and-evidence-boundaries).
 
 Provisioning rejects identity changes, stable key/database credential changes,
 unknown existing storage, PostgreSQL major changes and runtime pin changes.
@@ -146,4 +146,4 @@ consumer contracts add affected scenarios; CI/dependency/framework changes
 require the full suite. Unrelated mapped services do not select Forgejo.
 
 See [specification 010](../../docs/specs/010-forgejo-service.md) and the
-[command lifecycle](../../docs/reference/repository-command-lifecycle.md).
+[command lifecycle](../../docs/guides/repository-command-lifecycle.md).
