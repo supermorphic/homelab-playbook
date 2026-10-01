@@ -1,0 +1,84 @@
+---
+- name: Establish independent Forgejo fixture prerequisites
+  hosts: forgejo
+  gather_facts: true
+  become: true
+  vars_files:
+    - vars/main.yml
+  tasks:
+    - name: Provision the disposable foundation account  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.include_role:
+        name: podman_foundation
+      vars:
+        podman_foundation_accounts:
+          - "{{ forgejo_foundation_account }}"
+          - name: svc-forgejo-probe
+            uid: 2203
+            gid: 2203
+            subuid_start: 800000
+            subuid_count: 65536
+            subgid_start: 800000
+            subgid_count: 65536
+
+    - name: Permit the stand-in to read trusted helpers and use the operation lock
+      ansible.builtin.user:
+        name: svc-forgejo-probe
+        groups: svc-forgejo
+        append: true
+
+    - name: Establish private stand-in state
+      ansible.builtin.file:
+        path: /var/lib/svc-forgejo-probe/recovery
+        state: directory
+        owner: svc-forgejo-probe
+        group: svc-forgejo-probe
+        mode: '0700'
+
+    - name: Refresh only the owned stand-in user manager supplementary groups
+      ansible.builtin.command:
+        argv: [systemctl, restart, user@2203.service]
+      changed_when: false
+
+    - name: Install trusted stand-in supervision probe
+      ansible.builtin.copy:
+        src: recovery_probe.py
+        dest: /usr/local/libexec/forgejo-recovery-probe.py
+        owner: root
+        group: svc-forgejo-probe
+        mode: '0640'
+
+    - name: Establish disposable certificate fixture directory
+      ansible.builtin.file:
+        path: /etc/caddy/tls/forgejo-fixture/current
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Create a run-owned certificate fixture
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - req
+          - -x509
+          - -newkey
+          - rsa:2048
+          - -nodes
+          - -keyout
+          - /etc/caddy/tls/forgejo-fixture/current/privkey.pem
+          - -out
+          - /etc/caddy/tls/forgejo-fixture/current/fullchain.pem
+          - -days
+          - '1'
+          - -subj
+          - /CN=forgejo.example.test
+      args:
+        creates: /etc/caddy/tls/forgejo-fixture/current/fullchain.pem
+      no_log: true
+
+    - name: Restrict the disposable private key
+      ansible.builtin.file:
+        path: /etc/caddy/tls/forgejo-fixture/current/privkey.pem
+        owner: root
+        group: root
+        mode: '0600'

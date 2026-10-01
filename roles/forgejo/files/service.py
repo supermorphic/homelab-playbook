@@ -1,0 +1,706 @@
+"""Fixed host lifecycle for the rootless Forgejo deployment."""
+
+from __future__ import annotations
+
+import argparse
+import base64
+from contextlib import contextmanager
+import fcntl
+import grp
+import hashlib
+import ipaddress
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import socket
+import stat
+import subprocess
+import time
+import uuid
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+import mirror_status
+
+STATE = Path("/var/lib/svc-forgejo/forgejo")
+HELPERS = Path("/usr/local/libexec/forgejo")
+LOCK = Path("/run/forgejo/operation.lock")
+ACCOUNT = "svc-forgejo"
+REQUIRED_FILES = (
+    "manifest.json", "config/app.ini", "config/mirror-credentials", "config/mirror-credential-helper.sh",
+    "config/database-password", "config/secret-key",
+    "config/internal-token", "config/lfs-jwt-secret", "config/oauth2-jwt-secret",
+    "credentials/postgres-admin-password", "credentials/postgres.env",
+    "credentials/admin.json", "credentials/rclone.conf", "quadlets/forgejo.network",
+    "quadlets/forgejo-postgres.container", "quadlets/forgejo.container",
+    "units/forgejo-backup.service", "units/forgejo-backup.timer", "units/forgejo-recover.service",
+    "units/forgejo-transfer.service", "units/forgejo-transfer.timer",
+)
+STABLE_INPUTS = (
+    "config/database-password", "config/secret-key", "config/internal-token",
+    "config/lfs-jwt-secret", "config/oauth2-jwt-secret", "credentials/postgres-admin-password",
+)
+
+
+def regular(path: Path, *, private: bool = False, owner: int | None = None):
+    metadata = path.lstat()
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        raise ValueError(f"expected regular file: {path.name}")
+    if owner is not None and metadata.st_uid != owner:
+        raise ValueError(f"unexpected file owner: {path.name}")
+    forbidden = 0o077 if private else 0o022
+    if metadata.st_mode & forbidden:
+        raise ValueError(f"unsafe file permissions: {path.name}")
+
+
+def validate_candidate(candidate: Path, allocation: dict) -> dict:
+    metadata = candidate.lstat()
+    if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
+        raise ValueError("candidate must be a private administrator-owned directory")
+    names = set()
+    for path in candidate.rglob("*"):
+        item = path.lstat()
+        if item.st_uid != os.geteuid() or item.st_mode & 0o022 or path.is_symlink():
+            raise ValueError("candidate includes unsafe ownership, mode or link")
+        if stat.S_ISREG(item.st_mode):
+            if item.st_nlink != 1:
+                raise ValueError("candidate includes a multiply linked file")
+            names.add(str(path.relative_to(candidate)))
+        elif not stat.S_ISDIR(item.st_mode):
+            raise ValueError("candidate includes unsupported file type")
+    if names != set(REQUIRED_FILES):
+        raise ValueError("candidate contents differ from the fixed file contract")
+    manifest = json.loads((candidate / "manifest.json").read_text())
+    if manifest.get("schema") != 1 or manifest.get("allocation") != allocation:
+        raise ValueError("candidate foundation allocation differs from the host")
+    if not isinstance(manifest.get("hostname"), str) or re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9.-]*", manifest["hostname"]) is None:
+        raise ValueError("invalid hostname")
+    remote = manifest.get("rclone_remote", "")
+    if re.fullmatch(r"[A-Za-z0-9_-]+:[A-Za-z0-9][A-Za-z0-9_./-]*", remote) is None or ".." in remote:
+        raise ValueError("invalid transfer prefix")
+    port = manifest.get("backend_port")
+    if type(port) is not int or not 1024 <= port <= 65535:
+        raise ValueError("invalid backend port")
+    network = ipaddress.ip_network(manifest["proxy_source"], strict=True)
+    if network.num_addresses != 1:
+        raise ValueError("proxy trust must select exactly one address")
+    patterns = {
+        "image": r"codeberg[.]org/forgejo/forgejo:15[.]\d+[.]\d+-rootless@sha256:[0-9a-f]{64}",
+        "postgres_image": r"docker[.]io/library/postgres:17[.]\d+@sha256:[0-9a-f]{64}",
+        "rclone_image": r"docker[.]io/rclone/rclone:\d+[.]\d+[.]\d+@sha256:[0-9a-f]{64}",
+    }
+    for key, pattern in patterns.items():
+        if not isinstance(manifest.get(key), str) or re.fullmatch(pattern, manifest[key]) is None:
+            raise ValueError("runtime image does not match the supported immutable pin")
+    timeout = manifest.get("health_timeout_seconds")
+    if type(timeout) is not int or not 1 <= timeout <= 300:
+        raise ValueError("health timeout is outside its bound")
+    return manifest
+
+
+@contextmanager
+def operation_lock(path: Path, timeout_seconds: float):
+    descriptor = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+    try:
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("service operation lock timed out") from None
+                time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def check_stable_inputs(candidate: Path, targets: dict[str, Path]):
+    for name in STABLE_INPUTS:
+        destination = targets[name]
+        if destination.exists() or destination.is_symlink():
+            regular(destination, private=True)
+            if safe_read(destination, private=True) != safe_read(candidate / name):
+                raise ValueError("stable application keys or database credentials need explicit migration")
+
+
+def check_database(database: Path):
+    version = database / "PG_VERSION"
+    if version.exists() or version.is_symlink():
+        regular(version, private=True)
+        if safe_read(version, private=True).decode().strip() != "17":
+            raise ValueError("existing database requires PostgreSQL major migration")
+    elif database.exists() and any(database.iterdir()):
+        raise ValueError("existing database storage has no valid major-version marker")
+
+
+def check_parent_chain(path: Path):
+    current = Path(path.anchor)
+    for component in path.parts[1:]:
+        current = current / component
+        try:
+            metadata = current.lstat()
+        except FileNotFoundError:
+            break
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise ValueError("publication parent includes a link or non-directory")
+
+
+def open_directory(path: Path, *, create: bool = False) -> int:
+    descriptor = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for component in path.parts[1:]:
+            if create:
+                try:
+                    os.mkdir(component, mode=0o700, dir_fd=descriptor)
+                except FileExistsError:
+                    pass
+            following = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = following
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def safe_read(path: Path, *, private: bool = False, owner: int | None = None) -> bytes:
+    parent = open_directory(path.parent)
+    try:
+        descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent)
+        with os.fdopen(descriptor, "rb") as stream:
+            item = os.fstat(stream.fileno())
+            forbidden = 0o077 if private else 0o022
+            if (not stat.S_ISREG(item.st_mode) or item.st_nlink != 1
+                    or item.st_mode & forbidden or owner is not None and item.st_uid != owner):
+                raise ValueError("unsafe deployment input metadata")
+            return stream.read()
+    finally:
+        os.close(parent)
+
+
+def atomic_write(path: Path, content: bytes, *, mode: int, uid: int, gid: int):
+    parent = open_directory(path.parent)
+    name = ".forgejo-" + uuid.uuid4().hex
+    try:
+        try:
+            existing = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            existing = None
+        if existing is not None and not stat.S_ISREG(existing.st_mode):
+            raise ValueError("publication destination is not a regular file")
+        descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                             mode, dir_fd=parent)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fchmod(stream.fileno(), mode)
+            os.fchown(stream.fileno(), uid, gid)
+            os.fsync(stream.fileno())
+        os.replace(name, path.name, src_dir_fd=parent, dst_dir_fd=parent)
+        os.fsync(parent)
+    finally:
+        try:
+            os.unlink(name, dir_fd=parent)
+        except FileNotFoundError:
+            pass
+        os.close(parent)
+
+
+def publish_files(candidate: Path, targets: dict[str, Path], allocation: dict) -> bool:
+    changed = False
+    for name, target in targets.items():
+        check_parent_chain(target.parent)
+        if target.exists() or target.is_symlink():
+            regular(target)
+    for name, target in targets.items():
+        protected = name.startswith(("config/", "credentials/"))
+        mode = 0o600 if protected else 0o640
+        if name == 'config/mirror-credential-helper.sh':
+            mode = 0o700
+        uid = allocation["uid"] if protected else os.geteuid()
+        gid = allocation["gid"]
+        content = safe_read(candidate / name)
+        if target.exists():
+            item = target.stat()
+            if safe_read(target) == content and stat.S_IMODE(item.st_mode) == mode and item.st_uid == uid and item.st_gid == gid:
+                continue
+        os.close(open_directory(target.parent, create=True))
+        atomic_write(target, content, mode=mode, uid=uid, gid=gid)
+        changed = True
+    return changed
+
+
+def execute(argv: list[str], *, input_text: str | None = None, check: bool = True,
+            timeout: int = 120, environment: dict | None = None):
+    try:
+        result = subprocess.run(argv, input=input_text, capture_output=True, text=True,
+                                check=False, timeout=timeout, env=environment)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError(f"{Path(argv[0]).name} could not complete") from error
+    if check and result.returncode:
+        raise RuntimeError(f"{Path(argv[0]).name} exited {result.returncode}")
+    return result
+
+
+def account_allocation() -> dict:
+    account = pwd.getpwnam(ACCOUNT)
+    group = grp.getgrnam(ACCOUNT)
+    record = Path(f"/etc/containers/systemd/users/{account.pw_uid}/.foundation-account.json")
+    regular(record, owner=0)
+    declaration = json.loads(record.read_text())
+    if (declaration.get("name") != ACCOUNT or declaration.get("uid") != account.pw_uid
+            or declaration.get("gid") != group.gr_gid or account.pw_gid != group.gr_gid
+            or account.pw_dir != "/var/lib/svc-forgejo"
+            or account.pw_shell not in ("/usr/sbin/nologin", "/sbin/nologin", "/bin/false")):
+        raise ValueError("effective foundation identity differs from its declaration")
+    for kind in ("uid", "gid"):
+        entries = []
+        for line in Path(f"/etc/sub{kind}").read_text().splitlines():
+            pieces = line.split(":")
+            if len(pieces) == 3 and pieces[0] in (ACCOUNT, str(account.pw_uid)):
+                entries.append((int(pieces[1]), int(pieces[2])))
+        if entries != [(declaration[f"sub{kind}_start"], declaration[f"sub{kind}_count"])]:
+            raise ValueError("effective subordinate mapping differs from the foundation")
+    return declaration
+
+
+def user_command(arguments: list[str], allocation: dict, **kwargs):
+    environment = {"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8",
+        "HOME": "/var/lib/svc-forgejo", "USER": ACCOUNT, "LOGNAME": ACCOUNT,
+        "XDG_RUNTIME_DIR": f"/run/user/{allocation['uid']}"}
+    environment.update(kwargs.pop("extra_environment", {}))
+    command = arguments if os.geteuid() == allocation["uid"] else ["/usr/sbin/runuser", "-u", ACCOUNT, "--", *arguments]
+    return execute(command,
+                   environment=environment, **kwargs)
+
+
+def manager(arguments: list[str], **kwargs):
+    scope = ["--machine=svc-forgejo@.host"] if os.geteuid() == 0 else []
+    return execute(["/usr/bin/systemctl", "--user", *scope, *arguments], **kwargs)
+
+
+def wait_health(port: int, timeout: int):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/healthz", timeout=5) as response:
+                if response.status == 200:
+                    return
+        except (OSError, urllib.error.URLError):
+            pass
+        time.sleep(1)
+    raise RuntimeError("Forgejo HTTP readiness deadline exceeded")
+
+
+def require_port_available(port: int):
+    with socket.socket() as listener:
+        try:
+            listener.bind(("127.0.0.1", port))
+        except OSError:
+            raise RuntimeError("declared Forgejo loopback backend port is occupied") from None
+
+
+def targets_for(allocation: dict) -> dict[str, Path]:
+    roots = {
+        "config": STATE / "config", "credentials": STATE / "credentials",
+        "quadlets": Path(f"/etc/containers/systemd/users/{allocation['uid']}"),
+        "units": Path("/var/lib/svc-forgejo/.config/systemd/user"),
+    }
+    return {name: roots[name.split('/')[0]] / name.split('/', 1)[1]
+            for name in REQUIRED_FILES if name != "manifest.json"}
+
+
+def check_boundaries(allocation: dict):
+    for directory in (STATE, STATE / "config", STATE / "credentials", STATE / "data",
+                      STATE / "database", STATE / "backups"):
+        item = directory.lstat()
+        if (not stat.S_ISDIR(item.st_mode) or item.st_uid != allocation["uid"]
+                or item.st_gid != allocation["gid"] or stat.S_IMODE(item.st_mode) != 0o700):
+            raise ValueError("active service directory has unsafe metadata")
+    for directory in (HELPERS, HELPERS / "candidates", LOCK.parent):
+        item = directory.lstat()
+        if not stat.S_ISDIR(item.st_mode) or item.st_uid != 0 or item.st_mode & 0o022:
+            raise ValueError("administrator-owned lifecycle boundary is unsafe")
+    check_lock_metadata(LOCK, allocation["gid"], owner=0)
+
+
+def check_lock_metadata(path: Path, group: int, *, owner: int | None = None):
+    item = path.lstat()
+    if (not stat.S_ISREG(item.st_mode) or item.st_uid != (os.geteuid() if owner is None else owner)
+            or item.st_gid != group or stat.S_IMODE(item.st_mode) != 0o660):
+        raise ValueError("operation lock metadata differs from its declaration")
+
+
+def validate_generator(candidate: Path, allocation: dict):
+    environment = {"PATH": "/usr/bin:/bin", "QUADLET_UNIT_DIRS": str(candidate / "quadlets"),
+                   "XDG_RUNTIME_DIR": f"/run/user/{allocation['uid']}"}
+    execute(["/usr/lib/systemd/system-generators/podman-system-generator",
+             "--user", "--dryrun"], environment=environment)
+
+
+def database_command(allocation: dict, sql: str, *, user: str = "postgres",
+                     database: str = "postgres") -> str:
+    return user_command(["/usr/bin/podman", "exec", "-i", "forgejo-postgres",
+        "psql", "-X", "-U", user, "-d", database, "--set", "ON_ERROR_STOP=1",
+        "--tuples-only", "--no-align"], allocation, input_text=sql).stdout.strip()
+
+
+def initialize_database(allocation: dict):
+    password_file = STATE / "config/database-password"
+    regular(password_file, private=True, owner=allocation["uid"])
+    exists = database_command(allocation, "SELECT count(*) FROM pg_roles WHERE rolname='forgejo';")
+    if exists == "0":
+        password = safe_read(password_file, private=True, owner=allocation["uid"]).decode().replace("'", "''")
+        database_command(allocation, f"CREATE ROLE forgejo LOGIN PASSWORD '{password}' "
+                         "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;")
+    flags = database_command(allocation,
+        "SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication FROM pg_roles WHERE rolname='forgejo';")
+    if flags != "f|f|f|f":
+        raise ValueError("existing application database role has incompatible authority")
+    exists = database_command(allocation, "SELECT count(*) FROM pg_database WHERE datname='forgejo';")
+    if exists == "0":
+        database_command(allocation, "CREATE DATABASE forgejo OWNER forgejo;")
+    if database_command(allocation, "SELECT pg_get_userbyid(datdba) FROM pg_database "
+            "WHERE datname='forgejo';") != "forgejo":
+        raise ValueError("application database has incompatible ownership")
+
+
+def admin_request(port: int, username: str, password: str, *, method="GET", payload=None):
+    authorization = base64.b64encode(f"{username}:{password}".encode()).decode()
+    endpoint = "/user" if method == "GET" else f"/admin/users/{username}"
+    request = urllib.request.Request(f"http://127.0.0.1:{port}/api/v1{endpoint}",
+        data=json.dumps(payload).encode() if payload is not None else None,
+        headers={"Authorization": "Basic " + authorization, "Content-Type": "application/json"},
+        method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            body = response.read()
+            return json.loads(body) if body else None
+    except urllib.error.HTTPError as error:
+        if method == "GET" and error.code == 401:
+            return None
+        raise RuntimeError(f"administrator initialization returned HTTP {error.code}") from None
+
+
+def initialize_administrator(settings: dict, allocation: dict):
+    marker = HELPERS / ".admin-initialized"
+    if marker.exists():
+        regular(marker, private=True, owner=os.geteuid())
+        return
+    inputs = STATE / "credentials/admin.json"
+    regular(inputs, private=True, owner=allocation["uid"])
+    admin = json.loads(safe_read(inputs, private=True, owner=allocation["uid"]).decode())
+    username = admin["username"]
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", username) is None:
+        raise ValueError("invalid initial administrator name")
+    pending = HELPERS / ".admin-bootstrap.json"
+    cli = ["/usr/bin/podman", "exec", "forgejo", "forgejo", "--config", "/etc/gitea/app.ini"]
+    if pending.exists():
+        regular(pending, private=True, owner=os.geteuid())
+        saved = json.loads(safe_read(pending, private=True, owner=os.geteuid()).decode())
+        if saved["username"] != username:
+            raise ValueError("pending administrator identity needs operator recovery")
+        initial = saved["password"]
+    else:
+        users = user_command([*cli, "admin", "user", "list"], allocation).stdout
+        if any(len(line.split()) > 1 and line.split()[1] == username for line in users.splitlines()):
+            raise ValueError("existing initial administrator lacks completion evidence; recover separately")
+        output = user_command([*cli, "admin", "user", "create", "--username", username,
+            "--email", admin["email"], "--admin", "--random-password",
+            "--random-password-length", "32", "--must-change-password=false"], allocation).stdout
+        matched = re.search(r"^generated random password is '([^\r\n]+)'$", output, re.M)
+        if matched is None:
+            raise RuntimeError("initial administrator credential was not returned")
+        initial = matched.group(1)
+        atomic_write(pending, json.dumps({"username": username, "password": initial}).encode(),
+                     mode=0o600, uid=os.geteuid(), gid=os.getegid())
+    current = admin_request(settings["backend_port"], username, admin["password"])
+    if current is None:
+        admin_request(settings["backend_port"], username, initial, method="PATCH",
+            payload={"email": admin["email"], "password": admin["password"],
+                     "must_change_password": False})
+        current = admin_request(settings["backend_port"], username, admin["password"])
+    if not current or not current.get("is_admin"):
+        raise RuntimeError("initial administrator authentication failed")
+    atomic_write(marker, b"managed\n", mode=0o600, uid=os.geteuid(), gid=os.getegid())
+    pending.unlink()
+
+
+def enable_unit_links(allocation: dict):
+    root = Path("/var/lib/svc-forgejo/.config/systemd/user")
+    changed = False
+    for target, unit in (("timers.target", "forgejo-backup.timer"), ("timers.target", "forgejo-transfer.timer"),
+                         ("default.target", "forgejo-recover.service")):
+        directory = root / (target + ".wants")
+        parent = open_directory(directory)
+        try:
+            expected = "../" + unit
+            try:
+                current = os.readlink(unit, dir_fd=parent)
+            except FileNotFoundError:
+                os.symlink(expected, unit, dir_fd=parent)
+                os.chown(unit, 0, allocation["gid"], dir_fd=parent, follow_symlinks=False)
+                changed = True
+            else:
+                if current != expected:
+                    raise ValueError("managed timer or recovery link differs")
+        finally:
+            os.close(parent)
+    return changed
+
+
+def reconcile(candidate: Path) -> dict:
+    if not candidate.is_absolute() or candidate.parent != HELPERS / "candidates":
+        raise ValueError("candidate is outside the fixed administrator staging boundary")
+    allocation = account_allocation()
+    check_boundaries(allocation)
+    with operation_lock(LOCK, 300):
+        allocation = account_allocation()
+        check_boundaries(allocation)
+        if (STATE / "restart-intent.json").exists() or (STATE / "recovery-failed").exists():
+            raise RuntimeError("unfinished backup recovery must complete before reconciliation")
+        settings = validate_candidate(candidate, allocation)
+        targets = targets_for(allocation)
+        check_stable_inputs(candidate, targets)
+        check_database(STATE / "database")
+        activation = HELPERS / 'activation-pending.json'
+        pending = None
+        if activation.exists():
+            pending = json.loads(safe_read(activation, owner=os.geteuid()))
+            if (pending.get('schema') != 1 or pending.get('allocation') != allocation
+                    or re.fullmatch(r'[0-9a-f]{32}', pending.get('generation', '')) is None
+                    or not isinstance(pending.get('names'), list)
+                    or not set(pending['names']) <= set(targets)
+                    or any(pending.get(key) != settings[key] for key in ('image', 'postgres_image'))):
+                raise ValueError('pending activation requires matching allocation and runtime pins')
+        stored = HELPERS / "desired.json"
+        if stored.exists():
+            regular(stored, owner=os.geteuid())
+            previous = json.loads(safe_read(stored).decode())
+            if any(previous[key] != settings[key] for key in ("image", "postgres_image")):
+                raise ValueError("runtime upgrade requires a reviewed compatible pre-upgrade archive")
+            generation = previous["recovery_generation"]
+        elif pending is not None:
+            generation = pending['generation']
+        else:
+            if any((STATE / "database").iterdir()) or any((STATE / "data").iterdir()):
+                raise ValueError("existing unrecorded data requires operator migration")
+            generation = uuid.uuid4().hex
+        app_active = manager(["is-active", "forgejo.service"], check=False).returncode == 0
+        if not app_active:
+            require_port_available(settings["backend_port"])
+        validate_generator(candidate, allocation)
+        changed_names = {name for name, path in targets.items()
+            if not path.exists() or safe_read(path) != safe_read(candidate / name)}
+        if pending is not None:
+            if pending['generation'] != generation:
+                raise ValueError('pending activation differs from the managed generation')
+            changed_names.update(pending['names'])
+        if changed_names or pending is not None:
+            atomic_write(activation, json.dumps({'schema': 1, 'allocation': allocation,
+                'generation': generation, 'names': sorted(changed_names),
+                'image': settings['image'], 'postgres_image': settings['postgres_image']}).encode(),
+                mode=0o640, uid=os.geteuid(), gid=allocation['gid'])
+        changed = publish_files(candidate, targets, allocation)
+        changed = changed or bool(changed_names) or pending is not None
+        settings["recovery_generation"] = generation
+        settings["checksums"] = {name: hashlib.sha256(safe_read(path)).hexdigest()
+                                 for name, path in targets.items()}
+        desired_bytes = (json.dumps(settings, sort_keys=True, indent=2) + "\n").encode()
+        if not stored.exists() or safe_read(stored) != desired_bytes:
+            atomic_write(stored, desired_bytes, mode=0o640, uid=os.geteuid(), gid=allocation["gid"])
+            changed = True
+        for key in ("postgres_image", "image", "rclone_image"):
+            exists = user_command(["/usr/bin/podman", "image", "exists", settings[key]],
+                                  allocation, check=False)
+            if exists.returncode != 0:
+                user_command(["/usr/bin/podman", "pull", settings[key]], allocation, timeout=600)
+                changed = True
+        if changed:
+            manager(["daemon-reload"])
+        database_active = manager(["is-active", "forgejo-postgres.service"], check=False).returncode == 0
+        database_changed = bool(changed_names & {"quadlets/forgejo-postgres.container",
+            "quadlets/forgejo.network", "credentials/postgres.env"})
+        if not database_active or database_changed:
+            manager(["restart" if database_active else "start", "forgejo-postgres.service"])
+            changed = True
+        deadline = time.monotonic() + settings["health_timeout_seconds"]
+        while user_command(["/usr/bin/podman", "exec", "forgejo-postgres", "pg_isready",
+                            "-U", "postgres"], allocation, check=False).returncode:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("PostgreSQL readiness deadline exceeded")
+            time.sleep(1)
+        initialize_database(allocation)
+        app_changed = database_changed or any(name.startswith("config/") for name in changed_names) or "quadlets/forgejo.container" in changed_names
+        if not app_active or app_changed:
+            if not app_active:
+                require_port_available(settings["backend_port"])
+            manager(["restart" if app_active else "start", "forgejo.service"])
+            changed = True
+        wait_health(settings["backend_port"], settings["health_timeout_seconds"])
+        initialize_administrator(settings, allocation)
+        changed = enable_unit_links(allocation) or changed
+        for timer in ("forgejo-backup.timer", "forgejo-transfer.timer"):
+            if manager(["is-active", timer], check=False).returncode:
+                manager(["start", timer])
+                changed = True
+        result = verify(completing_activation=True)
+        if activation.exists():
+            activation.unlink()
+            descriptor = open_directory(HELPERS)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        result["changed"] = changed
+        return result
+
+
+def verify_effective_units():
+    """Observe loaded safety properties, including administrator drop-ins."""
+    services = {
+        'forgejo.service': ('1min 30s', '1min'),
+        'forgejo-postgres.service': ('1min 30s', '1min'),
+        'forgejo-backup.service': ('30min', '30s'),
+        'forgejo-recover.service': ('5min', '30s'),
+        'forgejo-transfer.service': ('2h', '30s'),
+    }
+    properties = ('LoadState,Type,RemainAfterExit,TimeoutStartUSec,TimeoutStopUSec,'
+        'Requires,Wants,After,OnFailure,ExecStart,ExecStartPre,ExecStopPost,Restart,'
+        'Persistent,Unit,TimersCalendar,TimersMonotonic')
+    units = {}
+    for unit in (*services, 'forgejo-backup.timer', 'forgejo-transfer.timer'):
+        output = manager(['show', unit, '--property=' + properties]).stdout
+        units[unit] = {}
+        for line in output.splitlines():
+            if '=' not in line:
+                continue
+            key, value = line.split('=', 1)
+            if key in units[unit]:
+                units[unit][key] += '\n' + value
+            else:
+                units[unit][key] = value
+        if units[unit].get('LoadState') != 'loaded':
+            raise ValueError('effective Forgejo unit is not loaded: ' + unit)
+
+    def require(condition, unit):
+        if not condition:
+            raise ValueError('effective Forgejo unit differs from its safety contract: ' + unit)
+
+    def commands(unit, property):
+        return re.findall(r'argv\[\]=(.*?) ; ignore_errors=(yes|no)', units[unit].get(property, ''))
+
+    for unit, (start, stop) in services.items():
+        observed = units[unit]
+        require(observed.get('TimeoutStartUSec') == start and observed.get('TimeoutStopUSec') == stop, unit)
+        if unit in ('forgejo.service', 'forgejo-postgres.service'):
+            require(observed.get('Restart') == 'on-failure', unit)
+        else:
+            require(observed.get('Type') == 'oneshot' and observed.get('RemainAfterExit') == 'no', unit)
+    for unit, script, action in (('forgejo-backup.service', 'backup.py', 'capture'),
+            ('forgejo-recover.service', 'backup.py', 'recover'),
+            ('forgejo-transfer.service', 'transfer.py', 'run')):
+        require(commands(unit, 'ExecStart') == [(f'/usr/bin/python3 {HELPERS / script} {action}', 'no')], unit)
+    require(commands('forgejo-backup.service', 'ExecStopPost') == [
+        ('/usr/bin/systemctl --user --no-block start forgejo-recover.service', 'no')], 'forgejo-backup.service')
+    require('forgejo-recover.service' in units['forgejo-backup.service'].get('OnFailure', '').split(), 'forgejo-backup.service')
+    require(commands('forgejo-transfer.service', 'ExecStopPost') == [
+        (f'/usr/bin/python3 {HELPERS / "transfer.py"} cleanup', 'no')], 'forgejo-transfer.service')
+    for unit, dependency in (('forgejo.service', 'Requires'), ('forgejo-recover.service', 'Wants')):
+        require(all('forgejo-postgres.service' in units[unit].get(field, '').split()
+                    for field in (dependency, 'After')), unit)
+    require((f'/usr/bin/python3 {HELPERS / "backup.py"} guard', 'no') in
+            commands('forgejo.service', 'ExecStartPre'), 'forgejo.service')
+    for unit, calendars in (('forgejo-backup.timer', ['*-*-* 03:30:00']),
+            ('forgejo-transfer.timer', ['*-*-* 00/4:45:00', '*-*-* 00,04,08,12,16,20:45:00'])):
+        observed = units[unit]
+        schedule = re.findall(r'OnCalendar=(.*?) ;', observed.get('TimersCalendar', ''))
+        require(observed.get('Persistent') == 'yes' and observed.get('Unit') == unit.replace('.timer', '.service')
+                and len(schedule) == 1 and schedule[0] in calendars
+                and not observed.get('TimersMonotonic'), unit)
+
+
+def verify(*, completing_activation=False) -> dict:
+    if not completing_activation and (HELPERS / 'activation-pending.json').exists():
+        raise RuntimeError('configuration activation must complete before verification')
+    stored = HELPERS / "desired.json"
+    regular(stored, owner=os.geteuid())
+    settings = json.loads(safe_read(stored).decode())
+    allocation = account_allocation()
+    if settings["allocation"] != allocation:
+        raise ValueError("existing deployment allocation differs from foundation state")
+    check_boundaries(allocation)
+    check_database(STATE / "database")
+    for name, path in targets_for(allocation).items():
+        protected = name.startswith(("config/", "credentials/"))
+        regular(path, private=protected, owner=allocation["uid"] if protected else os.geteuid())
+        if name == 'config/mirror-credential-helper.sh' and stat.S_IMODE(path.stat().st_mode) != 0o700:
+            raise ValueError('private mirror askpass program is not executable')
+        if path.stat().st_gid != allocation["gid"]:
+            raise ValueError("deployment file has unexpected group")
+        if hashlib.sha256(safe_read(path)).hexdigest() != settings["checksums"][name]:
+            raise ValueError("effective declaration differs from installed desired state")
+    verify_effective_units()
+    for container, key in (("forgejo", "image"), ("forgejo-postgres", "postgres_image")):
+        manager(["is-active", container + ".service"])
+        expected = user_command(["/usr/bin/podman", "image", "inspect", "--format",
+                                 "{{.Id}}", settings[key]], allocation).stdout.strip()
+        actual = user_command(["/usr/bin/podman", "container", "inspect", "--format",
+                               "{{.Image}}", container], allocation).stdout.strip()
+        if expected != actual:
+            raise ValueError("running container does not use the declared immutable image")
+        document = json.loads(user_command(["/usr/bin/podman", "container", "inspect",
+                                           container], allocation).stdout)[0]
+        ports = document["NetworkSettings"].get("Ports") or {}
+        published = {key: value for key, value in ports.items() if value}
+        expected_ports = {"3000/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(settings["backend_port"])}]}
+        if published != (expected_ports if container == "forgejo" else {}):
+            raise ValueError("container exposes an undeclared host listener")
+    if database_command(allocation, "SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication "
+            "FROM pg_roles WHERE rolname='forgejo';", user="forgejo", database="forgejo") != "f|f|f|f":
+        raise ValueError("application database role has excessive authority")
+    wait_health(settings["backend_port"], 5)
+    manager(["is-active", "forgejo-backup.timer"])
+    manager(["is-active", "forgejo-transfer.timer"])
+    backup_status = STATE / "backup-status.json"
+    backup = json.loads(safe_read(backup_status, private=True, owner=allocation["uid"])) if backup_status.exists() else "pending"
+    if (STATE / "restart-intent.json").exists() or (STATE / "recovery-failed").exists():
+        backup = {"recovery": "incomplete"}
+    transfer_status = STATE / "transfer-status.json"
+    transfer = json.loads(safe_read(transfer_status, private=True, owner=allocation["uid"])) if transfer_status.exists() else "pending"
+    mirrors = mirror_status.summarize(json.loads(database_command(allocation,
+        mirror_status.QUERY, user='forgejo', database='forgejo')), datetime.now(timezone.utc))
+    return {"ready": True, "backup": backup, "transfer": transfer,
+            "mirror": mirrors if mirrors else 'unconfigured',
+            "acceptance_complete": False}
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Internal managed Forgejo lifecycle")
+    actions = parser.add_subparsers(dest="action", required=True)
+    provision = actions.add_parser("reconcile")
+    provision.add_argument("--candidate", required=True, type=Path)
+    actions.add_parser("verify")
+    options = parser.parse_args(argv)
+    try:
+        if os.geteuid() != 0:
+            raise ValueError("managed host lifecycle requires authorized root administration")
+        if options.action == "reconcile":
+            result = reconcile(options.candidate)
+        else:
+            result = verify()
+        print(json.dumps(result))
+        return 0
+    except (OSError, ValueError, RuntimeError, KeyError, json.JSONDecodeError) as error:
+        print(f"Forgejo lifecycle failed: {error}", file=__import__("sys").stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

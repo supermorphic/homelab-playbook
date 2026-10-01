@@ -126,6 +126,10 @@ def classify_path(path: str) -> tuple[str, str]:
             "roles/reverse_proxy/",
             "roles/semaphore/",
             "playbooks/semaphore/",
+            "roles/forgejo/",
+            "playbooks/forgejo/",
+            "scripts/forgejo/",
+            "tests/forgejo/",
         ),
     ):
         return (

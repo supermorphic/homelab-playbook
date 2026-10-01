@@ -1,0 +1,69 @@
+---
+- name: Establish private Forgejo service directories
+  ansible.builtin.file:
+    path: "{{ forgejo_state_root }}{{ item }}"
+    state: directory
+    owner: svc-forgejo
+    group: svc-forgejo
+    mode: '0700'
+  loop: ['', /data, /database, /config, /credentials, /backups]
+
+- name: Establish administrator-owned Forgejo helper directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /usr/local/libexec, group: root, mode: '0755'}
+    - {path: "{{ forgejo_helper_root }}", group: svc-forgejo, mode: '0750'}
+    - {path: "{{ forgejo_helper_root }}/candidates", group: root, mode: '0700'}
+    - {path: /run/forgejo, group: svc-forgejo, mode: '0750'}
+
+- name: Install persistent Forgejo operation-lock boot declaration
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/forgejo.conf
+    content: "d /run/forgejo 0750 root svc-forgejo -\nf /run/forgejo/operation.lock 0660 root svc-forgejo -\n"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Establish operation lock without replacing its inode
+  ansible.builtin.copy:
+    dest: /run/forgejo/operation.lock
+    content: ''
+    force: false
+    owner: root
+    group: svc-forgejo
+    mode: '0660'
+
+- name: Establish Forgejo account configuration parent
+  ansible.builtin.file:
+    path: /var/lib/svc-forgejo/.config
+    state: directory
+    owner: svc-forgejo
+    group: svc-forgejo
+    mode: '0700'
+
+- name: Establish administrator-owned user-unit directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: svc-forgejo
+    mode: '0750'
+  loop:
+    - /var/lib/svc-forgejo/.config/systemd
+    - "{{ forgejo_user_unit_root }}"
+    - "{{ forgejo_user_unit_root }}/timers.target.wants"
+    - "{{ forgejo_user_unit_root }}/default.target.wants"
+
+- name: Install trusted Forgejo lifecycle helper
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ forgejo_helper_root }}/{{ item }}"
+    owner: root
+    group: svc-forgejo
+    mode: '0640'
+  loop: [service.py, archive.py, backup.py, transfer.py, mirror_status.py]

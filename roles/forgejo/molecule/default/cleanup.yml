@@ -1,0 +1,3 @@
+---
+- name: Reuse exact scenario ownership checks before cleanup
+  ansible.builtin.import_playbook: ../../../system_maintenance/molecule/default/cleanup.yml

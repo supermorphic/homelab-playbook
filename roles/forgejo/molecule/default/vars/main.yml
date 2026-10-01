@@ -1,0 +1,30 @@
+---
+forgejo_foundation_account:
+  name: svc-forgejo
+  uid: 2202
+  gid: 2202
+  subuid_start: 700000
+  subuid_count: 65536
+  subgid_start: 700000
+  subgid_count: 65536
+forgejo_hostname: forgejo.example.test
+forgejo_backend_port: 18081
+forgejo_certificate_name: forgejo-fixture
+forgejo_proxy_source: 127.0.0.1/32
+reverse_proxy_routes:  # noqa: var-naming[no-role-prefix] -- shared proxy input
+  - hostname: forgejo.example.test
+    backend_port: 18081
+    certificate_name: forgejo-fixture
+forgejo_database_admin_password: fixture-postgres-admin
+forgejo_database_password: fixture-database-password
+forgejo_admin_login: fixture-admin
+forgejo_admin_password: fixture-admin-password
+forgejo_admin_email: fixture@example.test
+forgejo_secret_key: fixture-secret-key
+forgejo_internal_token: fixture-internal-token
+forgejo_lfs_jwt_secret: fixture-lfs-jwt-secret
+forgejo_oauth2_jwt_secret: fixture-oauth2-jwt-secret
+forgejo_rclone_remote: fixture:forgejo
+forgejo_rclone_config: |
+  [fixture]
+  type = local

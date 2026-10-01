@@ -26,6 +26,11 @@ def commands_for(result: dict) -> list[list[str]]:
             ["mise", "run", "test:semaphore", "--", mode]
             for mode in ("compatibility", "fixture", "controller")
         )
+    if "forgejo/default" in selectors:
+        commands.extend(
+            ["mise", "run", "test:forgejo", "--", mode]
+            for mode in ("compatibility", "fixture")
+        )
     return commands
 
 

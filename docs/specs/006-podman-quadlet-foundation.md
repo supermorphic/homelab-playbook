@@ -252,5 +252,5 @@ immediately before execution.
   documents rootless storage and subordinate identity requirements.
 - [Specification 003](003-os-maintenance-security-baseline.md) defines the OS
   baseline and administrative authority that this foundation builds on.
-- [Repository command lifecycle](../reference/repository-command-lifecycle.md)
+- [Repository command lifecycle](../guides/repository-command-lifecycle.md)
   distinguishes provisioning, observation, and bounded experiments.

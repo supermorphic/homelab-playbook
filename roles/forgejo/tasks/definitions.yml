@@ -1,0 +1,22 @@
+---
+- name: Stage secret-free Forgejo Quadlet candidates
+  ansible.builtin.template:
+    src: "{{ item.source }}"
+    dest: "{{ forgejo_candidate.path }}/quadlets/{{ item.name }}"
+    owner: root
+    group: root
+    mode: '0600'
+  loop:
+    - {source: forgejo.network.j2, name: forgejo.network}
+    - {source: postgres.container.j2, name: forgejo-postgres.container}
+    - {source: forgejo.container.j2, name: forgejo.container}
+  changed_when: false
+
+- name: Stage fixed public reconciliation manifest
+  ansible.builtin.template:
+    src: manifest.json.j2
+    dest: "{{ forgejo_candidate.path }}/manifest.json"
+    owner: root
+    group: root
+    mode: '0600'
+  changed_when: false

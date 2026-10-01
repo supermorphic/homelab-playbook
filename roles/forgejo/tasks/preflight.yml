@@ -1,0 +1,164 @@
+---
+- name: Require supported Forgejo host administration
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'Debian'
+      - ansible_facts['distribution_major_version'] == '13'
+      - ansible_facts['service_mgr'] == 'systemd'
+      - ansible_user | default('') == 'ansible'
+      - ansible_password is not defined
+      - ansible_ssh_pass is not defined
+      - ansible_ssh_password is not defined
+      - ansible_become_password is not defined
+      - ansible_become_pass is not defined
+    fail_msg: Forgejo needs Debian 13 and key-only passwordless ansible administration
+  no_log: true
+
+- name: Validate Forgejo inputs
+  ansible.builtin.import_tasks: inputs.yml
+
+- name: Inspect Forgejo foundation identity
+  ansible.builtin.getent:
+    database: "{{ item }}"
+    key: svc-forgejo
+    fail_key: false
+  loop: [passwd, group]
+
+- name: Inspect Forgejo foundation allocation metadata
+  ansible.builtin.stat:
+    path: "{{ forgejo_quadlet_root }}/.foundation-account.json"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  register: forgejo_allocation_metadata
+
+- name: Require a separately provisioned matching foundation
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.getent_passwd[forgejo_account_name] is defined
+      - ansible_facts.getent_group[forgejo_account_name] is defined
+      - ansible_facts.getent_passwd[forgejo_account_name][1] | int == forgejo_foundation_account.uid
+      - ansible_facts.getent_passwd[forgejo_account_name][2] | int == forgejo_foundation_account.gid
+      - ansible_facts.getent_group[forgejo_account_name][1] | int == forgejo_foundation_account.gid
+      - forgejo_allocation_metadata.stat.exists
+      - forgejo_allocation_metadata.stat.isreg | default(false)
+      - not forgejo_allocation_metadata.stat.islnk | default(true)
+      - forgejo_allocation_metadata.stat.uid == 0
+      - forgejo_allocation_metadata.stat.mode == '0640'
+    fail_msg: Declare and provision the exact svc-forgejo foundation separately
+
+- name: Read non-secret foundation allocation record
+  ansible.builtin.slurp:
+    src: "{{ forgejo_quadlet_root }}/.foundation-account.json"
+  register: forgejo_allocation_record
+
+- name: Require equal existing foundation allocation
+  ansible.builtin.assert:
+    that:
+      - forgejo_allocation_record.content | b64decode | from_json == forgejo_foundation_account
+    fail_msg: Existing Forgejo identity differs and needs operator migration review
+
+- name: Inspect existing Forgejo boundaries
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  loop:
+    - /var/lib/svc-forgejo
+    - "{{ forgejo_state_root }}"
+    - "{{ forgejo_state_root }}/database"
+    - "{{ forgejo_state_root }}/data"
+    - "{{ forgejo_state_root }}/config"
+    - "{{ forgejo_state_root }}/credentials"
+    - "{{ forgejo_state_root }}/backups"
+    - /usr/local
+    - /usr/local/libexec
+    - "{{ forgejo_helper_root }}"
+    - "{{ forgejo_helper_root }}/candidates"
+    - /var/lib/svc-forgejo/.config
+    - /var/lib/svc-forgejo/.config/systemd
+    - "{{ forgejo_user_unit_root }}"
+    - "{{ forgejo_user_unit_root }}/timers.target.wants"
+    - "{{ forgejo_user_unit_root }}/default.target.wants"
+    - "{{ forgejo_quadlet_root }}"
+    - /run/forgejo
+  register: forgejo_boundaries
+
+- name: Reject linked or unexpectedly owned existing boundaries
+  ansible.builtin.assert:
+    that:
+      - not item.stat.exists or item.stat.isdir
+      - not item.stat.exists or not item.stat.islnk
+      - not item.stat.exists or item.stat.uid in [0, forgejo_foundation_account.uid]
+      - not item.stat.exists or (not item.stat.wgrp and not item.stat.woth)  # codespell:ignore woth
+      - not item.item.startswith('/usr/local') or not item.stat.exists or item.stat.uid == 0
+      - >-
+        not item.item.startswith(forgejo_state_root) or not item.stat.exists
+        or (item.stat.uid == forgejo_foundation_account.uid
+            and item.stat.gid == forgejo_foundation_account.gid and item.stat.mode == '0700')
+      - >-
+        item.item not in [forgejo_quadlet_root, forgejo_user_unit_root,
+                         forgejo_user_unit_root + '/timers.target.wants',
+                         forgejo_user_unit_root + '/default.target.wants',
+                         '/var/lib/svc-forgejo/.config/systemd', '/run/forgejo']
+        or not item.stat.exists or item.stat.uid == 0
+    fail_msg: An existing Forgejo boundary has an unsafe type or owner
+  loop: "{{ forgejo_boundaries.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Inspect existing PostgreSQL version metadata
+  ansible.builtin.stat:
+    path: "{{ forgejo_state_root }}/database/PG_VERSION"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  register: forgejo_database_version_metadata
+
+- name: Reject linked or invalid PostgreSQL metadata
+  ansible.builtin.assert:
+    that:
+      - >-
+        not forgejo_database_version_metadata.stat.exists
+        or (forgejo_database_version_metadata.stat.isreg | default(false)
+            and not forgejo_database_version_metadata.stat.islnk | default(true))
+    fail_msg: Existing PostgreSQL metadata is unsafe
+
+- name: Read existing non-secret PostgreSQL major
+  ansible.builtin.slurp:
+    src: "{{ forgejo_state_root }}/database/PG_VERSION"
+  register: forgejo_existing_database_version
+  when: forgejo_database_version_metadata.stat.exists
+
+- name: Require PostgreSQL 17 storage compatibility
+  ansible.builtin.assert:
+    that:
+      - >-
+        not forgejo_database_version_metadata.stat.exists
+        or forgejo_existing_database_version.content | b64decode | trim == '17'
+    fail_msg: Existing Forgejo database needs a separately reviewed migration
+
+- name: Inspect separately managed Forgejo certificate metadata
+  ansible.builtin.stat:
+    path: "/etc/caddy/tls/{{ forgejo_certificate_name }}/current/{{ item }}"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  loop: [fullchain.pem, privkey.pem]
+  register: forgejo_certificate_metadata
+
+- name: Require ready regular shared certificate files
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isreg | default(false)
+      - not item.stat.islnk | default(true)
+    fail_msg: Prepare the existing shared TLS and proxy workflows first
+  loop: "{{ forgejo_certificate_metadata.results }}"
+  loop_control:
+    label: "{{ item.item }}"

@@ -1,0 +1,29 @@
+[Unit]
+Description=Forgejo private Git and collaboration service
+Requires=forgejo-postgres.service
+After=forgejo-postgres.service
+
+[Container]
+ContainerName=forgejo
+Image={{ forgejo_image }}
+Pull=never
+Network=forgejo.network
+UserNS=keep-id:uid=1000,gid=1000
+User=1000:1000
+Environment=GITEA_APP_INI=/etc/gitea/app.ini
+PublishPort=127.0.0.1:{{ forgejo_backend_port }}:3000
+Volume={{ forgejo_state_root }}/data:/var/lib/gitea:rw,z
+Volume={{ forgejo_state_root }}/config:/etc/gitea:rw,z
+Volume=/etc/localtime:/etc/localtime:ro
+NoNewPrivileges=true
+
+[Service]
+ExecStartPre=/usr/bin/python3 {{ forgejo_helper_root }}/backup.py guard
+ExecStartPre=/bin/sh -ec 'for attempt in $(seq 1 {{ forgejo_health_timeout_seconds }}); do /usr/bin/podman healthcheck run forgejo-postgres && exit 0; sleep 1; done; exit 1'
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=90
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target

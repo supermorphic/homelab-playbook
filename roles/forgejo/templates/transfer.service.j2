@@ -1,0 +1,10 @@
+[Unit]
+Description=Verify and transfer complete Forgejo archives to NAS
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {{ forgejo_helper_root }}/transfer.py run
+ExecStopPost=/usr/bin/python3 {{ forgejo_helper_root }}/transfer.py cleanup
+TimeoutStartSec={{ forgejo_transfer_timeout }}
+TimeoutStopSec=30
+UMask=0077

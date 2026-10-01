@@ -7,6 +7,8 @@ specifications record design decisions and integration contracts.
 
 ## Guides
 
+- [Repository command lifecycle](guides/repository-command-lifecycle.md) —
+  Classify command behavior, safeguards, execution authority, and evidence.
 - [GitHub main protection](guides/github-main-protection.md) — Inspect, verify,
   and recover the repository's protected-branch settings.
 - [Managed host onboarding](guides/managed-host-onboarding.md) — Prepare,
@@ -22,8 +24,6 @@ specifications record design decisions and integration contracts.
 
 - [Off-cluster TLS automation](../playbooks/tls/README.md) — Install the host
   issuer, configure its disabled timer, and prepare the fixed Caddy integration.
-- [Repository command lifecycle](reference/repository-command-lifecycle.md) —
-  Classify command behavior, safeguards, execution authority, and evidence.
 
 ## Specifications
 
@@ -49,3 +49,9 @@ specifications record design decisions and integration contracts.
 - [008 — Shared private reverse proxy](specs/008-shared-private-reverse-proxy.md) —
   Defines host-level Caddy, private HTTPS routes, external certificate delivery,
   configuration recovery, and service integration contracts.
+- [009 — Semaphore infrastructure automation](specs/009-semaphore-infrastructure-automation.md)
+  — Defines application deployment, PostgreSQL backups, isolated recovery and
+  the optional controller job.
+- [010 — Forgejo service](specs/010-forgejo-service.md) — Defines the
+  HTTPS-only Forgejo/PostgreSQL service, backups, isolated recovery, nightly
+  mirroring and change-directed validation, with repository migration separate.

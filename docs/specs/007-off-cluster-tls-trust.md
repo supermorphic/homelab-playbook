@@ -388,7 +388,7 @@ files to it. Resolve that consumer before closing the full issue.
 
 - [Podman foundation design](006-podman-quadlet-foundation.md)
 - [SOPS credential boundary](005-sops-age-secrets.md)
-- [Command lifecycle](../reference/repository-command-lifecycle.md)
+- [Command lifecycle](../guides/repository-command-lifecycle.md)
 - [Shared proxy issue #25](https://github.com/supermorphic/homelab-playbook/issues/25)
 - [lego certificate operations](https://go-acme.github.io/lego/obtain/)
 - [Pinned lego 5.4.1 renewal behavior](https://github.com/go-acme/lego/blob/v5.4.1/cmd/cmd_run_renew.go)

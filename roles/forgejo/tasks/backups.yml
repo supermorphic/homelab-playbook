@@ -1,0 +1,15 @@
+---
+- name: Stage Forgejo backup and recovery unit candidates
+  ansible.builtin.template:
+    src: "{{ item.source }}"
+    dest: "{{ forgejo_candidate.path }}/units/{{ item.name }}"
+    owner: root
+    group: root
+    mode: '0600'
+  loop:
+    - {source: backup.service.j2, name: forgejo-backup.service}
+    - {source: backup.timer.j2, name: forgejo-backup.timer}
+    - {source: recover.service.j2, name: forgejo-recover.service}
+    - {source: transfer.service.j2, name: forgejo-transfer.service}
+    - {source: transfer.timer.j2, name: forgejo-transfer.timer}
+  changed_when: false

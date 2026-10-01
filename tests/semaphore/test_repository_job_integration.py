@@ -168,6 +168,7 @@ class RepositoryJobIntegrationTests(unittest.TestCase):
             ".mise.toml",
             "ansible.cfg",
             "mise.lock",
+            "mise-registry.yaml",
             "overrides",
             "playbooks",
             "pyproject.toml",

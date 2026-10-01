@@ -1,0 +1,23 @@
+---
+- name: Observe installed non-secret Forgejo declaration
+  ansible.builtin.slurp:
+    src: "{{ forgejo_helper_root }}/desired.json"
+  register: forgejo_observed_declaration
+
+- name: Require current declared public settings
+  ansible.builtin.assert:
+    that:
+      - (forgejo_observed_declaration.content | b64decode | from_json)[item.key] == item.value
+    fail_msg: Installed Forgejo settings differ from the current declaration
+  loop:
+    - {key: allocation, value: "{{ forgejo_foundation_account }}"}
+    - {key: hostname, value: "{{ forgejo_hostname }}"}
+    - {key: backend_port, value: "{{ forgejo_backend_port }}"}
+    - {key: proxy_source, value: "{{ forgejo_proxy_source }}"}
+    - {key: health_timeout_seconds, value: "{{ forgejo_health_timeout_seconds }}"}
+    - {key: image, value: "{{ forgejo_image }}"}
+    - {key: postgres_image, value: "{{ forgejo_postgres_image }}"}
+    - {key: rclone_image, value: "{{ forgejo_rclone_image }}"}
+    - {key: rclone_remote, value: "{{ forgejo_rclone_remote }}"}
+  loop_control:
+    label: "{{ item.key }}"

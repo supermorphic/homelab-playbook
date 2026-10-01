@@ -1,0 +1,31 @@
+---
+- name: Observe protected input checksums without reading values into results
+  ansible.builtin.stat:
+    path: "{{ forgejo_state_root }}/{{ item.path }}"
+    follow: false
+    get_checksum: true
+    checksum_algorithm: sha256
+    get_mime: false
+    get_attributes: false
+  loop:
+    - {variable: forgejo_database_password, path: config/database-password}
+    - {variable: forgejo_secret_key, path: config/secret-key}
+    - {variable: forgejo_internal_token, path: config/internal-token}
+    - {variable: forgejo_lfs_jwt_secret, path: config/lfs-jwt-secret}
+    - {variable: forgejo_oauth2_jwt_secret, path: config/oauth2-jwt-secret}
+    - {variable: forgejo_database_admin_password, path: credentials/postgres-admin-password}
+    - {variable: forgejo_mirror_credentials, path: config/mirror-credentials}
+  register: forgejo_observed_inputs
+  changed_when: false
+  no_log: true
+
+- name: Require matching protected inputs
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.isreg | default(false)
+      - not item.stat.islnk | default(true)
+      - item.stat.checksum == lookup('vars', item.item.variable) | hash('sha256')
+    fail_msg: Installed protected Forgejo inputs differ from declared recovery inputs
+  loop: "{{ forgejo_observed_inputs.results }}"
+  no_log: true

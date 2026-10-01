@@ -1,0 +1,20 @@
+---
+- name: Reconcile and verify Forgejo inside the service operation lock
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - "{{ forgejo_helper_root }}/service.py"
+      - reconcile
+      - --candidate
+      - "{{ forgejo_candidate.path }}"
+  register: forgejo_reconciliation
+  changed_when: >-
+    forgejo_reconciliation.rc == 0
+    and (forgejo_reconciliation.stdout | from_json).changed | bool
+  no_log: true
+
+- name: Report non-secret Forgejo readiness and acceptance boundaries
+  ansible.builtin.debug:
+    msg: >-
+      Forgejo service readiness passed. Backup, mirror and attended host recovery
+      acceptance require their separately recorded evidence.

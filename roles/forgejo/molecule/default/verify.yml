@@ -1,0 +1,119 @@
+---
+- name: Observe Forgejo definitions and exercise owned stand-in supervision
+  hosts: forgejo
+  gather_facts: true
+  become: true
+  vars_files:
+    - vars/main.yml
+  tasks:
+    - name: Observe representative private files and administrator-owned definitions
+      ansible.builtin.stat:
+        path: "{{ item.path }}"
+        follow: false
+        get_checksum: false
+        get_attributes: false
+        get_mime: false
+      loop:
+        - {path: /var/lib/svc-forgejo/forgejo/config/app.ini, uid: 2202, gid: 2202, mode: '0600'}
+        - {path: /var/lib/svc-forgejo/forgejo/config/mirror-credentials, uid: 2202, gid: 2202, mode: '0600'}
+        - {path: /var/lib/svc-forgejo/forgejo/config/mirror-credential-helper.sh, uid: 2202, gid: 2202, mode: '0700'}
+        - {path: /var/lib/svc-forgejo/forgejo/credentials/postgres.env, uid: 2202, gid: 2202, mode: '0600'}
+        - {path: /etc/containers/systemd/users/2202/forgejo.container, uid: 0, gid: 2202, mode: '0640'}
+        - {path: /var/lib/svc-forgejo/.config/systemd/user/forgejo-backup.service, uid: 0, gid: 2202, mode: '0640'}
+        - {path: /usr/local/libexec/forgejo/backup.py, uid: 0, gid: 2202, mode: '0640'}
+        - {path: /run/forgejo/operation.lock, uid: 0, gid: 2202, mode: '0660'}
+      register: forgejo_fixture_metadata
+
+    - name: Require independently declared metadata
+      ansible.builtin.assert:
+        that:
+          - item.stat.isreg | default(false)
+          - not item.stat.islnk | default(true)
+          - item.stat.uid == item.item.uid
+          - item.stat.gid == item.item.gid
+          - item.stat.mode == item.item.mode
+      loop: "{{ forgejo_fixture_metadata.results }}"
+      loop_control:
+        label: "{{ item.item.path }}"
+
+    - name: Verify installed protected input metadata
+      ansible.builtin.include_role:
+        name: forgejo
+        tasks_from: verify-definitions.yml
+
+    - name: Inspect generated effective units without starting the product
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - --user
+          - --machine=svc-forgejo@.host
+          - show
+          - "{{ item }}"
+          - --property=LoadState,ExecStart,Type,RemainAfterExit,TimeoutStartUSec,Requires,After,OnFailure,ExecStopPost
+      loop:
+        - forgejo.service
+        - forgejo-postgres.service
+        - forgejo-backup.service
+        - forgejo-recover.service
+        - forgejo-transfer.service
+      register: forgejo_fixture_units
+      changed_when: false
+
+    - name: Require loaded bounded units and intended publication
+      ansible.builtin.assert:
+        that:
+          - "'LoadState=loaded' in item.stdout_lines"
+          - "'TimeoutStartUSec=infinity' not in item.stdout_lines"
+          - "item.item not in ['forgejo-backup.service', 'forgejo-recover.service', 'forgejo-transfer.service'] or 'Type=oneshot' in item.stdout_lines"
+          - "item.item not in ['forgejo-backup.service', 'forgejo-recover.service', 'forgejo-transfer.service'] or 'RemainAfterExit=no' in item.stdout_lines"
+      loop: "{{ forgejo_fixture_units.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Require application-only loopback and independent recovery
+      ansible.builtin.assert:
+        that:
+          - "'127.0.0.1:18081:3000' in forgejo_fixture_units.results[0].stdout"
+          - "'forgejo-postgres.service' in forgejo_fixture_units.results[0].stdout"
+          - "'--publish' not in forgejo_fixture_units.results[1].stdout"
+          - "'forgejo-recover.service' in forgejo_fixture_units.results[2].stdout"
+          - "'TimeoutStartUSec=30min' in forgejo_fixture_units.results[2].stdout_lines"
+          - "'TimeoutStartUSec=5min' in forgejo_fixture_units.results[3].stdout_lines"
+          - "'TimeoutStartUSec=2h' in forgejo_fixture_units.results[4].stdout_lines"
+
+    - name: Parse host-local calendars
+      ansible.builtin.command:
+        argv: [systemd-analyze, calendar, "{{ item }}"]
+      loop: ['*-*-* 03:30:00', '*-*-* 00,04,08,12,16,20:45:00']
+      changed_when: false
+
+    - name: Install owned effective-unit drift probe
+      ansible.builtin.copy:
+        src: effective_units_probe.py
+        dest: /usr/local/libexec/forgejo-effective-units-probe.py
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Reject a disposable loaded override without repairing it
+      ansible.builtin.command:
+        argv: [python3, /usr/local/libexec/forgejo-effective-units-probe.py]
+      changed_when: false
+
+    - name: Run actual systemd stand-in capture and independent recovery tests
+      ansible.builtin.include_vars:
+        file: ../../defaults/main.yml
+        name: forgejo_fixture_defaults
+
+    - name: Supply public runtime pins to the stand-in archive validator
+      ansible.builtin.copy:
+        content: "{{ {'rclone_image': forgejo_fixture_defaults.forgejo_rclone_image} | to_json }}"
+        dest: /var/lib/svc-forgejo-probe/recovery/pins.json
+        owner: svc-forgejo-probe
+        group: svc-forgejo-probe
+        mode: '0600'
+
+    - name: Exercise actual stand-in supervision
+      ansible.builtin.command:
+        argv: [python3, /usr/local/libexec/forgejo-recovery-probe.py, suite]
+      changed_when: false

@@ -1,0 +1,64 @@
+APP_NAME = Forgejo
+RUN_MODE = prod
+RUN_USER = git
+WORK_PATH = /var/lib/gitea
+
+[database]
+DB_TYPE = postgres
+HOST = forgejo-postgres:5432
+NAME = forgejo
+USER = forgejo
+PASSWD_URI = file:/etc/gitea/database-password
+SSL_MODE = disable
+
+[repository]
+ROOT = /var/lib/gitea/git/repositories
+
+[server]
+DOMAIN = {{ forgejo_hostname }}
+ROOT_URL = https://{{ forgejo_hostname }}/
+PROTOCOL = http
+HTTP_ADDR = 0.0.0.0
+HTTP_PORT = 3000
+APP_DATA_PATH = /var/lib/gitea/data
+DISABLE_SSH = true
+START_SSH_SERVER = false
+LFS_START_SERVER = true
+LFS_JWT_SECRET_URI = file:/etc/gitea/lfs-jwt-secret
+
+[security]
+INSTALL_LOCK = true
+SECRET_KEY_URI = file:/etc/gitea/secret-key
+INTERNAL_TOKEN_URI = file:/etc/gitea/internal-token
+REVERSE_PROXY_TRUSTED_PROXIES = {{ forgejo_proxy_source }}
+DISABLE_GIT_HOOKS = true
+
+[service]
+DISABLE_REGISTRATION = true
+ENABLE_REVERSE_PROXY_AUTHENTICATION = false
+REQUIRE_SIGNIN_VIEW = true
+
+[oauth2]
+JWT_SIGNING_ALGORITHM = HS256
+JWT_SECRET_URI = file:/etc/gitea/oauth2-jwt-secret
+
+[actions]
+ENABLED = false
+
+[packages]
+ENABLED = false
+
+[mirror]
+DEFAULT_INTERVAL = 8h
+
+[git.config]
+core.askPass = /etc/gitea/mirror-credential-helper.sh
+credential.useHttpPath = true
+
+[cron.update_mirrors]
+SCHEDULE = 0 0 2 * * *
+RUN_AT_START = false
+
+[log]
+MODE = console
+LEVEL = Warn

@@ -1,0 +1,14 @@
+[Unit]
+Description=Recover intended Forgejo availability after capture or boot
+Wants=forgejo-postgres.service
+After=forgejo-postgres.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {{ forgejo_helper_root }}/backup.py recover
+TimeoutStartSec={{ forgejo_recovery_timeout_seconds }}
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=default.target

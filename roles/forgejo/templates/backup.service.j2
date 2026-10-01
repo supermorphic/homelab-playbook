@@ -1,0 +1,11 @@
+[Unit]
+Description=Consistent Forgejo database and file capture
+OnFailure=forgejo-recover.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {{ forgejo_helper_root }}/backup.py capture
+ExecStopPost=/usr/bin/systemctl --user --no-block start forgejo-recover.service
+TimeoutStartSec={{ forgejo_backup_timeout_seconds }}
+TimeoutStopSec=30
+UMask=0077

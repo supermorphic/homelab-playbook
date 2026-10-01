@@ -152,6 +152,21 @@ for semaphore_action in provision verify; do
   rg -q '^ansible-playbook$' "$uv_log" || fail 'Semaphore action did not reach playbook gateway'
 done
 
+for forgejo_action in provision verify; do
+  : >"$uv_log"
+  assert_status 0 env PATH="$fake_bin:$PATH" FAKE_UV_LOG="$uv_log" \
+    "$repo_root/scripts/playbook.sh" forgejo "$forgejo_action" production --limit fixture-host --check
+  rg -q '^ansible-config$' "$uv_log" || fail 'Forgejo action omitted credential guards'
+  rg -q '^ansible-playbook$' "$uv_log" || fail 'Forgejo action did not reach playbook gateway'
+  rg -q '^fixture-host$' "$uv_log" || fail 'Forgejo gateway lost host selection'
+  for unsupported_inventory in staging frozen/k3s; do
+    : >"$uv_log"
+    assert_status 2 env PATH="$fake_bin:$PATH" FAKE_UV_LOG="$uv_log" \
+      "$repo_root/scripts/playbook.sh" forgejo "$forgejo_action" "$unsupported_inventory"
+    [[ ! -s "$uv_log" ]] || fail 'unsupported Forgejo inventory invoked uv'
+  done
+done
+
 for unsafe_args in \
   '-k' \
   '--ask-pass' \
@@ -170,7 +185,8 @@ for unsafe_args in \
   for guarded_selector in 'os maintain' 'os verify' 'podman provision' 'podman verify' \
     'tls provision' 'tls renew' 'tls verify' \
     'reverse-proxy provision' 'reverse-proxy verify' \
-    'semaphore provision' 'semaphore verify'; do
+    'semaphore provision' 'semaphore verify' \
+    'forgejo provision' 'forgejo verify'; do
     read -r -a guarded_argv <<<"$guarded_selector"
     assert_status 2 env \
     PATH="$fake_bin:$PATH" \
