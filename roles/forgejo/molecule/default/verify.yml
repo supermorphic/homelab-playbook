@@ -87,6 +87,19 @@
       loop: ['*-*-* 03:30:00', '*-*-* 00,04,08,12,16,20:45:00']
       changed_when: false
 
+    - name: Install owned effective-unit drift probe
+      ansible.builtin.copy:
+        src: effective_units_probe.py
+        dest: /usr/local/libexec/forgejo-effective-units-probe.py
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Reject a disposable loaded override without repairing it
+      ansible.builtin.command:
+        argv: [python3, /usr/local/libexec/forgejo-effective-units-probe.py]
+      changed_when: false
+
     - name: Run actual systemd stand-in capture and independent recovery tests
       ansible.builtin.include_vars:
         file: ../../defaults/main.yml

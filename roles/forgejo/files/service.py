@@ -469,6 +469,16 @@ def reconcile(candidate: Path) -> dict:
         targets = targets_for(allocation)
         check_stable_inputs(candidate, targets)
         check_database(STATE / "database")
+        activation = HELPERS / 'activation-pending.json'
+        pending = None
+        if activation.exists():
+            pending = json.loads(safe_read(activation, owner=os.geteuid()))
+            if (pending.get('schema') != 1 or pending.get('allocation') != allocation
+                    or re.fullmatch(r'[0-9a-f]{32}', pending.get('generation', '')) is None
+                    or not isinstance(pending.get('names'), list)
+                    or not set(pending['names']) <= set(targets)
+                    or any(pending.get(key) != settings[key] for key in ('image', 'postgres_image'))):
+                raise ValueError('pending activation requires matching allocation and runtime pins')
         stored = HELPERS / "desired.json"
         if stored.exists():
             regular(stored, owner=os.geteuid())
@@ -476,6 +486,8 @@ def reconcile(candidate: Path) -> dict:
             if any(previous[key] != settings[key] for key in ("image", "postgres_image")):
                 raise ValueError("runtime upgrade requires a reviewed compatible pre-upgrade archive")
             generation = previous["recovery_generation"]
+        elif pending is not None:
+            generation = pending['generation']
         else:
             if any((STATE / "database").iterdir()) or any((STATE / "data").iterdir()):
                 raise ValueError("existing unrecorded data requires operator migration")
@@ -486,7 +498,17 @@ def reconcile(candidate: Path) -> dict:
         validate_generator(candidate, allocation)
         changed_names = {name for name, path in targets.items()
             if not path.exists() or safe_read(path) != safe_read(candidate / name)}
+        if pending is not None:
+            if pending['generation'] != generation:
+                raise ValueError('pending activation differs from the managed generation')
+            changed_names.update(pending['names'])
+        if changed_names or pending is not None:
+            atomic_write(activation, json.dumps({'schema': 1, 'allocation': allocation,
+                'generation': generation, 'names': sorted(changed_names),
+                'image': settings['image'], 'postgres_image': settings['postgres_image']}).encode(),
+                mode=0o640, uid=os.geteuid(), gid=allocation['gid'])
         changed = publish_files(candidate, targets, allocation)
+        changed = changed or bool(changed_names) or pending is not None
         settings["recovery_generation"] = generation
         settings["checksums"] = {name: hashlib.sha256(safe_read(path)).hexdigest()
                                  for name, path in targets.items()}
@@ -528,12 +550,85 @@ def reconcile(candidate: Path) -> dict:
             if manager(["is-active", timer], check=False).returncode:
                 manager(["start", timer])
                 changed = True
-        result = verify()
+        result = verify(completing_activation=True)
+        if activation.exists():
+            activation.unlink()
+            descriptor = open_directory(HELPERS)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
         result["changed"] = changed
         return result
 
 
-def verify() -> dict:
+def verify_effective_units():
+    """Observe loaded safety properties, including administrator drop-ins."""
+    services = {
+        'forgejo.service': ('1min 30s', '1min'),
+        'forgejo-postgres.service': ('1min 30s', '1min'),
+        'forgejo-backup.service': ('30min', '30s'),
+        'forgejo-recover.service': ('5min', '30s'),
+        'forgejo-transfer.service': ('2h', '30s'),
+    }
+    properties = ('LoadState,Type,RemainAfterExit,TimeoutStartUSec,TimeoutStopUSec,'
+        'Requires,Wants,After,OnFailure,ExecStart,ExecStartPre,ExecStopPost,Restart,'
+        'Persistent,Unit,TimersCalendar,TimersMonotonic')
+    units = {}
+    for unit in (*services, 'forgejo-backup.timer', 'forgejo-transfer.timer'):
+        output = manager(['show', unit, '--property=' + properties]).stdout
+        units[unit] = {}
+        for line in output.splitlines():
+            if '=' not in line:
+                continue
+            key, value = line.split('=', 1)
+            if key in units[unit]:
+                units[unit][key] += '\n' + value
+            else:
+                units[unit][key] = value
+        if units[unit].get('LoadState') != 'loaded':
+            raise ValueError('effective Forgejo unit is not loaded: ' + unit)
+
+    def require(condition, unit):
+        if not condition:
+            raise ValueError('effective Forgejo unit differs from its safety contract: ' + unit)
+
+    def commands(unit, property):
+        return re.findall(r'argv\[\]=(.*?) ; ignore_errors=(yes|no)', units[unit].get(property, ''))
+
+    for unit, (start, stop) in services.items():
+        observed = units[unit]
+        require(observed.get('TimeoutStartUSec') == start and observed.get('TimeoutStopUSec') == stop, unit)
+        if unit in ('forgejo.service', 'forgejo-postgres.service'):
+            require(observed.get('Restart') == 'on-failure', unit)
+        else:
+            require(observed.get('Type') == 'oneshot' and observed.get('RemainAfterExit') == 'no', unit)
+    for unit, script, action in (('forgejo-backup.service', 'backup.py', 'capture'),
+            ('forgejo-recover.service', 'backup.py', 'recover'),
+            ('forgejo-transfer.service', 'transfer.py', 'run')):
+        require(commands(unit, 'ExecStart') == [(f'/usr/bin/python3 {HELPERS / script} {action}', 'no')], unit)
+    require(commands('forgejo-backup.service', 'ExecStopPost') == [
+        ('/usr/bin/systemctl --user --no-block start forgejo-recover.service', 'no')], 'forgejo-backup.service')
+    require('forgejo-recover.service' in units['forgejo-backup.service'].get('OnFailure', '').split(), 'forgejo-backup.service')
+    require(commands('forgejo-transfer.service', 'ExecStopPost') == [
+        (f'/usr/bin/python3 {HELPERS / "transfer.py"} cleanup', 'no')], 'forgejo-transfer.service')
+    for unit, dependency in (('forgejo.service', 'Requires'), ('forgejo-recover.service', 'Wants')):
+        require(all('forgejo-postgres.service' in units[unit].get(field, '').split()
+                    for field in (dependency, 'After')), unit)
+    require((f'/usr/bin/python3 {HELPERS / "backup.py"} guard', 'no') in
+            commands('forgejo.service', 'ExecStartPre'), 'forgejo.service')
+    for unit, calendars in (('forgejo-backup.timer', ['*-*-* 03:30:00']),
+            ('forgejo-transfer.timer', ['*-*-* 00/4:45:00', '*-*-* 00,04,08,12,16,20:45:00'])):
+        observed = units[unit]
+        schedule = re.findall(r'OnCalendar=(.*?) ;', observed.get('TimersCalendar', ''))
+        require(observed.get('Persistent') == 'yes' and observed.get('Unit') == unit.replace('.timer', '.service')
+                and len(schedule) == 1 and schedule[0] in calendars
+                and not observed.get('TimersMonotonic'), unit)
+
+
+def verify(*, completing_activation=False) -> dict:
+    if not completing_activation and (HELPERS / 'activation-pending.json').exists():
+        raise RuntimeError('configuration activation must complete before verification')
     stored = HELPERS / "desired.json"
     regular(stored, owner=os.geteuid())
     settings = json.loads(safe_read(stored).decode())
@@ -551,6 +646,7 @@ def verify() -> dict:
             raise ValueError("deployment file has unexpected group")
         if hashlib.sha256(safe_read(path)).hexdigest() != settings["checksums"][name]:
             raise ValueError("effective declaration differs from installed desired state")
+    verify_effective_units()
     for container, key in (("forgejo", "image"), ("forgejo-postgres", "postgres_image")):
         manager(["is-active", container + ".service"])
         expected = user_command(["/usr/bin/podman", "image", "inspect", "--format",

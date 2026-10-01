@@ -14,6 +14,36 @@ ROOT = Path(__file__).resolve().parents[2]
 MODULE = ROOT / "roles/forgejo/files/service.py"
 
 
+def effective_units(helper='/usr/local/libexec/forgejo'):
+    def command(argv):
+        argv = argv.replace('/usr/local/libexec/forgejo', str(helper))
+        return '{ path=' + argv.split()[0] + ' ; argv[]=' + argv + ' ; ignore_errors=no ; }'
+    units = {
+        'forgejo.service': {'TimeoutStartUSec': '1min 30s', 'TimeoutStopUSec': '1min',
+            'Requires': 'forgejo-postgres.service', 'After': 'forgejo-postgres.service',
+            'Restart': 'on-failure', 'ExecStartPre': command('/usr/bin/python3 /usr/local/libexec/forgejo/backup.py guard')},
+        'forgejo-postgres.service': {'TimeoutStartUSec': '1min 30s', 'TimeoutStopUSec': '1min', 'Restart': 'on-failure'},
+        'forgejo-backup.service': {'TimeoutStartUSec': '30min', 'TimeoutStopUSec': '30s',
+            'Type': 'oneshot', 'RemainAfterExit': 'no', 'OnFailure': 'forgejo-recover.service',
+            'ExecStart': command('/usr/bin/python3 /usr/local/libexec/forgejo/backup.py capture'),
+            'ExecStopPost': command('/usr/bin/systemctl --user --no-block start forgejo-recover.service')},
+        'forgejo-recover.service': {'TimeoutStartUSec': '5min', 'TimeoutStopUSec': '30s',
+            'Type': 'oneshot', 'RemainAfterExit': 'no', 'Wants': 'forgejo-postgres.service', 'After': 'forgejo-postgres.service',
+            'ExecStart': command('/usr/bin/python3 /usr/local/libexec/forgejo/backup.py recover')},
+        'forgejo-transfer.service': {'TimeoutStartUSec': '2h', 'TimeoutStopUSec': '30s',
+            'Type': 'oneshot', 'RemainAfterExit': 'no',
+            'ExecStart': command('/usr/bin/python3 /usr/local/libexec/forgejo/transfer.py run'),
+            'ExecStopPost': command('/usr/bin/python3 /usr/local/libexec/forgejo/transfer.py cleanup')},
+        'forgejo-backup.timer': {'Persistent': 'yes', 'Unit': 'forgejo-backup.service',
+            'TimersCalendar': '{ OnCalendar=*-*-* 03:30:00 ; next_elapse=fixture ; }'},
+        'forgejo-transfer.timer': {'Persistent': 'yes', 'Unit': 'forgejo-transfer.service',
+            'TimersCalendar': '{ OnCalendar=*-*-* 00/4:45:00 ; next_elapse=fixture ; }'},
+    }
+    for fields in units.values():
+        fields['LoadState'] = 'loaded'
+    return units
+
+
 class ServiceTests(unittest.TestCase):
     def setUp(self):
         self.assertTrue(MODULE.is_file(), "serialized Forgejo reconciliation is missing")
@@ -163,6 +193,7 @@ class ServiceTests(unittest.TestCase):
         self.service.LOCK.touch(mode=0o600)
         self.commands = []
         self.active = set()
+        self.units = effective_units(self.service.HELPERS)
         self.targets = {name: self.service.STATE / name for name in self.targets}
         def manager(arguments, **kwargs):
             self.commands.append(("manager", *arguments))
@@ -170,6 +201,9 @@ class ServiceTests(unittest.TestCase):
                 return SimpleNamespace(returncode=0 if arguments[1] in self.active else 3)
             if arguments[0] in ("start", "restart"):
                 self.active.add(arguments[1])
+            if arguments[0] == 'show':
+                return SimpleNamespace(returncode=0, stdout='\n'.join(
+                    key + '=' + value for key, value in self.units[arguments[1]].items()))
             return SimpleNamespace(returncode=0)
         def user(arguments, allocation, **kwargs):
             self.commands.append(tuple(arguments))
@@ -211,6 +245,37 @@ class ServiceTests(unittest.TestCase):
         self.assertIn(("manager", "restart", "forgejo.service"), self.commands)
         self.assertNotIn(("manager", "restart", "forgejo-postgres.service"), self.commands)
 
+    def test_interrupted_publication_is_activated_on_retry(self):
+        self.runtime_world()
+        self.service.reconcile(self.candidate)
+        for boundary in ('publication', 'reload', 'verification'):
+            with self.subTest(boundary=boundary):
+                self.commands.clear()
+                (self.candidate / 'config/app.ini').write_text('new configuration ' + boundary)
+                if boundary == 'publication':
+                    original = self.service.publish_files
+                    def interrupted(*args):
+                        original(*args)
+                        raise RuntimeError('interrupted publication')
+                    guard = patch.object(self.service, 'publish_files', interrupted)
+                elif boundary == 'reload':
+                    original = self.service.manager
+                    def interrupted(arguments, **kwargs):
+                        if arguments == ['daemon-reload']:
+                            raise RuntimeError('interrupted reload')
+                        return original(arguments, **kwargs)
+                    guard = patch.object(self.service, 'manager', interrupted)
+                else:
+                    guard = patch.object(self.service, 'verify', side_effect=RuntimeError('interrupted verification'))
+                with guard, self.assertRaisesRegex(RuntimeError, 'interrupted'):
+                    self.service.reconcile(self.candidate)
+                self.commands.clear()
+                self.assertTrue(self.service.reconcile(self.candidate)['changed'])
+                self.assertIn(('manager', 'daemon-reload'), self.commands)
+                self.assertIn(('manager', 'restart', 'forgejo.service'), self.commands)
+                self.assertNotIn(('manager', 'restart', 'forgejo-postgres.service'), self.commands)
+                self.assertFalse((self.service.HELPERS / 'activation-pending.json').exists())
+
     def test_verify_has_no_mutating_commands_or_file_writes(self):
         self.runtime_world()
         self.service.reconcile(self.candidate)
@@ -218,12 +283,68 @@ class ServiceTests(unittest.TestCase):
             for path in self.root.rglob("*") if path.is_file()}
         self.commands.clear()
         self.assertTrue(self.service.verify()["ready"])
-        allowed = {"is-active", "inspect"}
+        allowed = {"is-active", "show", "inspect"}
         for command in self.commands:
             self.assertIn(command[1] if command[0] == "manager" else command[2], allowed)
         after = {path: (path.stat().st_mtime_ns, path.read_bytes())
             for path in self.root.rglob("*") if path.is_file()}
         self.assertEqual(before, after)
+
+    def test_effective_unit_drift_is_rejected_without_repair(self):
+        self.runtime_world()
+        self.service.reconcile(self.candidate)
+        cases = [('forgejo-backup.service', 'TimeoutStartUSec', 'infinity'),
+            ('forgejo-backup.service', 'ExecStopPost', ''),
+            ('forgejo.service', 'ExecStartPre', ''),
+            ('forgejo.service', 'Requires', ''),
+            ('forgejo-backup.timer', 'TimersCalendar', '{ OnCalendar=*-*-* 12:00:00 ; next_elapse=fixture ; }'),
+            ('forgejo-transfer.timer', 'Persistent', 'no')]
+        before = {path: path.read_bytes() for path in self.root.rglob('*') if path.is_file()}
+        for unit, key, value in cases:
+            with self.subTest(unit=unit, property=key):
+                original = self.units[unit][key]
+                self.units[unit][key] = value
+                self.commands.clear()
+                try:
+                    with self.assertRaisesRegex(ValueError, 'effective'):
+                        self.service.verify()
+                    self.assertEqual(value, self.units[unit][key])
+                    self.assertFalse(any(command[0] == 'manager' and command[1] in
+                        ('start', 'restart', 'daemon-reload') for command in self.commands))
+                    self.assertEqual(before, {path: path.read_bytes() for path in self.root.rglob('*') if path.is_file()})
+                finally:
+                    self.units[unit][key] = original
+
+    def test_capture_rejects_configuration_pending_activation(self):
+        self.runtime_world()
+        self.service.reconcile(self.candidate)
+        (self.service.HELPERS / 'activation-pending.json').write_text('{}')
+        import backup
+        host = backup.Host.__new__(backup.Host)
+        host.state = self.service.STATE
+        host.backups = host.state / 'backups'
+        host.settings = self.manifest
+        host.allocation = self.allocation
+        with patch.object(backup, 'service', self.service):
+            with self.assertRaisesRegex(RuntimeError, 'activation'):
+                host.preflight()
+
+    def test_repeated_systemctl_command_properties_preserve_startup_guard(self):
+        self.runtime_world()
+        self.units['forgejo.service']['ExecStartPre'] += (
+            '\nExecStartPre={ path=/bin/sh ; argv[]=/bin/sh -ec health-check ; ignore_errors=no ; }')
+        try:
+            self.service.verify_effective_units()
+        except ValueError as error:
+            self.fail('valid startup guard was lost from repeated properties: ' + str(error))
+
+    def test_repeated_timer_properties_cannot_hide_an_extra_calendar(self):
+        self.runtime_world()
+        original = self.units['forgejo-backup.timer']['TimersCalendar']
+        self.units['forgejo-backup.timer']['TimersCalendar'] = (
+            '{ OnCalendar=*-*-* 12:00:00 ; next_elapse=fixture ; }\nTimersCalendar=' + original)
+        with self.assertRaisesRegex(ValueError, 'effective'):
+            self.service.verify_effective_units()
 
 
 if __name__ == "__main__":
