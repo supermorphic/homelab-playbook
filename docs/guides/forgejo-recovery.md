@@ -90,6 +90,11 @@ software starts. PostgreSQL has `network=none`; Forgejo shares only that loopbac
 namespace and publishes no host port. Restore scheduling and webhooks are
 disabled as an additional safeguard. Validation rejects unsafe paths, links,
 special files, incompatible pins/layouts, missing keys and insufficient capacity.
+Archive processing permits at most 100,000 filesystem entries, including parent
+directories, 256 GiB of contents and 257 GiB of decompressed tar data. Capacity
+checks include file-block rounding, 8 KiB per entry and available inodes. A larger
+dataset needs reviewed controller limits before capture or recovery. Destinations
+must remain under this checkout's `.tmp/forgejo` without parent traversal or links.
 PostgreSQL restore uses first-error handling, one transaction and controlled
 ownership/privileges. Acceptance checks original authentication, application
 objects, exact refs, attachment/LFS bytes and fresh push/fetch.

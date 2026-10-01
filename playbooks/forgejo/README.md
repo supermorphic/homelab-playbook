@@ -114,6 +114,13 @@ authorize recovery separately. Do not remove the recovery guard to force
 provisioning. For NAS failure, restore declared access and capacity, then observe
 the independent retry. Prove recoverability with an exact restore drill.
 
+Interrupted provisioning retains pending activation. Retry the same authorized
+provisioning action to finish reloads and required restarts; verification and
+capture refuse unfinished activation. Verify also observes loaded systemd
+deadlines, recovery hooks, startup guards, dependencies and timer calendars.
+Availability recovery does not reread archive payloads; capture validates before
+publication and transfer validates independently within its own budget.
+
 ## Offline validation
 
 ```sh

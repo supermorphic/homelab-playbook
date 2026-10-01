@@ -287,6 +287,13 @@ Restore acceptance must:
    Report cleanup failure separately, preserve the selected source archive and
    fail the experiment if cleanup cannot be verified.
 
+Bound archive processing to 100,000 filesystem entries (including implicit parent
+directories), 256 GiB of file contents, 257 GiB of decompressed tar data and
+32 MiB of retained path names. Reject oversized extended headers and paths deeper
+than 64 components. Estimate extraction capacity with rounded file blocks and
+8 KiB of overhead per entry, and check available inodes before extraction.
+These conservative limits require a reviewed controller change for larger data.
+
 Test corruption, interrupted publication/upload, NAS outage and backlog recovery,
 unchanged transfer efficiency, retention limits, consecutive timer activations
 and recovery after a failed backup. An archive listing or successful `pg_restore`
@@ -311,6 +318,9 @@ backup schedules and readiness, then verifies. It does not allocate foundation
 identities, edit protected inventory, create GitHub repositories, migrate consumer
 repositories or enable runners. Refuse incompatible existing database/storage
 state and direct the operator to a migration instead of overwriting it.
+Record pending activation before publishing changed files. Preserve it through
+interruption and clear it only after required reloads, restarts and verification.
+Refuse capture or independent verification while activation remains pending.
 
 Verify observes installed image pins, account allocation, private file metadata,
 effective generated definitions, listeners, database/application readiness,
