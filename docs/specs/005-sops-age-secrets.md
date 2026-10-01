@@ -18,7 +18,15 @@ Do not reuse the `homelab-talos` identity. No managed host changes are required.
 Pin community.sops 2.4.0, SOPS 3.13.2, and age 1.3.1 through Galaxy and Mise.
 Explicitly enable `host_group_vars, community.sops.sops` in `ansible.cfg`, in
 that order. Keep public `vars.yml` and `versions.yml` files. Encrypted variables
-use sibling `secrets.sops.yml` files under group_vars or host_vars.
+use sibling `*.sops.yml` files under group_vars or host_vars. Shared hosts split
+protected inputs by service without changing host scope or variable names.
+For `nuc4`, TLS, proxy, Semaphore, and enrolled Forgejo inputs use
+`tls.sops.yml`, `reverse-proxy.sops.yml`, `semaphore.sops.yml`, and
+`forgejo.sops.yml`. Single-purpose group directories retain `secrets.sops.yml`.
+Each protected variable has one owning file. The proxy file owns the entire
+`reverse_proxy_routes` list, including application routes; repeated list
+definitions are not used to compose routes. Sibling files retain the same
+recipient policy and are not separate authorization boundaries.
 
 Configure `[community.sops] binary` to use the repository SOPS wrapper and
 `age_key_cmd` to run the repository-owned Keychain helper. The wrapper gives
@@ -34,6 +42,19 @@ and never receive the workstation identity. Direct operator SOPS operations use
 `mise run secrets:sops -- <sops-args...>`; an explicit `SOPS_AGE_KEY_CMD`
 overrides its default Keychain helper. No routine Vault password prompt,
 plaintext identity file, or network secret service is introduced.
+
+Edit the owning service file through the same wrapper. For example:
+
+```sh
+mise run secrets:sops -- inventory/production/host_vars/nuc4/forgejo.sops.yml
+```
+
+Splitting an existing file requires an operator SOPS operation. Copying encrypted
+entries and metadata into smaller documents is invalid because each document's
+authentication code covers all its values. Preserve names, types, values,
+recipients and complete lists. Authenticate every resulting file and verify that
+their combined variables equal the original before removing it. Do not run
+playbooks while this local migration is incomplete.
 
 ## Keychain and recovery
 
@@ -138,8 +159,10 @@ Public inventory mirrors remain explicit and never copy protected files.
 A registered `test:secrets` workflow generates ephemeral identities and encrypted
 group and host fixtures. It runs Ansible locally through the actual repository
 configuration, proves public/secret merging, host precedence, templated values,
-and failure with a missing/wrong identity or modified ciphertext. The test uses
-isolated home/config directories and a sanitized environment; it never calls
+and failure with a missing/wrong identity or modified ciphertext. Multiple
+sibling service files prove shared host scope, cross-file templates, complete
+proxy routes, and authentication failure in an individual service file.
+The workflow uses isolated home/config directories and a sanitized environment; it never calls
 Keychain. Ephemeral test identities may exist in a private temporary directory;
 this exception does not apply to live identities. Cleanup is required on failure.
 
