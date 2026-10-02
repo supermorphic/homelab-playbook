@@ -22,6 +22,12 @@ EXACT_TOOL_VERSION_PATTERN = re.compile(
 )
 BOOTSTRAP_RECOVERY = "run mise run bootstrap"
 TRUST_POLICY_EXCLUDES_OPTION = "trust_policy_excludes"
+DOCUMENT_SUFFIXES = {
+    ".md", ".markdown", ".mdx", ".rst", ".txt", ".text",
+    ".adoc", ".asciidoc", ".org",
+}
+# Root policy and its thin, tool-consumed adapter are the only current exceptions.
+DOCUMENT_EXCEPTIONS = {"AGENTS.md", "CLAUDE.md"}
 
 
 class TrustPolicyExceptionIdentity(NamedTuple):
@@ -41,6 +47,17 @@ APPROVED_TRUST_POLICY_EXCEPTION = TrustPolicyExceptionIdentity(
 
 def relative_name(file_path: Path, repo_root: Path) -> str:
     return file_path.relative_to(repo_root).as_posix()
+
+
+def validate_document_path(file_path: Path, repo_root: Path) -> list[str]:
+    if file_path.suffix.lower() not in DOCUMENT_SUFFIXES:
+        return []
+    name = relative_name(file_path, repo_root)
+    if name == "README.md" or name in DOCUMENT_EXCEPTIONS:
+        return []
+    if re.fullmatch(r"docs/specs/[0-9]{3}-[a-z0-9]+(?:-[a-z0-9]+)*\.md", name):
+        return []
+    return [f"{name}: general documentation belongs in README.md or docs/specs/"]
 
 
 def validate_json(file_path: Path, repo_root: Path) -> list[str]:
@@ -250,6 +267,7 @@ def validate_mise_lock(repo_root: Path) -> list[str]:
 def repository_validation_errors(repo_root: Path) -> list[str]:
     errors: list[str] = []
     for file_path in discover_repository_files(repo_root):
+        errors.extend(validate_document_path(file_path, repo_root))
         if file_path.suffix == ".json":
             errors.extend(validate_json(file_path, repo_root))
         elif file_path.suffix == ".toml":

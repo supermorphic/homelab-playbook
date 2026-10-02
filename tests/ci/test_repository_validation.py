@@ -51,6 +51,54 @@ class RepositoryValidationTests(unittest.TestCase):
 
         self.assertEqual([], errors)
 
+    def test_repository_guard_allows_document_owners_and_functional_assets(self) -> None:
+        subprocess.run(["git", "init", "--quiet"], cwd=self.repo_root, check=True)
+        self.write("LICENSE", "Apache License\nVersion 2.0, January 2004\n")
+        self.write(".mise.toml", "[tools]\n")
+        self.write("mise.lock", "[tools]\n")
+        for name in (
+            "README.md",
+            "AGENTS.md",
+            "CLAUDE.md",
+            "docs/specs/011-example.md",
+            "roles/example/templates/config.j2",
+        ):
+            self.write(name, "fixture\n")
+
+        self.assertEqual(
+            [], repository_validation.repository_validation_errors(self.repo_root)
+        )
+
+    def test_repository_guard_rejects_unsanctioned_document_paths(self) -> None:
+        subprocess.run(["git", "init", "--quiet"], cwd=self.repo_root, check=True)
+        self.write("LICENSE", "Apache License\nVersion 2.0, January 2004\n")
+        self.write(".mise.toml", "[tools]\n")
+        self.write("mise.lock", "[tools]\n")
+        for name in (
+            "docs/README.md",
+            "roles/example/README.md",
+            "nested/AGENTS.md",
+            "docs/guides/usage.md",
+            "CONTRIBUTING.md",
+            "runbook.rst",
+            "notes.txt",
+            "archive.adoc",
+            "notes.markdown",
+            "notes.mdx",
+            "notes.org",
+            "notes.text",
+            "notes.asciidoc",
+            "notes.MD",
+            "docs/specs/archive/011-example.md",
+            "docs/specs/README.md",
+        ):
+            with self.subTest(path=name):
+                file_path = self.write(name, "fixture\n")
+                errors = repository_validation.repository_validation_errors(self.repo_root)
+                self.assertEqual(1, len(errors))
+                self.assertIn(name, errors[0])
+                file_path.unlink()
+
     def test_json_parser_reports_relative_path_for_invalid_json(self) -> None:
         file_path = self.write("nested/config.json", '{"private-marker": }\n')
 

@@ -1,300 +1,178 @@
 # Specification 009: Semaphore infrastructure automation
 
-Issue: [#4 Semaphore infrastructure automation](https://github.com/supermorphic/homelab-playbook/issues/4)
+Issue: [#4](https://github.com/supermorphic/homelab-playbook/issues/4)
 
 ## Purpose and scope
 
-Deploy Semaphore on NUC #4 as the operator interface for infrastructure
-automation. Ansible owns deployment, rootless Podman runs the application and
-PostgreSQL, and systemd owns service lifecycle and backup scheduling.
+Provide the operator's off-cluster infrastructure automation interface through
+Ansible-managed, rootless Semaphore and PostgreSQL. Systemd owns lifecycle and
+backup scheduling. This boundary includes a fresh database, NAS backups, attended
+restore and one manually triggered `os verify` repository job. Talos upgrades
+and automatic maintenance schedules are separate work.
 
-The first delivery includes the application, database, NAS backups, recovery
-procedures, an attended restore drill, and one manually triggered `os verify`
-repository job. Install a fresh database; no existing database migration is
-required. Retained Compose settings are reference material, not desired state.
+Every important operation remains workstation-accessible. Recovering Semaphore,
+its credentials or its host must not require Semaphore, Forgejo or the cluster.
 
-Workstation execution remains available for every important operation.
-Recovering Semaphore or its host must not require Semaphore. Talos upgrade
-orchestration remains a separate implementation under issue #6. Do not create
-automatic infrastructure maintenance schedules in this delivery.
+## Runtime and credentials
 
-## Runtime and ownership
+Consume the existing [Podman foundation](006-podman-quadlet-foundation.md)
+allocation for the dedicated service account; the application role does not
+allocate or renumber identities. Keep a lingering user manager, administrator-owned
+secret-free Quadlets and private persistent application/database storage. Add no
+login, sudo or runtime socket access. Separate containers share this account's
+trust boundary and a private network. Publish application HTTP only on loopback;
+PostgreSQL has no host port. Existing [Caddy](008-shared-private-reverse-proxy.md)
+and [TLS](007-off-cluster-tls-trust.md) own private HTTPS.
 
-Use the dedicated `svc-semaphore` account through the existing Podman foundation.
-Declare its numeric identity and subordinate allocations explicitly. Preserve
-foundation ownership, lingering user-manager behavior, private state directories,
-and root-owned, secret-free Quadlets. Add no login access, sudo permission, or
-Podman socket to the service account.
+Use immutable upstream images and the repository's pinned execution tools.
+[Role defaults](../../roles/semaphore/defaults/main.yml) own exact image pins,
+paths and operational settings. Match database dump/restore clients to the
+selected database major and demonstrate runtime compatibility, readiness and
+mount ownership on the [supported host](003-os-maintenance-security-baseline.md).
+Retain enforcing platform controls, bounded waits and systemd restart handling.
 
-Run Semaphore and PostgreSQL as separate containers under this account, with
-separate persistent database storage and application working storage. Use a
-private container network; publish no PostgreSQL host port. Publish the
-application HTTP backend only on host loopback at an explicitly allocated port.
-The account is the shared trust boundary for these application components.
-
-Consume the shared Caddy route and externally managed certificate contracts from
-specifications 007 and 008. The application owns its hostname and backend-port
-declaration; existing proxy automation owns private HTTPS ingress. Do not add
-another proxy, certificate issuer, or backend firewall opening.
-
-Use explicit application, PostgreSQL, and client-image versions and immutable
-image references in the implementation. Validate the chosen application against
-PostgreSQL 17, and match dump and restore clients to that database major. Resolve
-exact image digests and demonstrate compatibility before accepting deployment;
-version discovery alone is not compatibility evidence.
-
-Start the application only after database readiness, with bounded startup waits.
-Use native systemd restart handling for long-running services and finite timeouts
-for one-shot operations. Preserve enforcing platform controls and test volume
-ownership on Debian 13 as defined by
-[Specification 003](003-os-maintenance-security-baseline.md).
-
-## Configuration and credentials
-
-Public inventory defines non-secret settings and references. Protected inventory
-supplies runtime credentials through the established SOPS workflow. Ansible uses
-`no_log`, suppresses secret diffs, and delivers private runtime inputs only to the
-components that need them. Do not embed secret values in Quadlets, command-line
-arguments, image layers, generated reports, or repository job output.
-
-Reuse the current NAS credential inputs through their protected references. Do
-not regenerate their values or implicitly load staging inventory from production.
-Any required recipient or protected-inventory edit is an operator operation.
-
-Retain Semaphore's stable application key material separately in SOPS-managed
-Git history. Recovery requires the settings and key material matching the chosen
-database archive. Provisioning an existing installation must not silently replace
-these keys or reset its administrator. Bootstrap the initial operator account
-using protected inputs and verify subsequent provisioning is idempotent.
+Protected inventory supplies runtime inputs through the
+[SOPS boundary](005-sops-age-secrets.md), with private delivery, suppressed logs
+and diffs. Secrets never enter Quadlets, process arguments, images or reports.
+Reuse protected NAS references without regenerating values or crossing inventory
+boundaries. Retain stable application keys independently with the protected inputs
+matching each archive; current keys alone may not recover an older archive.
+Ordinary provisioning must not replace those keys or reset an existing administrator.
 
 ## First repository job
 
-Provide one manually triggered job that checks out an explicitly configured
-trusted repository revision and executes `os verify` through
-`mise run playbook`. Bind the template to a declared inventory and bounded host
-selection; do not expose arbitrary playbook actions or free-form shell input.
-Record the executed commit and target selection without protected values.
+The manual template binds a trusted HTTPS repository, exact revision, inventory
+and bounded host selection to the canonical `mise run playbook` gateway's
+observational `os verify`. Reject arbitrary actions and shell arguments; record
+commit and targets without secrets. Its SSH credential still has privileged
+Ansible authority: an observational template does not make the credential read-only.
 
-Use a pinned upstream Semaphore image without custom image builds. Provision
-the repository's pinned execution tools into persistent runtime storage where
-they are not already supplied at the required versions. Verify compatibility
-with the upstream image's libraries, runtime user, and mounted paths before
-accepting this execution arrangement. Missing system-library support requires
-design review, not an implicit custom build or package installation on every job.
-Prepare the selected checkout
-through `mise run bootstrap`, then use its normal gateway and dependency checks.
-Make the repository bootstrap conditional: unchanged, verified Galaxy dependencies
-must be reused without contacting Galaxy or their Git sources. Do not substitute
-the stock image's bundled Ansible or bypass a failed dependency fingerprint.
+Use a dedicated controller SSH key, strict known-host verification and a separate
+controller age identity covering only its approved inventory scope. Never reuse
+workstation or CI credentials. An administrator-owned `ANSIBLE_SOPS_AGE_KEY_CMD`
+retrieves the identity directly from protected storage into SOPS; no plaintext
+identity or ambient fallback is permitted. The credential adapter must function
+before jobs start and remain recoverable without Semaphore.
 
-Preserve dependency storage across jobs and container restarts, independently of
-disposable repository checkouts. Present the selected dependencies through the
-workspace-local paths expected by `ansible.cfg`. Start with one concurrent
-repository job and serialize dependency preparation with execution when sharing
-storage. A clean checkout alone must not invalidate reusable dependencies.
+The selected adapter uses a root-owned systemd encrypted credential and a
+service-UID-scoped socket provider. For loss or restart, restore or separately
+re-enroll the independently retained encrypted credential, verify its private
+ownership, then restart `semaphore-age.socket` through authorized host access.
+Do not create an ambient identity file. Adapter implementation belongs to the
+[controller tasks](../../roles/semaphore/tasks/controller.yml) and
+[unit templates](../../roles/semaphore/templates/).
 
-Use a SHA-256 fingerprint of Galaxy requirements together with checks that the
-required roles and collections exist at the declared versions. Install only for
-changed requirements, missing dependencies, invalid installed metadata, or an
-explicit repair. Apply repository-owned overrides locally and verify their
-contents; an override-only or Python-lock-only change must not force Galaxy
-downloads. Retain the combined dependency verification before playbook execution.
-Implement these rules in the existing repository dependency workflow, not a
-second Semaphore-only installer.
+Use the pinned upstream application image without an implicit custom build or
+per-job host package installation. Persist execution tools and dependency storage
+across disposable checkouts and container restarts. Bootstrap the selected checkout
+normally, preserving the combined dependency verification before execution.
+Unchanged verified Galaxy dependencies must work without Galaxy or dependency Git
+access. Override-only or Python-lock changes must not force Galaxy downloads.
 
-Prepare changed Galaxy dependencies separately from the last verified set. Publish
-the new set and its success fingerprint only after installation, overrides, and
-verification succeed. A failed update stops that revision's job and preserves the
-previous set; never silently run changed requirements against old dependencies.
-Initial installation and dependency changes still require their sources unless
-available locally. No private mirror is required for this delivery.
+Serialize shared dependency preparation and execution. Stage changed dependencies
+separately and publish only after installation, overrides and verification pass.
+Failure preserves the last verified set but fails the changed job; it never runs
+changed requirements against stale dependencies. Initial preparation and genuine
+dependency changes still need their sources. Full host maintenance remains
+workstation-run, with no maintenance schedule created by this template.
 
-Use a dedicated controller SSH credential, strict known-host verification, and a
-separate controller age identity. The identity's public recipient covers only the
-authorized inventory scope. Never reuse the workstation identity or Forgejo CI
-credentials. `os verify` is observational but requires the existing privileged
-Ansible access; the template does not make that credential read-only.
+## Backup, transfer and retention
 
-Configure `ANSIBLE_SOPS_AGE_KEY_CMD` to an administrator-owned executable that
-retrieves the controller identity from protected credential storage directly into
-the SOPS input stream. Never persist a plaintext private age identity or fall back
-to ambient credentials. Credential delivery must work before the job starts and
-must not depend on recovering Semaphore through Semaphore. The implementation
-must demonstrate the storage-and-retrieval adapter with disposable identities;
-live identity enrollment and recovery remain operator-controlled.
+Use persistent host-local systemd timers and bounded, non-overlapping container
+clients. [Templates](../../roles/semaphore/templates/) own exact calendars and
+[defaults](../../roles/semaphore/defaults/main.yml) own retention and deadlines.
+Keep daily capture and independent backlog transfer; a successful capture also
+requests transfer. Persistent catch-up runs a missed activation, not every missed
+historical backup. One-shots return inactive so later activations can run.
+Install neither host PostgreSQL clients nor an SMB mount or custom scheduler.
 
-Keep the host's full maintenance workstation-run. The initial job creates no
-maintenance schedule and performs no package update, configuration repair,
-service restart, or reboot.
+Capture a compressed custom-format database dump, prove readability and checksum
+it, then atomically publish an immutable completed directory on one filesystem.
+Failed or interrupted capture never becomes transfer-eligible. Backups contain
+protected application state and remain private.
 
-## Backup and transfer
+Use rclone copy semantics, never deletion-propagating mirroring. Verify new or
+repaired remote payloads before publishing completion metadata; unchanged runs
+check metadata without rereading every historical dump. Retry all outstanding
+completed archives independently of today's capture. NAS outage preserves local
+archives and does not block another dump; interrupted upload remains retryable.
+Checksums and readable dumps do not establish application recoverability.
 
-Use systemd timers and short-lived client containers. PostgreSQL tools and rclone
-run in containers; install neither PostgreSQL clients nor an SMB mount on the
-host. Keep helpers limited to archive publication, validation, transfer, and
-scoped cleanup. Add no internal cron daemon, custom scheduler, job database, or
-per-archive transaction ledger.
+Measure retention from archive creation. Local pruning requires a verified remote
+copy and is restricted to this service's well-formed completed archives. Reject
+unexpected paths and symlinks. Never discard untransferred archives to make room;
+report insufficient capacity. Archives already beyond remote retention after an
+outage require operator resolution, not immediate upload followed by deletion.
+Schedule spacing around host maintenance does not guarantee freedom from reboot;
+publication and retries must tolerate interruption.
 
-| Operation | Schedule | Behavior |
-| --- | --- | --- |
-| PostgreSQL dump | Daily, `03:00` host-local | Publish a completed local archive |
-| NAS transfer | Every four hours at `:15` host-local | Copy and verify outstanding archives |
+## Independent recovery and attended restore
 
-Use `OnCalendar=*-*-* 03:00:00` and
-`OnCalendar=*-*-* 00,04,08,12,16,20:15:00`, without a timezone
-suffix or random delay. Enable persistent catch-up; this runs a missed activation
-when the timer resumes, rather than recreating every missed daily archive.
-One-shot services must return to an inactive state so later timer activations
-can run. Use finite timeouts and prevent overlapping invocations of each action.
+Use the independently accessible Git checkout, exact selected NAS archive and
+matching protected settings from the workstation. Keep prior database storage
+until replacement acceptance and explicit cutover. Recreate declared database
+roles from configuration; this service does not require a global database catalog.
 
-The daily job writes a compressed custom-format `pg_dump` to temporary local
-storage. Read the dump through `pg_restore`, produce a SHA-256 checksum, and
-publish the pair as one completed archive directory using a same-filesystem
-rename. Use unique creation-time names and immutable completed contents. A failed
-or interrupted dump never becomes eligible for transfer. Checksums detect damage;
-an archive read is not a substitute for a restore drill.
+The existing attended workflow is discoverable without Semaphore:
 
-The four-hourly transfer scans only completed archives. Use rclone copy semantics,
-not a mirror that propagates local deletion. Skip unchanged destination data;
-successful daily transfer leaves subsequent normal scheduled runs doing metadata
-checks. Transfer every outstanding archive, including older days after an outage.
-An interrupted upload remains retryable without another database dump.
+```sh
+mise run test:semaphore -- restore --help
+```
 
-Publish remote completion only after both dump and checksum are present and the
-uploaded dump is verified against the local checksum. Use remote content reads
-when the SMB backend cannot supply the required hash. Restrict this expensive
-verification to new or repaired uploads; scheduled success checks must not reread
-every historical dump. A completion marker follows verification and is part of
-the archive format, not a separate transaction database. Recovery always checks
-the retrieved content again.
+Command help and the [restore implementation](../../scripts/semaphore/restore.py)
+own exact arguments. Prepare the selected archive, private runtime settings and
+NAS configuration, a fresh destination, a bounded disposable credential test
+target and independently recorded expected application state. Attended mutation
+requires explicit target authorization; confirmation arguments bind intent only.
 
-The transfer service can succeed when no work is needed. NAS failure leaves the
-dump service independent and preserves outstanding local archives; the next
-four-hour activation retries. Systemd records success, failure, and bounded
-diagnostics. The timers operate independently: a failed new dump must not prevent
-transfer of older completed archives.
+1. Retrieve that exact completed archive. Verify remote completion, checksum and
+   dump readability; reject symlinked or escaping paths, corruption and missing
+   selection without falling back to another archive.
+2. Restore into run-owned PostgreSQL storage with matching clients, first-error
+   handling and a single transaction. Never target the active database.
+3. Before starting the restored application, establish networking that permits
+   only its temporary database, bounded test target and test client. Disable
+   recovered schedules, block managed infrastructure and create no production route.
+4. Compare restored projects, templates and history with an independent oracle.
+   Execute the seeded synthetic job using its restored credential without replacing
+   it. Prove the target rejects absent/incorrect credentials and accepts the restored
+   credential; retain the result without revealing its value.
+5. Remove only run-owned containers, networks and storage on success or failure.
+   Verify absence and report cleanup failure separately from the original failure.
 
-## Retention and schedule interaction
+A drill never performs cutover. Actual recovery reviews restored jobs and target
+selection before allowing execution, separately authorizes switching to the
+accepted database, then creates and validates a fresh backup. Preserve old storage
+until retirement is accepted. Application upgrades need a usable pre-upgrade
+archive and schema-aware recovery; reverting an image does not roll back a
+migration. Database major upgrades need a separately validated procedure.
 
-Retain archives for seven days locally and 90 days on the NAS, measured from
-archive creation time. Preserve local archives without a verified NAS copy even
-when older than seven days. After successful transfer, normal age-based cleanup
-can remove them. Never silently discard outstanding archives to make space.
-Report insufficient space as a failed operation with useful non-secret context.
+## Verification and acceptance boundaries
 
-Prune only this deployment's well-formed completed archives, after successful
-transfer verification. Reject unexpected paths and symlinks. Do not delete other
-NAS content or apply local retention as a remote mirror. An archive already older
-than the NAS retention window after a prolonged outage must not be immediately
-uploaded and deleted in the same run: preserve it locally for operator resolution.
+The [playbooks](../../playbooks/semaphore/) reconcile compatible declared state
+and observe installed health, private listeners, permissions, timers and backup
+status through the canonical gateway. Verification never repairs, pulls images,
+restarts services, produces backups or runs fixture jobs. Use the service account's
+user manager and bounded journals for diagnosis; do not print protected environment
+or rclone configuration. Failed dependency preparation is corrected and retried
+without deleting all persistent tools or forcing downloads on every job.
 
-The 03:00 dump precedes the source default of 04:00 host security updates and the
-Debian 04:30 conditional reboot. These are source defaults, not inspected live
-settings. Spacing does not guarantee that a long dump or transfer avoids reboot;
-temporary publication and retry behavior must handle interruption. Reuse the
-host's configured timezone without introducing a separate UTC policy.
+Offline validation uses disposable identities, application/database state and SMB
+storage. It covers idempotent preparation, dependency reuse and failed publication,
+actual gateway execution, corruption, interruption, NAS outage/backlog, retention
+and restored stored-credential use. Local and hosted classification must dispatch
+the same registered tests. The supported-OS nested namespace cannot start the
+application containers: Molecule proves preparation, generated units and metadata;
+separate stock-container experiments provide runtime and recovery evidence.
+Neither is complete native host acceptance.
 
-## Recovery and attended restore drill
-
-The workstation initiates recovery using Git, separately retained credentials,
-and a selected archive. Preserve existing database storage until the replacement
-passes acceptance and the operator accepts cutover. Recreate declared database
-roles from configuration; one application database does not need a generic
-multi-database catalog or global-role backup framework.
-
-The attended drill proves recovery from NAS storage through a running application:
-
-1. Retrieve an explicitly selected completed archive and checksum from the NAS.
-   Require the remote completion marker, check the retrieved dump's SHA-256
-   against its sidecar, and verify PostgreSQL archive readability. Reject paths
-   outside the selected archive and symlinked inputs. Refuse a corrupt or missing
-   selection without silently substituting a different archive.
-2. Create run-owned temporary PostgreSQL storage and a fresh database. Restore
-   through the matching client container with first-error failure and a single
-   transaction. Never restore over the active database.
-3. Start an isolated Semaphore instance with the matching runtime settings.
-   Establish an isolated network before starting it, allowing only the temporary
-   database and test target plus the bounded test client. Block access to managed
-   infrastructure, and expose no production proxy route. Recovered schedules
-   must not execute against real targets during the drill.
-4. Check expected projects, templates, and history. Exercise a restored synthetic
-   credential against a temporary test target to prove application-level use.
-   Seed this harmless recovery fixture before the archive used for acceptance.
-   Require the restored template to use the restored credential without replacing
-   its value during the drill. Prove the target rejects missing or incorrect
-   credentials and accepts the restored job's credential. Record the job result
-   and expected target response without recording credentials.
-5. Remove run-owned containers, networks, and storage, and verify their absence.
-   Run cleanup on success and failure, limiting deletion to resources created by
-   this run. Report cleanup failure separately from the original test failure.
-
-The drill ends with cleanup and never cuts over production. Actual recovery has
-a separate operator procedure: validate the replacement, review recovered job
-settings and target selection before allowing execution, switch the application
-to the accepted database, and create and validate a fresh backup. Preserve the
-previous database until the operator accepts its retirement.
-
-Application upgrades require a usable pre-upgrade archive and a schema-aware
-recovery procedure. Reverting an image alone does not establish database rollback.
-PostgreSQL major upgrades require a separate validated migration procedure.
-
-## Operator interface and validation
-
-Replace the retained Compose-only deployment with `semaphore provision` and
-observational `semaphore verify` actions through the canonical playbook gateway.
-Apply its credential and task-selection guards. Provisioning reconciles declared
-state; verification observes service health, private listeners, file metadata,
-timer configuration, and backup status without repair or test mutations.
-
-Register restore experiments as `test` workflows under the repository command
-lifecycle. Require explicit target and archive selection for attended tests, bind
-resources to the run, and repeat live preconditions immediately before mutation.
-Document workstation recovery and normal systemd/journald diagnostics in the
-Semaphore playbook README and a recovery guide.
-
-Offline validation uses disposable identities, databases, application fixtures,
-and SMB storage. Cover effective Quadlet behavior, first provisioning and
-idempotence, database readiness, private port publication, image/toolchain
-compatibility, and successful repository-gateway execution against fixture hosts.
-Prove an unchanged job succeeds with Galaxy and dependency Git sources unavailable
-and performs no install. Cover changed requirements, missing dependencies, override
-changes without downloads, failed installation without publishing success, and
-reuse across fresh checkouts and application container restarts.
-Test interrupted dumps, corrupt archives, unavailable NAS, interrupted transfer,
-three-day backlog recovery, unchanged scheduled runs, retention boundaries, and
-cleanup scope. Restore real fixture data and prove stored credential use; stub
-tests alone cannot establish recoverability.
-
-Run the repository's required validation, including `mise run ci:changed` before
-completion. Register container tests in local and CI dispatch together. Separate
-offline evidence from operator evidence for actual NAS recovery, controller
-enrollment, private ingress, enforcing host controls, and reboot persistence.
-No design approval authorizes live playbooks, credential enrollment, or cutover.
-
-The controller integration has a finite 30-minute outer budget, separate from
-the 15-minute bootstrap budget. It includes executor bootstrap, target
-provisioning, direct gateway checks, and two native application jobs. Keep the
-individual operation limits and interrupt-then-cleanup behavior. Emit only stage
-labels for progress so a slow or interrupted run identifies the active stage
-without exposing fixture values.
-
-The supported-OS Molecule harness cannot create the nested subordinate user
-namespace required to launch the application containers. In this harness,
-exercise the actual role's preparation and idempotence, then inspect filesystem
-metadata and generated systemd commands and timer properties. Separate tests run
-the pinned application and clients directly in disposable rootless containers.
-Do not describe these combined checks as a complete host provisioning test.
-Full host activation, consecutive timer-triggered one-shot execution, and
-observational verification of that deployment remain operator acceptance checks
-on the intended supported host.
+Actual controller enrollment, host provision/verify, consecutive timer activations,
+private HTTPS, enforcing host controls, physical reboot and exact real NAS recovery
+require separately authorized operator evidence. Design approval grants no live
+execution, credential enrollment or cutover authority.
 
 ## References
 
-- [Podman foundation](006-podman-quadlet-foundation.md).
-- [TLS trust](007-off-cluster-tls-trust.md) and
-  [shared reverse proxy](008-shared-private-reverse-proxy.md).
-- [OS maintenance](003-os-maintenance-security-baseline.md).
-- [SOPS controller contract](../guides/sops-secrets.md#automation-controllers).
-- [Repository command lifecycle](../guides/repository-command-lifecycle.md).
-- [Semaphore configuration](https://semaphoreui.com/docs/admin-guide/configuration).
-- [Quadlet reference](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html).
+- [Command lifecycle](001-agentic-development-modernization.md)
+- [Semaphore configuration](https://semaphoreui.com/docs/admin-guide/configuration)
+- [Quadlet reference](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html)

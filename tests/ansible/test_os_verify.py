@@ -150,20 +150,6 @@ class StandaloneOsVerifyTests(unittest.TestCase):
             )
         )
 
-    def test_operator_docs_publish_the_standalone_read_only_action(self) -> None:
-        readme = (REPOSITORY_ROOT / "playbooks/os/README.md").read_text(
-            encoding="utf-8"
-        )
-        guide = (
-            REPOSITORY_ROOT / "docs/guides/managed-host-onboarding.md"
-        ).read_text(encoding="utf-8")
-
-        self.assertIn("`verify.yml`", readme)
-        self.assertIn(
-            "mise run playbook -- os verify production --limit nuc4",
-            guide,
-        )
-
     def test_policy_defaults_and_inventory_overrides_resolve_without_roles(self) -> None:
         play = load_verify_play()
         policy_tasks = [
