@@ -468,6 +468,27 @@ class RecordingRunner:
 
 
 class RestoreOrchestrationTests(RestorePlanTests):
+    def test_success_waits_for_buffered_task_output(self) -> None:
+        runner = RecordingRunner(self.restore, b"custom archive")
+        response = runner.curl_response
+        outputs = iter(["[]", '[{"task_id": 2, "output": "RECOVERY_CREDENTIAL_ACCEPTED"}]'])
+
+        def delayed_output(command, input_text):
+            if command[-1].endswith("/tasks/2/output"):
+                return next(outputs)
+            return response(command, input_text)
+
+        runner.curl_response = delayed_output
+        with mock.patch.object(self.restore.time, "sleep"):
+            self.restore.RestoreExperiment(self.options(), runner).run()
+
+    def test_success_without_expected_output_still_fails(self) -> None:
+        runner = RecordingRunner(self.restore, b"custom archive")
+        runner.api_responses["/api/project/1/tasks/2/output"] = []
+        with mock.patch.object(self.restore.time, "sleep"):
+            with self.assertRaisesRegex(self.restore.RestoreFailure, "expected response"):
+                self.restore.RestoreExperiment(self.options(), runner).run()
+
     def test_http_client_reuses_application_network_namespace(self) -> None:
         runner = RecordingRunner(self.restore, b"custom archive")
         experiment = self.restore.RestoreExperiment(self.options(), runner)

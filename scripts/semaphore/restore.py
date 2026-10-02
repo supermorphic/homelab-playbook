@@ -554,9 +554,14 @@ class RestoreExperiment:
             time.sleep(1)
         else:
             raise RestoreFailure("restored credential task timed out")
-        output = self._api("GET", f"/api/project/{project_id}/tasks/{task_id}/output")
-        rendered = "\n".join(str(item.get("output", "")) for item in output)
-        if self.options.expected_output not in rendered:
+        # Semaphore persists buffered logs separately from the terminal task status.
+        for _ in range(10):
+            output = self._api("GET", f"/api/project/{project_id}/tasks/{task_id}/output")
+            rendered = "\n".join(str(item.get("output", "")) for item in output)
+            if self.options.expected_output in rendered:
+                break
+            time.sleep(1)
+        else:
             raise RestoreFailure("restored task output did not contain the expected response")
         environment_after = self._api("GET", environment_path)
         if environment_after.get("secrets", []) != secrets_before:
