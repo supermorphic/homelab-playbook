@@ -1,206 +1,476 @@
 # Specification 008: Shared private reverse proxy
 
-Issue: [#25](https://github.com/supermorphic/homelab-playbook/issues/25)
+Issue: [#25 Shared private reverse proxy for NUC #4 services](https://github.com/supermorphic/homelab-playbook/issues/25)
 
-## Purpose and deployment decision
+## Purpose and scope
 
-Provide one private HTTPS entry point for explicitly declared off-cluster browser
-services. Ansible owns configuration; systemd supervises a host Caddy service;
-separate rootless Podman applications publish loopback HTTP backends. The target
-uses the [OS baseline](003-os-maintenance-security-baseline.md).
+Provide one private HTTPS entry point for explicitly declared browser-based
+services on an off-cluster host. Ansible owns configuration, systemd supervises
+Caddy, and separately owned rootless Podman services expose local HTTP backends.
+The initial target is NUC #4; implementation supports the repository's Debian 13
+baseline defined by [Specification 003](003-os-maintenance-security-baseline.md).
 
-A host service fits the small static service set: it can bind TCP/443 with one
-service capability, read externally owned keys and reach separate applications
-without container discovery, shared networks or additional port arrangements.
-Do not add a Podman socket, shared application identity or public ingress.
-Application authentication and backups belong to their service owners;
-[specification 007](007-off-cluster-tls-trust.md) owns issuance and certificate
-recovery. Workstation and console recovery must remain independent of the proxy.
+Issue #25 owns the proxy, static route schema, private ingress, configuration
+activation, verification, and a disposable HTTP/WebSocket acceptance fixture.
+Issue #5 owns ACME, Cloudflare credentials, certificate issuance, renewal,
+deployment, and certificate recovery. Issues #4 and #7 own Semaphore and Forgejo
+and their application-specific routes. This design does not deploy those apps.
 
-Use the distribution Caddy package and existing OS update policy. Do not introduce
-an upstream repository, binary installer, package hold or `caddy upgrade` workflow.
-Validate capabilities rather than one exact installed release. Package upgrades
-may briefly interrupt all routes; configuration rollback is not package rollback.
+Public Internet ingress, container discovery, Podman socket access, application
+authentication, Kubernetes integration, and application backups are excluded.
+Recovery must remain possible from an external workstation and trusted console.
 
-The dedicated non-login Caddy account receives only the privileged-port binding
-capability and required private writable state. It has no login, sudo, application
-groups or issuer credentials. Reconcile package-added supplementary groups before
-startup as well as during provision. Reject incompatible identities or unmanaged
-installations instead of taking them over. Configuration, keys, units and helpers
-remain administrator-owned and unwritable by Caddy. Preserve sandboxing and the
-baseline mandatory access controls.
+## Deployment decision
+
+Use a dedicated host-level Caddy service. The small static service set does not
+need container discovery or a shared container network. The Podman foundation
+deliberately provides neither privileged-port exceptions nor shared accounts.
+
+| Concern | Host-level systemd service | Rootless Podman Quadlet |
+| --- | --- | --- |
+| TCP/443 | Service-scoped binding capability | Additional host port arrangement required |
+| Identity | Dedicated non-login system account | Foundation account and subordinate allocations |
+| External private keys | Direct read-only access | Mount, ownership mapping, and labeling contract |
+| Separate application accounts | Reach host-loopback published ports directly | Configure container-to-host connectivity |
+| Firewall | Existing baseline service extension | Same host policy plus container network behavior |
+| Validate and reload | Direct commands under the service identity | Commands execute in the running container context |
+| Logs and verification | Journald, systemd, and HTTPS probes | User manager, container state, and HTTPS probes |
+| Recovery material | Binary, Git configuration, external certificate material | Also image availability and container setup |
+| Operational simplicity | One host service and local backends | Additional runtime and network dependencies |
+
+A rootful Quadlet could simplify port binding but adds a root-managed container
+runtime boundary. Rootless host networking can simplify backend connectivity
+but does not resolve privileged host-port binding. Neither offers a demonstrated
+benefit for this service that outweighs the additional mechanisms.
+
+## Service installation and ownership
+
+Install the unpinned `caddy` distribution package without DNS-provider plugins.
+Use Debian 13's native APT repository. No upstream Caddy repository or standalone
+binary installer is introduced. Installation uses `state: present`;
+existing OS maintenance owns package upgrades. Daily security updates retain
+their existing distribution policy and depend on repository security metadata.
+Do not use `caddy upgrade`, package holds, or version locks. Verification records
+the installed version and validates required capabilities instead of requiring
+one exact release. Package upgrades can restart the shared proxy and affect all
+routes briefly; configuration rollback does not promise package-version rollback.
+
+Use a dedicated `caddy` non-login system account and private group. It has no
+sudo, SSH keys, Podman allocation, application-group membership, or access to
+certificate-issuer credentials. Reject an incompatible existing identity or
+unmanaged Caddy installation instead of silently taking it over. Numeric IDs
+are not a cross-host persistence contract for this host service; certificate
+deployment establishes ownership by account and group name after reconstruction.
+
+Debian's package adds the account to `www-data` during installation and upgrades.
+Reconcile supplementary groups during provisioning and in a root startup
+precondition before Caddy executes. This keeps the dedicated identity contract
+effective after package-triggered restarts without holding back package updates.
+
+Run `caddy.service` as this identity. Limit its capability bounding and ambient
+sets to `CAP_NET_BIND_SERVICE`. Apply `NoNewPrivileges`, a private temporary
+directory, a read-only system filesystem, protected home directories, and a
+restrictive umask. Grant writable state only where required for runtime and
+Caddy state. Do not copy the upstream unit's broader capability set unchanged.
+Retain the existing AppArmor baseline; test required access without disabling
+that mechanism.
+
+| Path | Owner:group | Mode | Purpose |
+| --- | --- | --- | --- |
+| `/etc/caddy/` | `root:caddy` | `0750` | Administrator-owned configuration |
+| `/etc/caddy/Caddyfile` | `root:caddy` | `0640` | Committed boot configuration |
+| `/etc/caddy/tls/` | `root:caddy` | `0750` | External certificate deployment boundary |
+| Certificate version directories | `root:caddy` | `0750` | Immutable certificate/key pairs |
+| Certificate and private-key files | `root:caddy` | `0640` | Readable but not writable by Caddy |
+| `/var/lib/caddy/` | `caddy:caddy` | `0700` | Private runtime state and caches |
+| `/run/caddy/` | `caddy:caddy` | `0700` | Permission-protected admin socket |
+| `/var/lib/homelab-reverse-proxy/` | `root:root` | `0700` | Configuration transaction recovery |
+
+The role rejects unexpected symlinks at managed roots and writable parent
+directories. Certificate selection uses only the explicitly defined version
+symlink below; arbitrary path indirection is not accepted. Caddy cannot edit
+its configuration, certificate files, deployment helper, or systemd unit.
+
+Issue #51 batches filesystem metadata acquisition for explicit parent,
+managed-directory and managed-file lists through the role-local `proxy_metadata`
+module. It observes without following final symlinks, reading content or caching.
+Missing paths report absence; other lookup errors fail the batch without accepting
+partial results. Existing independent assertions retain their order, including
+fresh observations before package installation and before filesystem mutation.
+Results never cross a mutation boundary; certificate, trust and installation
+checks retain their own content and metadata observations.
+
+Disposable tests compare with `ansible.builtin.stat` and independently specified
+safe, unsafe and missing-path outcomes. Batching was selected to reduce repeated
+metadata calls without weakening these checks; run-specific performance reports
+belong in ignored evidence rather than this design.
 
 ## Declarative ingress and routes
 
-The [role](../../roles/reverse_proxy/tasks/main.yml) and its
-[validation source](../../roles/reverse_proxy/files/) own exact input schemas.
-The complete desired route list is authoritative. Use exact hostnames, explicit
-private listener addresses and explicit private client networks. HTTPS sources
-are independently declared from SSH sources. Reject wildcard listeners, duplicate
-hostnames, arbitrary fragments, traversal, URL credentials and unapproved upstreams.
+Use an explicit `reverse_proxy` inventory group and these service inputs:
 
-Local application routes use host-loopback backends; their owners allocate ports
-and configure publication. Loopback excludes remote clients but not other host
-users. Device routes declare one private backend and transport. HTTPS device
-routes require independently verified, route-specific trust and a matching server
-name; HTTP routes accept no TLS trust settings. Trust names bind immutable content;
-rotation uses a new name so rollback can retain the prior trust. Do not modify the
-system trust store or disable backend verification. Device acceptance belongs to
-specification 007.
+- `reverse_proxy_bind_addresses`: non-empty private host addresses, with no
+  unspecified address or wildcard listener.
+- `reverse_proxy_client_sources`: non-empty explicit private client CIDRs.
+- `reverse_proxy_routes`: a complete list of route declarations, initially
+  empty until the operator supplies certificates and approved services.
+- `reverse_proxy_deferred_certificates`: empty or exactly `[infra]`; only this
+  explicit dependency may be missing before first certificate publication.
+- `reverse_proxy_trust_certificates`: named immutable route-specific device
+  trust bundles supplied through protected inventory.
+- Each local application route contains `hostname`, `backend_port`, and `certificate_name`.
+  A hostname is an exact DNS name, a backend port is an integer from 1024 through
+  65535, and a certificate name is a restricted filesystem component.
 
-Serve explicit external certificates on private TCP/443, with HTTP/1.1 and HTTP/2.
-Disable automatic certificate management and redirects; create no TCP/80 or
-UDP/443 listeners. Unknown names have no application route. Preserve normal HTTP
-and WebSocket forwarding without trusting client-supplied proxy headers.
-Successful reloads can close WebSockets; clients must reconnect. Failed validation
-preserves the previous connections. Do not change package sources to add a newer
-WebSocket drain option.
+Reject duplicate hostnames, invalid types, wildcard hostnames, control
+characters, arbitrary Caddyfile fragments, URL credentials, path traversal,
+and unapproved upstream addresses. Local application routes construct upstreams as
+`127.0.0.1:<backend_port>`. Each application owns its loopback port allocation
+and Podman port publication; the proxy owns no application account or data.
+Host loopback prevents remote access but is not a boundary between local users.
 
-An empty desired list produces only the protected Unix administration socket,
-with no network listener or firewall allowance. Removing routes removes access
-without deleting application data or externally owned keys. Only explicitly
-deferred first `infra` certificate routes may wait for certificate publication;
-other missing or malformed certificates fail activation. Commit desired routes
-and their verified ingress binding with the effective configuration so TLS does
-not become a second routing or firewall controller.
+Issue #5 extends routes with an explicit private-device form: `hostname`,
+`certificate_name`, and `backend`. The backend contains `transport` (`http` or
+`https`), an RFC1918 or ULA `address`, and `port` from 1 through 65535. HTTPS also
+requires `server_name` and `trust_name`, selecting
+`/etc/caddy/trust/<trust_name>.pem`. Caddy verifies the backend certificate using
+that route-specific trust and server name. HTTP accepts no TLS trust fields.
+Local and device backend forms cannot be combined. Trust names identify immutable
+content; use a new name when rotating trust so rollback can retain the old trust.
+The shared renderer supports the distribution packages' TLS transport syntax.
 
-Filesystem metadata observations are read-only, uncached and bounded to managed
-paths. Do not reuse them across mutations or weaken independent ownership,
-symlink, hard-link and content checks when batching observations.
+The operator supplies live addresses, client networks, and sensitive deployment
+names through the existing protected inventory process. Public examples use
+synthetic hostnames and documentation addresses. Offline tests inject synthetic
+inputs directly and never decrypt inventory. The HTTPS source list is separate
+from SSH policy; an operator may explicitly set it to the management-source list.
+This design does not assume that SSH clients and HTTPS clients are identical.
 
-## Firewall integration
+Render exact hostname routes on TCP/443 with explicit certificate files. Disable
+automatic certificate management and HTTP redirects with `auto_https off`.
+Enable HTTP/1.1 and HTTP/2 only. Do not create TCP/80 or UDP/443 listeners.
+Unknown hostnames receive no application route. No forward-proxy or arbitrary
+upstream interface exists. Preserve normal Caddy HTTP and WebSocket forwarding;
+do not trust client-supplied forwarded headers as a separate upstream proxy.
 
-The security baseline remains the only firewall policy owner. Compose the private,
-source-scoped TCP/443 allowance with every other declared service extension so
-later OS provisioning preserves approved routes. Read back runtime and permanent
-rules, reuse guarded reconciliation and active-SSH-peer checks, and prove the
-policy before exposing a new listener. Apply equivalent IPv4/IPv6 boundaries;
-never open application or device backend ports as a proxy side effect.
+The Debian 13 package is based on Caddy 2.6.2, which does not implement
+`stream_close_delay`. Use native WebSocket behavior: successful configuration or
+certificate refreshes close established WebSockets and clients reconnect. Failed
+configuration validation must preserve existing connections. A removed route
+rejects new connections after reload. Do not add a newer package source merely
+to delay WebSocket closure.
+
+An empty route list renders an admin-only configuration with no HTTPS listener
+and no required certificate pair. Removing the final route removes ingress
+allowances as well as listeners. It does not delete externally owned TLS files.
+
+Ansible supplies a root-only candidate desired manifest and ingress metadata
+after firewall verification. The fixed `apply-desired` helper validates their
+binding, renders effective routes, and commits configuration plus the desired
+manifest in one recoverable transaction. The committed `desired.json` contains
+the exact original manifest string and ingress metadata with its SHA256 revision.
+Only routes explicitly depending on the absent first `infra` certificate are
+deferred. Missing or malformed certificates for other routes fail activation.
+Private ingress policy follows declared routes so TLS can later activate them
+without becoming a second firewall controller. An empty effective route list
+still has no network listener. Removing all desired routes removes allowances.
 
 ## Independent HTTPS edge health
 
-Use a dedicated hostname under the existing certificate namespace, for example
-`caddy.infra.example.com`. Its static `/healthz` route has no application backend:
-GET returns 200 with exactly `ok` and no newline; HEAD returns 200 without a body.
-Query strings do not alter path matching. Other paths/methods return 404. The
-health route uses the same private ingress, certificate deferral, transaction and
-recovery guarantees as application routes. The admin socket stays private.
+Issue #49 adds a third route form with exactly `hostname`, `certificate_name`,
+and `health: true`. It has no upstream. The fixed Caddy response accepts GET and
+HEAD at exact path `/healthz`: GET returns 200 with body `ok` and no newline;
+HEAD returns 200 without a body. Query strings do not change path matching.
+Other paths and methods return 404. The schema rejects backend fields and
+custom response fragments on health routes. Existing application and device
+routes keep their forwarding behavior.
 
-This signal proves the HTTPS edge responds, not application, database, backup or
-host health. Semaphore's separate unauthenticated `/api/ping` GET expects 200.
-A healthy edge with a failing application directs diagnosis toward that
-application; both failing directs it first toward DNS, network, TLS and Caddy.
-A dedicated hostname keeps the edge independent of application-route changes.
+Use a dedicated edge hostname, such as `caddy.infra.example.com`, so the check
+remains stable when application routes change. Probe its `/healthz` separately
+from application health, such as Semaphore's `/api/ping` (unauthenticated GET,
+expected 200). Both use private TCP/443 and hostname-verified TLS. Private DNS
+and coverage by the existing `infra` wildcard are deployment prerequisites;
+no new issuer or renewal workflow is introduced. Reusing an application hostname
+would save a DNS record but tie edge health to that application's route lifecycle.
 
-Before handing readiness to
-[homelab-talos#423](https://github.com/supermorphic/homelab-talos/issues/423),
-enroll private DNS and the protected health route without replacing unrelated
-routes, authorize deployment and verify both endpoints from the intended
-monitoring network using ordinary DNS and trusted hostname TLS. An IP URL,
-`--insecure` or forced resolver override does not establish consumer readiness.
-Do not stop a production backend to demonstrate independence. Homepage and Gatus
-are consumers, never prerequisites for service or host recovery.
+The health route participates in the same desired manifest, ingress binding,
+certificate deferral and publication, validation, reload, rollback, and startup
+recovery as every other HTTPS route. A health-only desired list still requires
+private ingress and valid certificates. Removing all routes retains the existing
+admin-only behavior. Caddy's administration API remains on its protected socket.
+
+The signal proves the HTTPS edge responds, not general host or application
+health. A disposable scenario stops its backend while retaining a successful
+edge response, and checks the response after certificate and startup recovery.
+Production deployment and a read-only probe from the intended monitoring network
+remain separate operator evidence. This section owns the endpoint contract;
+route enrollment uses protected inventory and the canonical proxy gateway.
+[homelab-talos#423](https://github.com/supermorphic/homelab-talos/issues/423) owns
+Homepage/Gatus configuration and must receive deployment readiness before
+activating its edge check. Neither observation service is a host recovery
+prerequisite.
+
+## Firewall integration
+
+The existing security baseline remains the sole firewall policy owner. Compose
+the proxy's source-scoped TCP/443 allowance alongside
+`security_baseline_firewall_services`, preserving other explicitly declared
+service extensions. Both OS and proxy operations derive the same complete
+desired policy so a later OS provision does not remove a valid proxy allowance.
+
+Use explicit TCP/443 rich rules, as the baseline already does for TCP/22, to
+avoid depending on a platform's HTTP/3 service definition. Read back runtime
+and permanent source rules. Reuse the existing
+guarded firewall reconciliation and active-SSH-peer checks; do not introduce
+ad hoc rules or a second independent firewall controller.
+
+Before exposing a newly configured listener, prove that the desired private
+policy is effective. Missing required firewall state stops provisioning.
+IPv4 and IPv6 listeners and sources receive equivalent restrictions. No route
+opens its backend port through firewalld. Production reachability evidence
+requires an allowed client and a client outside the allowed boundary.
 
 ## External certificate contract
 
-Caddy reads `fullchain.pem` and `privkey.pem` through the stable
-`/etc/caddy/tls/<certificate_name>/current` interface. An atomic relative version
-pointer selects a complete pair beneath that root. Files and directories must
-have safe administrator ownership, Caddy read access and platform labels;
-arbitrary path indirection is refused. Missing, unreadable, mismatched, expired
-or hostname-incompatible material fails activation without exposing key contents.
+For each `certificate_name`, issue #5 supplies immutable version directories
+below `/etc/caddy/tls/<certificate_name>/`. The `current` symlink selects one
+version containing `fullchain.pem` and `privkey.pem`. Caddy references these
+stable paths; switching the directory pointer selects the pair together.
+Targets must remain below that certificate's root and have the required owner,
+group, permissions, and platform labels. The `current` symlink itself must also
+be owned by `root:caddy`.
 
-Configuration, trust installation and certificate activation share a root-owned
-exclusive deployment lock. Certificate operations keep it through selection,
-forced reload and fresh served-certificate checks. Internal lock-held entry points
-must verify the inherited exclusive lock; a flag alone grants no authority. TLS
-takes its coordinator lock first and releases the proxy lock during ACME requests.
+Issue #25 creates the shared directory and validates the consumption interface.
+It neither generates production certificates nor copies their contents through
+the controller. Missing, unreadable, mismatched, expired, or hostname-incompatible
+material fails activation. Diagnostics report the failed condition without
+printing the private key or protected configuration. Issuer account credentials
+never enter Caddy's filesystem or environment.
 
-A pending TLS publication journal binds the selected generation, prior/candidate
-boot configuration and committed desired revision. Ordinary configuration changes
-cannot replace its recovery authority. Startup restores consistent disk state
-without taking the TLS lock or requesting a certificate; runtime reconciliation
-then validates the retained generation before any new issuance.
+Configuration and certificate activation share a root-owned host lock. Issue #5
+must hold that lock across version selection, validation, certificate
+replacement, and post-deployment TLS verification. Its deployment procedure
+retains the previous version and restores the pointer and running certificate
+after failure. The proxy's certificate-refresh entry point supports use inside
+this transaction without taking the same lock twice. Direct operator reloads
+acquire the lock themselves.
 
-First publication activates only approved deferred routes. Failed first
-publication restores them inactive and preserves unrelated routes. Prove route
-absence in effective configuration as well as listener/certificate state;
-unknown-SNI failure alone is insufficient on a shared listener. Certificate
-renewal, retention and publication recovery remain owned by specification 007.
+The helper is `/usr/local/libexec/homelab-reverse-proxy`; the shared lock is
+`/run/lock/homelab-reverse-proxy.lock`, owned by root with mode `0600`.
+`reload` acquires this lock. The certificate automation integration forms
+`reload --lock-held` and `verify --lock-held` require the existing exclusive lock
+inherited on file descriptor 9. The helper validates that inherited lock;
+the flag alone does not grant execution authority. Certificate automation must
+retain it through version selection, reload, and served-certificate verification.
+
+Issue #5 supplies the fixed `homelab-tls-caddy` adapter. TLS takes its coordinator
+lock before the Caddy lock and releases the Caddy lock during ACME network work.
+Its root-only publication journal binds certificate selection, prior and candidate
+boot configurations, and the committed desired revision. While that transaction
+is pending, ordinary configuration changes cannot replace its recovery authority.
+Startup recovery restores consistent certificate and configuration disk state
+without acquiring the TLS coordinator lock or requesting a certificate. Runtime
+recovery then verifies or retries the retained generation before new issuance.
+
+First publication activates only declared routes dependent on `infra`. Failed
+first publication restores their previous inactive state while preserving
+unrelated routes. Verify route absence in the active configuration and check
+remaining listeners and certificates; an unknown-SNI handshake alone does not
+establish route absence on a shared listener.
+
+Device trust installation uses the same deployment lock. The fixed
+`install-trust` action reads `/var/lib/homelab-reverse-proxy/trust.candidate.json`,
+validates its bounded PEM bundles, and publishes each new name without replacing
+an existing file. Existing names must have the exact declared contents and safe
+metadata. Concurrent declarations cannot change another route's trust bundle.
+
+The `reload` entry point validates the committed configuration as the service
+account and forces Caddy to reload it from the selected `current` certificate
+paths. It fails if the service is inactive before the transaction. Issue #5 owns
+retries, renewal timing, expiry monitoring, version retention, and recovery of
+interrupted certificate deployments. Git plus separately recoverable certificate
+material is sufficient to reconstruct the proxy; Caddy cache files are not
+authoritative recovery data.
 
 ## Configuration activation and failure behavior
 
-Use one fixed administrator-owned helper with bounded candidate paths and no
-shell hooks. Candidates and committed configuration share a filesystem. Before
-first route activation, establish a running admin-only configuration; when an
-existing service is stopped, start its committed configuration first. Never wait
-for systemd startup while holding the deployment lock.
+The managed Caddy unit requests and orders itself after `network-online.target`.
+That target is not proof that a private DHCP address is already assigned. Use
+`Restart=on-failure` with `RestartSec=10s`, `StartLimitIntervalSec=300s`, and
+`StartLimitBurst=12`. This permits recovery after a transient bind failure while
+leaving repeated immediate failures in a failed state after the start budget is
+exhausted. This is a start-rate limit, not a lifetime retry count.
+Explicit stops remain stopped. The observer verifies these effective properties.
+Recovery after correcting a persistent fault can clear the budget with an
+authorized `systemctl reset-failed caddy.service` before starting the service.
 
-1. Acquire the lock, recover any pending configuration transaction and repeat
-   identity, path, certificate and listener preconditions. Require an active
-   service after lock acquisition.
-2. Validate as Caddy. If desired and effective state already agree, perform no
-   reload. Otherwise record prior boot configuration and pending intent durably
-   before replacing the boot file.
-3. Reload through the protected socket and verify active configuration, declared
-   listeners and certificates. Backend outage remains a separate condition.
-4. Clear pending intent durably only after success. On failure, restore disk and
-   runtime state and preserve both activation and restoration outcomes.
+Provide one root-owned activation helper used by Ansible. It accepts only the
+managed candidate path and fixed service paths, not arbitrary shell commands.
+Stage candidates on the same filesystem as the managed configuration and use
+atomic replacement with durable transaction metadata.
 
-A failed load can retain the old configuration while leaving extra live sockets.
-Check listener addresses and duplicate Caddy-owned sockets, allowing only bounded
-transient overlap. If reload rollback cannot restore configuration, listeners and
-served certificates, retain recovery state, release the lock and restart Caddy.
-This exceptional recovery can interrupt all routes. Startup recovers transactions
-under the lock before reading the boot file; afterward reacquire the lock and
-verify the expected restoration has not been superseded. Failed first activation
-returns to admin-only state. Ambiguous recovery requires an operator.
+On first provisioning, establish and start a committed admin-only configuration
+before beginning route activation. It has no network ingress or certificate
+dependency. If an existing service is stopped, start its committed configuration
+before beginning the replacement transaction. Never wait for systemd startup
+while holding the deployment lock. After obtaining the lock, require the service
+to be active; a concurrent stop fails activation without installing a candidate.
 
-Order startup after network-online, but do not treat that target as proof that a
-private DHCP address is assigned. Bounded restart handling permits transient bind
-recovery and leaves persistent failures visibly failed. Explicit stops remain
-stopped. Routine configuration changes reload a healthy process; binary or unit
-changes may separately require restart.
+1. Acquire the host deployment lock and recover any interrupted configuration
+   transaction before accepting another candidate.
+2. Repeat identity, filesystem, certificate metadata, and listener preconditions.
+   Validate the candidate using `caddy validate` under the Caddy identity.
+3. If the desired configuration equals the committed configuration and observed
+   service state matches, report no change and perform no reload.
+4. Record the previous boot configuration and a pending transaction marker
+   durably before replacing the boot configuration.
+5. Reload the running service through its Unix socket. Verify active
+   configuration and listener state. A backend
+   outage is reported separately and does not make unrelated routes disappear.
+6. On success, durably clear the pending marker and report a change. On failure,
+   restore the previous boot configuration, restore runtime state if needed,
+   and report both activation and recovery outcomes.
 
-## Operator recovery and acceptance
+A failed configuration load can leave a partially started HTTP listener behind
+in the distribution Caddy releases. The previous configuration can still be
+active while this extra listener continues serving traffic. The helper checks
+both listener addresses and duplicate sockets owned by the Caddy process. It
+rechecks brief listener overlap before treating persistent duplicates as failure.
+It restores the committed disk configuration and attempts runtime rollback through
+reload, including a check of the served certificates. If runtime rollback cannot
+restore the declared listeners, active configuration, and served certificates, it retains durable recovery state, releases the deployment lock,
+and restarts Caddy. This recovery can briefly interrupt all routes.
 
-The canonical gateway owns target/action guards; the
-[proxy playbooks](../../playbooks/reverse-proxy/) implement provision and
-observational verification. Provision composes firewall state and verifies
-activation without running full OS maintenance. Verify observes identity,
-permissions, unit restrictions, admin access, effective configuration, listeners,
-firewall and TLS without repair, reload or certificate requests.
+A startup precondition acquires the deployment lock and recovers a pending
+transaction before Caddy reads its boot file. After restart, activation reacquires
+the lock and verifies the previous boot configuration, runtime, listeners, and
+served certificates. It reports recovery as incomplete if another activation
+changed the boot configuration in the meantime. Activation never waits for
+systemd startup while holding the lock.
 
-Through authorized administrative access, inspect `systemctl status caddy` and
-bounded `journalctl -u caddy` output, keeping deployment details private. Correct
-a failed address, certificate or configuration condition before retrying. If
-startup exhausted its rate limit, separately authorize
-`systemctl reset-failed caddy.service` and `systemctl start caddy.service`, then
-verify proxy and trusted client access. Do not delete transaction records to force
-recovery. Package maintenance also needs allowed-client HTTPS and outside-boundary
-denial checks; local observation does not prove DNS or network reachability.
+Failed first route activation restores the admin-only configuration, with no
+HTTPS listener or candidate boot configuration. An ambiguous or unrecoverable
+transaction stops with an operator recovery requirement. Configuration changes
+do not restart a healthy process. Binary and systemd-unit upgrades may require
+a controlled restart and must be reported separately from routine reloads.
 
-Reconstruct from independently accessible Git and encrypted certificate/trust
-and transaction state, after restoring administrative access and the OS baseline.
-Caddy caches are not authoritative recovery material. Keep direct device bookmarks
-and local management access independent of Pi-hole, Caddy, the host and Internet
-connectivity. Failed trust or compatibility disables only the affected device
-route until its checks pass.
+## Operator interface and implementation boundaries
 
-Disposable fixtures cover effective permissions, protocol behavior, firewall
-configuration, HTTP/WebSockets, independent health, certificate rotation,
-listener leaks, interrupted transactions, failed initial activation and owned
-cleanup. Fixtures must demonstrate their own effective isolation; extra nested
-container capabilities never broaden production service authority. Container
-firewall and unit observations do not prove host-kernel enforcement, enforcing
-AppArmor, physical reboot, production trust or private client reachability.
-Those and lost-host recovery require separate operator evidence.
+Add `reverse-proxy provision` and `reverse-proxy verify` through the existing
+`mise run playbook -- <playbook> <action> <inventory> [ansible-args...]` gateway.
+Apply the existing credential and task-selection guards to these host actions.
+Provision one host at a time after the OS baseline; include verification.
+
+Use a dedicated role with focused input validation, installation, filesystem,
+configuration activation, and verification units. Reuse the baseline firewall
+entry points and common desired-policy composition. Do not run full OS package
+maintenance as a side effect of proxy provisioning. Keep service code separate
+from the generic Podman foundation.
+
+Standalone verification observes identity, installed version, file metadata,
+systemd restrictions, admin-socket permissions, active configuration, listeners,
+firewall state, and served TLS identities for configured routes. It does not
+reload, repair state, pull images, issue certificates, or create test routes.
+Service logs use journald with the baseline retention policy. HTTP access
+logging is disabled by default; do not add request credentials, query strings,
+or protected configuration content to deployment diagnostics.
+Use `systemctl status caddy` and bounded `journalctl -u caddy` as normal
+diagnostics through authorized access; keep deployment details private. Correct
+the failed address, certificate or configuration before an authorized restart.
+Do not delete transaction records to force recovery.
+
+Reconstruct from independently accessible Git and encrypted certificate, trust
+and transaction state after restoring administrative access and the OS baseline.
+Caddy caches are not authoritative recovery material. Keep direct device access
+independent of Pi-hole, Caddy, the host and Internet connectivity. Disable only a
+failed device route until trust and compatibility checks pass. Package maintenance
+also needs allowed-client HTTPS and outside-boundary denial checks; local
+observation alone does not prove DNS or private-network reachability.
+
+Register the temporary backend experiment as a `test` workflow. It creates
+only run-owned synthetic routes, backend processes, and disposable certificate
+material, reports primary and cleanup failures separately, and verifies removal.
+It is never embedded in observational verification.
+
+## Validation and acceptance
+
+Extend registered offline validation and its classifier to cover the subsystem.
+Use independent effective-state and protocol assertions rather than checking
+only generated text. Disposable Debian 13 evidence covers:
+
+- Input rejection, service identity, filesystem isolation, and effective unit
+  restrictions, including denial of cross-account certificate and admin access.
+- Exact TCP/443 binding, absent HTTP and HTTP/3 listeners, and the composed
+  firewall policy without backend port openings.
+- HTTPS trust using a disposable CA, SNI and hostname verification, two distinct
+  hostname routes, ordinary HTTP, and bidirectional WebSocket messages.
+- Invalid syntax, unreadable and mismatched keys, expired certificates, and
+  hostname mismatch, while a previously healthy route continues serving.
+- A reload-time failure after opening one listener that passes static validation,
+  disk and runtime rollback with exactly one remaining listener, interrupted
+  transaction recovery, and failed initial activation.
+- Certificate replacement serving a new external certificate, reconnecting
+  WebSockets, and unchanged configuration producing no Ansible change.
+- Test route removal, eventual stream closure, listener removal for an empty
+  route list, and complete run-owned fixture cleanup even after test failure.
+
+Run `mise run bootstrap` after dependency changes, focused `validate:fast` and
+`validate:ansible` during development, and `mise run ci:changed` before completion.
+Register any required container scenario in local and GitHub CI dispatch together.
+Do not weaken host restrictions to accommodate nested container limitations.
+
+The rootless proxy test containers add `SYS_PTRACE` so their administrator can
+observe Caddy-owned sockets with `ss -p`. They also add `SYS_ADMIN` so systemd
+can create the nested coordinator filesystem sandbox. Without it, Debian's
+service can fail before execution, and systemd can skip filesystem restrictions
+in containers. An early disposable service verifies that `/usr/local` is
+read-only while the declared `/var/lib` write exception remains writable.
+The disposable services inherit the system manager's root identity rather than
+setting `User=root`: explicit user setup in nested Debian systemd prevents the
+adapter from switching to the Caddy user. The early probe verifies effective
+root identity and a successful unprivileged user switch, and the integrated
+driver independently checks its root identity. The remaining sandbox settings
+stay in place; production units retain their explicit service identities.
+The proxy fixtures additionally grant `NET_ADMIN` to add and remove one synthetic
+loopback address inside the container network namespace. The startup regression
+first proves an absent-address bind failure, then adds the address and requires
+automatic recovery with trusted HTTPS. A second persistent failure uses the
+installed retry count and window with only the fixture retry delay shortened;
+it must stop retrying at the configured limit, with no running process and a
+journal record confirming that the start limit was reached. Cleanup restores configuration, removes the
+temporary address and delay override, clears test failure state, and starts the
+original fixture service. These checks do not perform a physical host reboot.
+These capabilities belong to the rootless test container; the
+managed Caddy service still receives only `CAP_NET_BIND_SERVICE`, and the
+production coordinator restrictions remain unchanged.
+Container checks establish permanent firewall configuration, not host-kernel
+firewall enforcement or enforcing AppArmor behavior.
+
+Offline results do not prove private-network reachability, physical boot,
+production certificate trust, certificate renewal, or recovery from a lost host.
+Those require separately authorized operator evidence. Before live execution,
+reconfirm the exact playbook, action, inventory, host limit, and extra arguments.
+Production acceptance waits for approved private inventory inputs and external
+certificate material. Implementation does not create credentials to bypass that
+dependency.
 
 ## References
 
-- [Podman foundation](006-podman-quadlet-foundation.md)
-- [Command lifecycle](001-agentic-development-modernization.md)
-- [Proxy activation source](../../roles/reverse_proxy/files/)
-- [Caddy systemd deployment](https://caddyserver.com/docs/running)
-- [Caddy configuration API](https://caddyserver.com/docs/api)
+- [Specification 006](006-podman-quadlet-foundation.md) defines separate rootless
+  service accounts and external recovery requirements.
+- [Specification 003](003-os-maintenance-security-baseline.md) defines firewall
+  ownership, mandatory access control, and host validation boundaries.
+- [Caddy systemd deployment](https://caddyserver.com/docs/running) documents
+  service ownership, logging, and reload behavior.
+- [Caddy command line](https://caddyserver.com/docs/command-line) documents
+  configuration validation.
+- [Caddy configuration API](https://caddyserver.com/docs/api) documents failed-load
+  rollback and permission-protected Unix administration sockets.
+- [Caddy TLS configuration](https://caddyserver.com/docs/caddyfile/directives/tls)
+  documents externally supplied certificate and key files.
+- [Caddy global options](https://caddyserver.com/docs/caddyfile/options) documents
+  disabling automatic certificate management and selecting HTTP protocols.
 - [Caddy reverse proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)
+  documents HTTP forwarding, WebSockets, and streaming behavior during reload.
+- [Podman networking](https://docs.podman.io/en/stable/markdown/podman-run.1.html)
+  documents host networking and rootless container-to-host connectivity.

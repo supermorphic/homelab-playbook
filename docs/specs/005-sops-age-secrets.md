@@ -2,60 +2,61 @@
 
 Issue: [#18](https://github.com/supermorphic/homelab-playbook/issues/18)
 
-## Encryption and loading boundary
+## Decision and scope
 
-SOPS with age is the sole active inventory encryption format. Public variables
-remain separate from sibling encrypted group/host variables; preserve their
-Ansible names and precedence. There is no mixed Vault/SOPS operational state or
-reverse-conversion command. Recovery uses preserved age identities, not the
-retired migration helper.
+Replace Ansible Vault with SOPS and age for all encrypted inventory variables.
+This supersedes specification 001's Vault decision and specification 004's
+interactive Vault workflow. Preserve public variables, variable names, inventory
+boundaries, roles, and the `mise run playbook` operator interface.
 
-[Ansible configuration](../../ansible.cfg) owns loader ordering and the identity
-retrieval command; [Mise](../../.mise.toml) and
-[Galaxy requirements](../../requirements.yml) own pins. Direct SOPS operations
-use `mise run secrets:sops -- <sops-args...>`. The wrapper isolates SOPS home and
-configuration and clears ambient inline, file and SSH identities. Only the
-selected retrieval command and editor receive the operator's original context.
-Missing or incorrect retrieval must never fall back to another identity.
+Use a dedicated repository identity, independent future controller identities,
+Keychain retrieval, and a complete one-way migration.
+Do not reuse the `homelab-talos` identity. No managed host changes are required.
 
-[Creation rules](../../.sops.yaml) select protected inventory and encrypt every
-scalar, including nested values. Keys remain visible: use ordinary schema keys,
-never sensitive identifiers or credentials as mapping keys. Commit only public
-age recipients. The repository identity is dedicated, separate from other repos
-and automation controllers; no network secret service or routine Vault prompt
-is required.
+## Loading and dependency contract
 
-## Independent operator recovery
+Pin community.sops 2.4.0, SOPS 3.13.2, and age 1.3.1 through Galaxy and Mise.
+Explicitly enable `host_group_vars, community.sops.sops` in `ansible.cfg`, in
+that order. Keep public `vars.yml` and `versions.yml` files. Encrypted variables
+use sibling `secrets.sops.yml` files under group_vars or host_vars.
 
-The macOS helper reads only the designated generic-password item in the login
-Keychain, refuses terminal stdout and emits no private diagnostics. Its selected
-item is owned by [the helper](../../scripts/secrets/age-keychain.sh). The unlocked
-Keychain and initial macOS access approval are prerequisites. Missing or locked
-credentials fail without fallback.
+Configure `[community.sops] binary` to use the repository SOPS wrapper and
+`age_key_cmd` to run the repository-owned Keychain helper. The wrapper gives
+SOPS isolated temporary home and configuration directories and clears ambient
+inline, file, and SSH age identity settings. It restores the original home and
+configuration context only for the selected key command and editor; its
+temporary context contains no secret. A missing or wrong selected command
+cannot fall back to a default local identity.
 
-Operator setup generates the identity in memory, stores it in Keychain without
-private key arguments, writes only a passphrase-encrypted external backup and
-checks read-back. Keep the backup and passphrase recoverable independently of
-the original workstation, managed host, Semaphore, Forgejo and the cluster.
-After dependency bootstrap, the minimum operator sequence is:
+The canonical playbook wrapper already changes to the repository root. Future
+controllers override `ANSIBLE_SOPS_AGE_KEY_CMD` with their own retrieval command
+and never receive the workstation identity. Direct operator SOPS operations use
+`mise run secrets:sops -- <sops-args...>`; an explicit `SOPS_AGE_KEY_CMD`
+overrides its default Keychain helper. No routine Vault password prompt,
+plaintext identity file, or network secret service is introduced.
 
-```sh
-# Create a new dedicated identity; select a path outside every checkout.
-mise run secrets:bootstrap -- --backup /outside/repository/operator.age
-# On a replacement Mac, restore the existing identity instead.
-mise run secrets:bootstrap -- --restore /outside/repository/operator.age
-```
+## Keychain and recovery
 
-These are alternatives, not sequential setup steps. Enter the backup passphrase
-only at the prompt. Confirm the reported public recipient matches an authorized
-recipient before relying on restored access. No plaintext identity file is used.
+The helper reads only a generic password item from the operator's login
+Keychain: service `homelab-playbook.sops.age`, account `operator`. It refuses
+terminal stdout, emits no private diagnostic data, and fails when the item is
+unavailable. The unlocked login Keychain and its access control are prerequisites;
+initial macOS access approval may be needed. Missing or locked credentials must
+not trigger a fallback to a different identity.
 
-For an authorized protected edit, open the exact selected `secrets.sops.yml`
-through `secrets:sops`. The editor sees plaintext privately and writes only
-ciphertext to the protected file; do not copy its contents into agent context.
-An unchanged editor buffer is a successful no-op. Actual editor, retrieval and
-encryption failures remain failures. Normal playbook execution uses the same
-boundary without an extra secret flag.
+Operator setup generates the identity in memory, saves an age passphrase-encrypted
+backup outside every checkout, stores the identity in Keychain without a private
+key in command arguments, and checks read-back. Only the public recipient is
+reported. Recovery restores that encrypted backup into a new Mac's login
+Keychain. Keep the backup and its passphrase independently recoverable without
+Semaphore, the cluster, or the original workstation.
+
+After bootstrap, create a new identity with
+`mise run secrets:bootstrap -- --backup /outside/repository/operator.age`, or
+restore the existing identity on a replacement Mac with
+`mise run secrets:bootstrap -- --restore /outside/repository/operator.age`.
+These are alternatives. Enter the passphrase only at the prompt and confirm the
+reported public recipient matches an authorized recipient before relying on access.
 
 ## Controller identities
 
@@ -87,31 +88,61 @@ not portable. A replacement host must enroll that same identity under its own
 host key before the socket adapter starts. Verify socket ownership and selected
 host enforcement before enabling controller jobs.
 
-## Recipient changes and revocation
+## Recipients and encryption
 
-Recipients form an OR set: each can decrypt its authorized files. Scope controller
-rules to required inventory and keep validation consistent with those rules.
-Adding a recipient requires rewrapping existing file keys and verifying
-actual authenticated decryption with that identity before relying on it.
+`.sops.yaml` selects inventory `*.sops.yml` files and encrypts every scalar value,
+including values nested in lists or mappings. YAML keys remain visible: use
+ordinary schema keys, never credentials or sensitive identifiers as mapping keys.
+Public recipients are the only identity material committed. The operator
+supplied the dedicated recipient recorded in `.sops.yaml`; an empty recipient
+list is invalid.
 
-Removal requires removing the recipient and rotating each file's data key, then
-verifying retained identities. Rewrapping alone does not revoke previously
-accessible data. Historical ciphertext remains decryptable by former recipients;
-rotate underlying credentials separately when access must be revoked. Recipient
-and credential mutations remain explicit operator actions.
+Recipients form an OR set: each listed identity can decrypt its authorized files.
+Add future controllers only to the inventory scopes they need. Adding a recipient
+requires rewrapping existing file keys; removing one also requires rotating file
+data keys. Historical ciphertext remains decryptable by former recipients;
+rotate underlying credentials separately when access must be revoked.
 
-## Evidence boundary
+## Migration and rollback boundary
 
-Agents and PR CI never decrypt protected production, staging or frozen inventory.
-Static validation checks structure and public recipient metadata, not ciphertext
-integrity; only authenticated decryption proves that. Exclude protected inputs
-from diagnostics that could quote values. Public inventory mirrors are explicit
-and never copy protected files.
+The operator completed conversion of the production os_managed, staging
+semaphore, and frozen k3s_cluster group variable directories. Each `vault.yml`
+was replaced by `secrets.sops.yml`; the original files were removed.
 
-The registered `test:secrets` workflow uses disposable identities and synthetic
-fixtures through the actual SOPS/Ansible loading path. It proves variable merging,
-host precedence, templating, rejection of missing/wrong identities and modified
-ciphertext, and isolation from ambient identity sources. It never calls Keychain.
-Ephemeral test keys may exist in private temporary directories with cleanup;
-that exception does not permit plaintext live identity files. Live Keychain,
-controller enrollment and recovery acceptance remain separate operator evidence.
+The one-use migration program remained uncommitted under `.tmp/`. It decrypted
+and verified in memory, wrote only ciphertext, checked all three results,
+repeated source-byte preconditions, and removed originals only after all
+conversions passed. Agents tested it with synthetic files; only the operator
+executed it against real inventory. The operator reported successful completion.
+Agent validation checked the resulting encrypted structure and recipient metadata
+without decrypting or inspecting protected values.
+
+Before source deletion, the helper's failure path retained every original and
+removed only its own candidate outputs. Deletion across directories was not
+filesystem-atomic; interrupted deletion required operator reconciliation of the
+verified candidates and exact remaining originals before publication.
+
+Current recovery uses SOPS and the preserved age identity. There is no supported
+mixed-format operational state or reverse-conversion command. Pre-migration Git
+history and external Vault passwords remain recovery evidence, not an active
+second format.
+
+## Validation
+
+CI never obtains production identities or decrypts real inventory. Static
+validation checks encrypted structure and public recipient metadata without
+claiming cryptographic integrity; only authenticated decryption can prove that.
+Exclude protected files from YAML/Ansible diagnostics that could quote values.
+Public inventory mirrors remain explicit and never copy protected files.
+
+A registered `test:secrets` workflow generates ephemeral identities and encrypted
+group and host fixtures. It runs Ansible locally through the actual repository
+configuration, proves public/secret merging, host precedence, templated values,
+and failure with a missing/wrong identity or modified ciphertext. The test uses
+isolated home/config directories and a sanitized environment; it never calls
+Keychain. Ephemeral test identities may exist in a private temporary directory;
+this exception does not apply to live identities. Cleanup is required on failure.
+
+Run bootstrap after dependency changes, focused validation while iterating, and
+`mise run ci:changed` before completion. Live Keychain acceptance and production
+conversion are separate operator evidence, never CI evidence.

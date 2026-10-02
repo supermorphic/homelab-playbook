@@ -24,6 +24,10 @@ policy. Do not add nested policy files.
 - Specs own current intent, rationale, boundaries, and guarantees. Update the
   existing owner when its contract changes. Create a spec only for an explicitly
   agreed distinct durable subject, with the next consecutive three-digit ID.
+  Preserve original design records, rationale, and essential changes over time;
+  keep every existing spec. Mark superseded decisions as historical. Trim redundant
+  later implementation/status additions, not the original design to meet a size
+  target. Historical examples do not override current execution policy or source.
   Never reuse or renumber merged IDs.
 - Keep plans, review packages, execution ledgers, and temporary handoffs ignored
   under `.tmp/`; match the owning spec's ID where practical. Detailed evidence

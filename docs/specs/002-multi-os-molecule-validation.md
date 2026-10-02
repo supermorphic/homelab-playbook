@@ -1,149 +1,611 @@
 # Specification 002: Debian Molecule validation
 
-Issues: [#11](https://github.com/supermorphic/homelab-playbook/issues/11),
-[#32](https://github.com/supermorphic/homelab-playbook/issues/32),
-[#35](https://github.com/supermorphic/homelab-playbook/issues/35),
-and [#40](https://github.com/supermorphic/homelab-playbook/issues/40).
+Issues: [#11 Establish multi-OS Molecule validation](https://github.com/supermorphic/homelab-playbook/issues/11),
+[#32 Deterministic Molecule CI gating](https://github.com/supermorphic/homelab-playbook/issues/32),
+[#35 Lifecycle timing](https://github.com/supermorphic/homelab-playbook/issues/35),
+and [#40 Debian-only support](https://github.com/supermorphic/homelab-playbook/issues/40).
 
-## Purpose and evidence boundary
+## Purpose
 
-Provide change-directed executable evidence for first-party roles and complete
-service compositions using Molecule and rootless Podman. Debian 13 runs natively
-on ARM64 and AMD64 with the same worker lifecycle locally and in GitHub Actions.
-The [runner registry](../../scripts/molecule.py) owns supported selectors and
-platforms; scenario source owns test composition and explicit allowances.
+Add change-directed executable validation for the repository-owned
+`system_maintenance` role. The validation uses Molecule and rootless Podman to
+exercise Debian 13 in systemd-capable containers.
 
-Containers prove configuration, task decisions, idempotence, and independently
-observable state. They do not prove physical reboots, boot persistence, firmware,
-host-kernel enforcement, production networking, DNS failover, recovery access,
-or live scheduling. No workflow contacts inventory hosts, uses production
-credentials, or presents container success as deployment acceptance.
+The original initiative added the change-directed `molecule` validation depth.
+Issue #32 extends it with deterministic impact selection across all registered
+scenarios. It adds container evidence without contacting an inventory host, using a
+repository secret, or claiming VM or physical-hardware coverage.
 
-## Runtime and dependency decisions
+## Governing decisions
 
-Mise and uv own the pinned controller dependencies; repository bootstrap owns
-Galaxy installation. Workers verify and reuse them rather than running a
-scenario-specific dependency installer. Molecule's Ansible-native driver uses
-repository create/destroy playbooks and the Podman collection. Docker, the
-legacy Molecule Podman plugin, rootful operation, and elevated fallback are
-outside this contract.
+1. Podman is the only supported container runtime locally and in GitHub Actions.
+2. Podman runs rootless and every test container runs unprivileged.
+3. Tests use maintained, moving operating-system release tags rather than
+   committed image digests.
+4. Each platform explicitly pulls its base once per invocation, then builds and
+   tests without another registry check.
+5. Debian runs natively on ARM64 and AMD64. The same Debian platform runs
+   locally and in GitHub Actions.
+6. Local platform workers and GitHub matrix jobs use the same worker lifecycle.
+7. Local scenario invocations select one Debian worker. GitHub runs scenario
+   jobs concurrently on separate hosts.
+8. Base and built images remain cached. Test containers are recreated for every
+   invocation and removed afterward, including after a failed test.
+9. Pull, image-build, Molecule, per-platform total, and invocation total times
+   are reported separately.
 
-Podman is an operator-provided host capability. macOS needs a started rootless
-Podman machine; Linux needs a functioning rootless installation for the current
-user. Preflight reports missing capability without installing software, starting
-a machine, or using sudo. Hosted jobs use their runner-provided Podman runtime.
-Identical host Podman versions are unnecessary; required capabilities are not.
+These decisions replace issue #11's initial privileged-container and immutable
+image-pin assumptions. They preserve its systemd, executable behavior,
+change-directed validation, and container-only boundaries.
 
-Tests deliberately use maintained moving OS-release tags instead of committed
-image digests. Fully qualified references prevent short-name resolution. Every
-worker pulls the selected base once per invocation, records its resolved image
-identity, then builds and tests without another registry check. Base and built
-images remain cached, while test containers are always recreated. A registry
-outage fails acquisition after bounded retries; cached content is never silently
-substituted. Prebuilt images, registry mirrors, and image-store caching need a
-later measured justification.
+## Scope
 
-## Bounded worker lifecycle
+### Included
 
-`test:molecule` follows the controlled-test contract in
-[specification 001](001-agentic-development-modernization.md). It embeds its
-Podman preflight and requires no ordinary confirmation because its effects are
-rootless, unprivileged, exactly owned disposable state.
+- `default` and `baseline` scenarios for `roles/system_maintenance`, plus
+  registered application integration scenarios;
+- the Debian 13 container platform;
+- rootless Podman preflight, image acquisition, image building, container
+  lifecycle, and cleanup;
+- converge, deterministic-task idempotence, and independent verification
+  phases;
+- suppression of native automatic reboots during container tests while
+  retaining the production default;
+- a public scenario test command and shared per-platform worker;
+- one local Debian worker per scenario and a generated GitHub Actions matrix;
+- activation of classifier, `full`, and merge-gate support for the `molecule`
+  depth;
+- separate timing and image-provenance reporting; and
+- adoption of the repository command lifecycle reference for current and future
+  command classification.
 
-Before touching containers, the runner validates the exact registered selector,
-controller dependencies, reachable rootless Podman, cgroup v2, supported native
-architecture, and a non-blocking host-local invocation lock. Invalid usage fails
-before Podman inspection; unavailable capability fails with an actionable
-message. Preflight failure leaves existing containers and images untouched.
-The lock derives from Git's common directory so linked worktrees cannot treat
-another active invocation as stale.
+### Excluded
 
-Each worker checks its exact stable container name and ownership labels before
-removing stale state, pulls the maintained base, builds the systemd fixture
-without another pull, and runs the registered Molecule sequence. A same-name
-container with missing or different labels is a collision, never a deletion
-target. Scenario names, images, logs, and ephemeral state remain distinct.
-Cleanup runs after success and failure, removes only owned containers, and never
-prunes unrelated storage, images, networks, or volumes. Cleanup failure makes
-the worker fail while preserving the original test outcome.
+- Docker CLI, Docker daemon, Docker socket, Docker-compatible wrappers, or a
+  Docker fallback;
+- the legacy Molecule Podman plugin;
+- privileged containers, rootful Podman, host `sudo`, host cgroup mounts, or
+  capabilities beyond the scenario-specific allowances defined below;
+- committed OCI image digests;
+- prebuilt repository test images or a container-registry publishing workflow;
+- a registry mirror, fallback registry, stale-cache fallback, or offline test
+  mode;
+- GitHub Actions caching of Podman image storage;
+- VMs, libvirt, Vagrant, self-hosted runners, live staging, production hosts, or
+  physical hardware;
+- testing third-party Galaxy roles or every repository playbook;
+- validation of real reboot, boot persistence, firmware, kernel parameters,
+  networking, routing, DNS failover, mounts, or hardware behavior.
 
-A bounded readiness check proves that systemd is PID 1 and responds inside the
-container. This is the authoritative test of rootless cgroup delegation;
-startup failure remains distinct from a role assertion failure. Containers do
-not mount host cgroups or run privileged. Scenario-specific capabilities must
-have an explicit consumer and remain inside the rootless namespace. Ansible's
-container-root user is not host root. Production security restrictions must not
-be weakened to make nested tests pass.
+## Toolchain and dependency model
 
-## Assertion and reboot contract
+Mise remains the task and tool entry point. uv remains the Python resolver and
+lock owner.
 
-The normal sequence covers fresh creation, preparation, convergence,
-deterministic-task idempotence, independent verification, and cleanup/destruction.
-Idempotence requires a second pass with no changed deterministic tasks. Full
-upgrade tasks may be explicitly excluded from that phase because upstream
-repository metadata or packages can change between runs; installation,
-configuration, cleanup, and decision tasks remain checked.
+The Molecule dependency group pins:
 
-Independent assertions observe package facts, file metadata, service-manager
-state, or direct read-only commands. They do not call the producer role as their
-oracle or promote package defaults to guarantees the role does not own.
+```text
+molecule==26.6.0
+```
 
-The maintenance role reports reboot-required state; OS playbooks own actual
-reboot/reconnection. Disposable scenarios suppress native automatic reboots and
-other unavailable kernel actions while retaining configuration and decision
-coverage. Production defaults remain enabled. Suppression does not justify
-omitting updates, installed packages, reboot-state inspection, or the explicit
-playbook lifecycle.
+The repository Galaxy requirements pin:
 
-## Change selection and merge gate
+```text
+containers.podman==1.20.2
+```
 
-[The impact planner](../../scripts/ci/molecule_plan.py) consumes the
-[impact map](../../scripts/ci/molecule-impact.json) and runner registry. The map
-owns exact consuming scenarios, so this spec does not duplicate a scenario
-catalog. More-specific directory rules and exact-file rules resolve consumers;
-equally specific rules union them. Scenario-local paths require an explicit
-scenario-directory rule. Adding a scenario requires both registration and impact
-consumers.
+The scenario uses Molecule's default, Ansible-native driver with explicit
+Ansible create and destroy playbooks. It does not install or use
+`molecule-plugins[podman]`. The create and destroy playbooks use modules from
+`containers.podman`. Molecule's dependency phase is disabled because repository
+bootstrap owns exact controller and Galaxy installation. Scenario workers reuse
+the verified dependencies without running their own dependency installation.
 
-Unknown relevant inputs or a missing/invalid map select the complete registry;
-an absent or invalid registry fails instead of claiming partial coverage.
-Discovery includes deletion paths, both rename/copy paths, and local committed,
-staged, unstaged, and untracked changes. Failed discovery and an empty changed
-set select full validation. CI, classifier, runner, impact-map, and dependency
-changes require the complete suite. An explicitly forced Molecule tier without
-mapped inputs also selects the full suite.
+The dependency audit retains every declared Galaxy role and collection.
+`community.general` remains necessary for host timezone configuration,
+`community.library_inventory_filtering_v1` remains its explicit dependency, and
+`containers.podman` remains necessary for the Molecule lifecycle.
 
-Plans record exact matrix rows and reasons, resolved revisions, and whether
-worktree changes are included. Missing Git provenance remains unknown; a commit
-identifier cannot describe uncommitted content. Local execution clears internal
-platform overrides that could omit required coverage. Scheduled and manual full
-validation select every registered scenario.
+Podman is a host runtime, not a Python project dependency. The repository does
+not install it through bootstrap or invoke it with elevated privileges. The
+embedded test preflight checks required capabilities and reports the detected
+version. It does not require the local and GitHub hosts to use an identical
+Podman release.
 
-GitHub matrix jobs use the same worker on isolated ephemeral hosts, bounded
-timeouts, read-only repository permissions, and no registry credentials or sudo.
-They retain `fail-fast: false` and no continue-on-error behavior. The stable
-merge gate rejects malformed, duplicate, unknown, empty, or incomplete rows and
-requires complete registry coverage in full mode. Selected failed, cancelled,
-or skipped jobs fail the gate. Intentionally unselected Molecule jobs may be
-skipped at shallower depths.
+On macOS, the operator must install Podman and start a rootless Podman machine
+before validation. On Linux, the operator must provide a working rootless
+Podman installation. GitHub uses the Podman installation supplied by the fixed
+`ubuntu-24.04` hosted-runner image; the workflow does not install or configure a
+rootful service.
 
-## Diagnostics and measurements
+## Command lifecycle classification
 
-Report acquisition, build, Molecule lifecycle, worker total, invocation total,
-and cleanup separately. Infrastructure failure must remain distinguishable from
-assertion failure. Lifecycle observations retain repeated phases and mark an
-interrupted phase incomplete; missing data never means zero cost.
+The [repository command lifecycle](001-agentic-development-modernization.md#repository-command-lifecycle)
+classifies a command by its effects. Molecule deliberately creates and removes
+bounded local containers to obtain executable evidence, so it is a controlled
+`test`, not a read-only `validate` command.
 
-The Molecule-only Ansible timing callback retains bounded aggregates of approved
-source locations, opaque role invocation identifiers, and durations. It emits
-no task names, variables, arguments, host identifiers, result objects, or
-unsalted internal identities. Timing includes controller and dispatch overhead;
-it is not container CPU time. Collection limits and missing records stay visible.
-Structured timing survives ephemeral cleanup without copying raw playbook logs.
-A killed runner cannot guarantee final reports.
+The public command is therefore `test:molecule`. There is no
+`validate:molecule` alias. The `molecule` classifier depth and GitHub job retain
+their names because they identify validation selection and CI execution, not a
+public lifecycle operation.
 
-Compare matching source, architecture, cache state, and concurrency; moving
-package repositories can change outcomes. Keep detailed run measurements and
-optimization proposals in established evidence or ignored task state. Retain
-focused contracts for selection, ownership, cleanup, timing privacy, and gate
-reconciliation, and use current independent invariants for executable assertions.
+The test embeds its Podman preflight because that check has no independent
+operator value. It requires no confirmation: rootless, unprivileged, exactly
+owned local test containers are a bounded consequence for which a static token
+would add friction without a proportionate safeguard.
+
+## Platform matrix
+
+| Platform | Maintained base tag | Local ARM64 | GitHub AMD64 |
+| --- | --- | --- | --- |
+| Debian 13 | `docker.io/library/debian:13` | native ARM64 | native AMD64 |
+
+The Debian tag follows its selected major release line. It intentionally moves
+as the upstream publisher releases maintenance and security updates.
+
+Every reference is fully qualified to avoid short-name registry resolution.
+The repository records the locally resolved image identifier after each pull,
+but does not commit it or use it as a later pin.
+
+## Image acquisition and build lifecycle
+
+Before a local or GitHub scenario worker starts, the repository runner:
+
+1. validates the exact registered role/scenario selector;
+2. confirms the locked controller and Galaxy dependencies are present, otherwise
+   directing the operator to `mise run bootstrap`;
+3. confirms that `podman` exists in `PATH`;
+4. runs bounded `podman info` inspection as the current user;
+5. confirms rootless operation and cgroup v2;
+6. selects the default platform set for the Podman host architecture without
+   pulling a probe image; and
+7. acquires one non-blocking host-local invocation lock shared by linked
+   worktrees of this repository.
+
+Invalid usage, an unknown selector, or an unknown workflow platform exits with
+status `2`. An unavailable dependency, Podman executable, Podman service or
+machine, rootless mode, cgroup v2 host, or invocation lock exits with status `1`
+and one actionable message. Expected setup failures print no traceback. The
+runner does not pull an image, inspect or delete a container, or start workers
+until this preflight succeeds.
+
+On macOS, an unreachable Podman service reports that the operator should run
+`podman machine start`. On Linux, it reports that rootless Podman must be made
+available to the current user. Neither path installs software, starts a machine,
+uses `sudo`, or selects a different runtime automatically.
+
+After global preflight, each platform worker owns this sequence:
+
+1. inspect the worker's exact stable container name;
+2. if that container exists, verify its repository, scenario, and platform
+   ownership labels before removing it;
+3. run one `podman pull --policy=always --retry=3` for the maintained base tag;
+4. read the pulled image's local identifier and, when Podman supplies it, its
+   repository digest for the log;
+5. build the repository-owned systemd test image with `--pull=never`;
+6. run the Molecule test sequence using that local built image with container
+   pull policy `never`;
+7. remove the scenario container in an unconditional cleanup path; and
+8. retain the base image, built image, and reusable build layers.
+
+A container with the expected name but missing or different ownership labels is
+not deleted; that worker fails with a collision message. The invocation lock
+prevents overlapping local runs from treating another active run as stale.
+Each scenario invocation selects one Debian worker.
+The lock identity derives from Git's common directory so linked worktrees on the
+same host coordinate with each other. The lock is released on success, failure,
+or interruption. GitHub matrix jobs run on separate ephemeral hosts and
+therefore do not share this lock.
+
+The explicit pull is inside the worker. There is no separate local pre-pull
+stage and no GitHub digest-resolution job. This keeps local and GitHub behavior
+the same and avoids a registry check that cannot transfer image layers to
+ephemeral matrix runners.
+
+`--policy=always` makes inability to confirm the maintained tag an acquisition
+failure even when a local image exists. The workflow never silently substitutes
+a stale cached image. Podman's bounded retry handles short transient failures.
+A continuing registry outage fails the affected platform with a clear image
+acquisition result. A fresh GitHub runner cannot continue without the base
+image, so rerunning after registry recovery is the initial recovery procedure.
+
+The repository owns one minimal Containerfile per platform. Each derives from
+the selected base and installs only the prerequisites needed to start systemd
+and let Ansible manage the container. Test images are built during validation;
+they are not published in this initiative.
+
+The first implementation measures the cost of these builds. Prebuilt images or
+a repository-controlled registry mirror require a later measured design. They
+are justified only if build duration or public-registry reliability materially
+limits the validation workflow.
+
+## Least-privilege container model
+
+The preflight must prove:
+
+- Podman is reachable without `sudo`;
+- Podman reports rootless operation;
+- the Podman host supplies cgroup v2; and
+- the default platform set matches the Podman host architecture.
+
+The preflight does not pull or start a separate probe image. The default run
+selects Debian on both supported host architectures. The internal
+platform selector overrides the default with one exact worker. GitHub sets it
+to Debian for each matrix job; it is not a public command argument.
+
+After container creation, a bounded readiness check confirms that systemd is PID
+1 and responds inside the container. This is the authoritative proof that the
+host's rootless cgroup delegation is sufficient. A failure reports systemd or
+cgroup delegation as the container-start cause instead of misclassifying it as
+a role assertion failure.
+
+Scenario inventory uses:
+
+```yaml
+container_privileged: false
+container_systemd: always
+```
+
+No scenario mounts the host cgroup filesystem. The Podman collection supplies
+the systemd-specific writable tmpfs and cgroup setup required by
+`container_systemd: always`.
+
+The two maintenance scenarios add no capabilities. The reverse proxy scenario
+adds `SYS_PTRACE` for socket inspection and `SYS_ADMIN` for its systemd sandbox
+tests, plus `NET_ADMIN` for delayed-address startup verification, as defined in
+[Specification 008](008-shared-private-reverse-proxy.md).
+The Semaphore scenario adds `SYS_PTRACE` for socket inspection. These allowances
+apply only within the rootless test containers and do not grant host privileges.
+
+The proxy fixture image clears journald's unused `ImportCredential=journal.*`
+setting. No systemd credentials are supplied to this disposable fixture; the
+import can fail at systemd's `CREDENTIALS` setup step on a rootless Podman host.
+This image-only adjustment preserves journald's other service restrictions and
+the installed Caddy unit. Preparation requires journald to be active before the
+long provisioning sequence, because startup-recovery verification reads its
+journal. Production journald configuration is unchanged.
+
+Ansible operates as root inside the container because package management,
+system configuration, and systemd require it. With rootless Podman, this user is
+mapped into the invoking user's namespace and is not host root. No host
+administrative credential or rootful service is an accepted fallback.
+
+## Scenario structure and lifecycle
+
+The scenario lives at:
+
+```text
+roles/system_maintenance/molecule/default/
+```
+
+It contains repository-owned configuration, create, converge, verify, cleanup,
+destroy, and platform Containerfile inputs. The normal test sequence is:
+
+```text
+destroy -> syntax -> create -> prepare -> converge -> idempotence -> verify ->
+cleanup -> destroy
+```
+
+The outer worker also requests destroy on failure so an interrupted Molecule
+sequence does not intentionally retain a test container. Cleanup targets only
+the exact names owned by this scenario. It does not prune Podman storage or
+remove unrelated containers, images, networks, or volumes.
+
+Each scenario uses distinct container names, built-image tags, logs, and
+Molecule ephemeral state. GitHub runs the registered scenario jobs on separate
+ephemeral hosts. Local scenario invocations use the shared invocation lock.
+
+## Role contract and reboot control
+
+The maintenance role reports the Debian reboot-required marker without
+rebooting the host. OS provisioning and maintenance playbooks own explicit
+reboots and subsequent verification, as defined by Specification 003.
+
+Native automatic security-update reboots have a separate default:
+
+```yaml
+system_maintenance_native_reboot_enabled: true
+```
+
+Molecule convergence sets this value to `false` to disable native automatic
+reboots in disposable containers. The production default remains enabled.
+This control does not suppress package updates, cleanup, package installation,
+reboot-signal inspection, or explicit playbook reboot handling.
+
+## Verification contract
+
+Molecule's idempotence phase runs the role a second time and requires no changed
+deterministic tasks. Debian's live full-upgrade task carries
+Molecule's `molecule-idempotence-notest` tag. Molecule runs these tasks during
+convergence and automatically skips that tag during idempotence. This prevents a
+package or repository-metadata publication between the two runs from being
+reported as role non-idempotence. Package installation, cleanup, configuration,
+reboot-signal inspection, and all other maintenance tasks remain part of the
+strict second pass.
+
+Verification then uses Ansible modules and commands that observe the result
+rather than calling the role again.
+
+The initial assertions cover current role-owned invariants:
+
+- Debian 13 completes convergence with the expected distribution and version;
+- representative packages that are not part of the Containerfile baseline are
+  installed;
+- Debian package maintenance and representative common-package installation
+  complete successfully;
+- a functioning systemd process exists in each test container.
+
+Assertions use package facts, file metadata and content, service-manager facts,
+or a direct read-only command as appropriate. They do not reproduce the role's
+task implementation as the oracle.
+
+The scenario does not assert service enablement that the role does not own.
+Package-provided defaults are not promoted to a role contract merely because
+they occur in a base image or package release.
+
+## Public command and scenario execution
+
+The public command is:
+
+```text
+mise run test:molecule -- system_maintenance/default
+```
+
+It validates the exact role/scenario selector and returns failure if any worker
+fails. It runs Debian natively for the host's ARM64 or AMD64 architecture. Unknown roles,
+scenarios, workflow platforms, or extra public arguments fail with a concise
+usage message and status `2` before Podman is inspected.
+
+The local runner starts the selected isolated platform worker. Output identifies
+the platform, and the final summary reports its result.
+
+Molecule's experimental collection-only worker interface is not part of this
+design. The repository runner owns each role-based scenario lifecycle;
+GitHub supplies parallel execution across the registered scenario jobs.
+
+## Timing and diagnostic output
+
+For each platform, the runner reports:
+
+- Podman version, host architecture, requested architecture, and native or
+  emulated execution;
+- maintained source tag and resolved local image identifier;
+- pull/check duration;
+- test-image build duration;
+- Molecule lifecycle duration;
+- per-platform total duration; and
+- pass, test failure, acquisition failure, build failure, or cleanup failure.
+
+The local summary reports wall-clock invocation duration separately from the
+worker stage durations.
+
+The runner observes the pinned Molecule lifecycle's start and completion log
+markers using a monotonic clock. It reports create, prepare, converge,
+idempotence, verify, cleanup, and destroy separately, as well as syntax when
+executed. Repeated phases retain their execution number, duration, and outcome.
+A started phase without a completion marker is `incomplete`; an unstarted phase
+is `not run`. These observations do not replace Molecule's test sequence or
+failure handling. The worker's existing cleanup total measures the final
+label-checked container-removal safeguard separately from Molecule cleanup.
+
+An aggregate Ansible callback is enabled only in the Molecule subprocess
+environment. It measures time between task starts and the final playbook recap,
+including handlers and skipped task dispatch. Task durations therefore include
+controller and connection overhead and are not container CPU measurements. Each
+record contains only a source location, role source directory, opaque role
+invocation identifier, and duration. Source locations outside approved role and
+playbook directories are marked generated. No task names, arguments, variables,
+host identifiers, or result objects enter timing records.
+Internal Ansible role identifiers are hashed with a random per-process salt
+before emission; their embedded controller identity is never emitted.
+
+The runner retains bounded aggregates and reports slow task/role totals, counts,
+and missing or invalid timing explicitly. Limits and report fields belong to
+[the runner](../../scripts/molecule.py). Timing records are omitted from
+streamed logs; ordinary Ansible output is unchanged. Terminal and GitHub summaries
+include scenario, architecture, source revision and worktree provenance; Git
+inspection failure reports unknown provenance. Structured reports survive
+Molecule cleanup and never copy raw playbook output.
+
+Ordinary lifecycle failures preserve available timings and cleanup behavior.
+The last task of an interrupted playbook may lack a duration because its next
+task or recap callback never ran. A killed runner or terminated GitHub job cannot
+guarantee a final summary or artifact. Missing data is not evidence of zero cost.
+Compare measurements with matching architecture, source revision, cache state,
+and concurrency; maintained package repositories can change between runs.
+Keep run-specific comparisons and optimization proposals in uncommitted
+implementation reports.
+
+GitHub writes the same platform data to each job summary. The workflow and
+merge-gate summaries make infrastructure acquisition failures distinguishable
+from role assertion failures. When a performance decision needs GitHub elapsed
+time, use the completed run rather than adding API access only to calculate it
+inside the workflow. No routine implementation report is required. Logs and
+summaries contain no environment
+dump, credentials, inventory content, or Vault material.
+
+## GitHub Actions topology
+
+The workflow retains the existing `classify`, `fast`, `ansible`, and stable
+`merge-gate` jobs and adds a conditional `molecule` matrix:
+
+```text
+classify
+   |-- fast (always) -----------------------------|
+   |-- ansible (ansible, molecule, or full) ------|
+   `-- molecule (molecule or full)                 |-- merge-gate
+         `-- Debian 13 ----------------------------|
+```
+
+The matrix uses `ubuntu-24.04`, `fail-fast: false`, and bounded concurrent
+jobs configured in the workflow. Debian is native AMD64 in GitHub Actions. Each
+matrix job invokes the same platform worker used by the local command and has
+a bounded timeout.
+The initial timeout allows for a cold image build and full package upgrade; it
+must be tightened later if measured results support a smaller reliable bound.
+
+The workflow has read-only repository permissions, uses no container-registry
+credentials, and does not use `sudo`. GitHub runners are ephemeral, so their
+images and containers disappear with the job. The workflow does not add a
+redundant cleanup or image-pruning stage beyond scenario cleanup.
+
+## Change-directed validation
+
+The classifier retains the four ordered depths:
+
+```text
+fast -> ansible -> molecule -> full
+```
+
+Within `molecule`, `scripts/ci/molecule_plan.py` selects scenarios using the
+checked-in `scripts/ci/molecule-impact.json`. The runner's `SCENARIOS` registry
+supplies the complete scenario/platform set, including fallback when the map is
+missing or invalid. Every selected scenario runs Debian 13. Platform-specific
+impact selection is not supported.
+
+Each map rule declares directory `prefixes`, exact-file `paths`, or both, plus
+consuming selectors and a reason. Exact files outrank directory prefixes;
+otherwise the most specific matching directory wins. Equally specific rules union their
+consumers. This lets scenario-local tests select their own scenario while role
+changes select all consumers. Scenario paths require an explicit scenario-directory
+rule; a broad role rule or exact-file entry cannot cover a missing scenario
+declaration. Exact-file entries do not participate in scenario-path matching.
+Rules naming `all` broaden to the complete suite.
+Selections and reasons are deduplicated and emitted in stable registry order.
+
+The [impact map](../../scripts/ci/molecule-impact.json) owns exact consumers;
+do not duplicate its path table here. Shared role changes select every declared
+consumer, scenario-local assertions may select one scenario, and shared lifecycle,
+CI, dependency or impact-selection changes require the complete suite. Unknown
+Molecule inputs or invalid mappings also select the complete suite. For example,
+the baseline consumes proxy and TLS roles, so a proxy change cannot select only
+the dedicated proxy scenario. Shallower documentation changes retain their
+classified depth.
+
+The existing Git discovery retains deletion paths, both rename/copy paths, and
+local committed, staged, unstaged, and untracked paths. Discovery failure or an
+empty changed-path set selects `full`. A new scenario path enters the Molecule
+tier even if its role was previously static-only; missing impact mapping selects
+the complete registered suite. Add its runner registration and impact consumers
+together. An absent or invalid runner registry fails CI rather than reporting
+partial coverage as successful.
+
+The generated plan records resolved base/head commit SHAs, whether worktree
+changes are included, `none`, `selective`, or `full` mode, and exact matrix rows
+with reasons. SHAs are null when Git cannot resolve the requested range; the
+result still requires full validation. Local output explicitly marks worktree
+inclusion because a commit SHA does not identify uncommitted content.
+
+GitHub Actions consumes the generated matrix and appends the plan to the job
+summary. Scheduled and manually dispatched workflows force `full`, which always
+selects every registered scenario on Debian. An explicitly forced
+Molecule tier without mapped Molecule inputs also selects the complete suite.
+`mise run ci:changed` executes only the selected scenarios and clears the internal
+platform override so local validation cannot silently omit Debian.
+`mise run ci` continues to execute the complete local validation suite.
+
+The merge gate requires successful Ansible and aggregate Molecule job results
+for `molecule` and `full`. It also rejects empty, malformed, duplicate, unknown,
+or incomplete platform rows, and requires complete registry coverage in `full`
+mode. Skipped Molecule jobs remain acceptable only for `fast` and `ansible`.
+A failed or cancelled matrix worker makes the required aggregate result fail.
+The matrix retains `fail-fast: false` and no continue-on-error behavior.
+
+## Failure and cleanup behavior
+
+- A missing or unusable Podman runtime fails before container creation.
+- Rootful Podman, cgroup v1, an unavailable invocation lock, an unavailable
+  required architecture, or a request for privilege fails without attempting an
+  elevated fallback.
+- A Podman preflight failure leaves existing images and containers untouched.
+- A same-name container without the complete expected ownership labels is not
+  deleted and fails as a collision.
+- Registry failure after Podman's bounded retries fails image acquisition; a
+  cached image is not silently substituted.
+- Build, converge, idempotence, and verify failures retain their distinct stage
+  in the summary.
+- Cleanup runs after success and failure and removes only scenario-owned
+  containers.
+- Cleanup failure makes the worker fail even if the test assertions passed.
+- Images and layers are never pruned by the validation workflow.
+- GitHub scenario jobs continue independently after another job fails, so the
+  final workflow report includes all available scenario evidence.
+
+## Validation and measurement
+
+Implementation follows repository test and validation policy:
+
+1. add focused unit and contract tests for selector parsing, platform planning,
+   timing aggregation, classifier selection, and merge-gate reconciliation;
+2. run `mise run bootstrap` after dependency changes;
+3. use `mise run validate:fast` and `mise run validate:ansible` while iterating;
+4. run the scenario locally through its public command on the supported local
+   Podman environment;
+5. run `mise run ci:changed` before claiming completion or publication; and
+6. collect successful GitHub matrix timing from CI.
+
+Focused tests use positive current invariants as their oracles. They require the
+exact Debian role dispatch set, the exact Debian 13 Molecule set, and the
+complete registered scenario matrix. Complete OS provisioning
+must reject an unsupported operating-system family before configuration roles
+run, and the Molecule runner must reject an unknown workflow platform before
+invoking Podman. No permanent forbidden-reference scan is part of the contract.
+
+When measurements are needed for a performance decision, compare the following
+for each platform and local/GitHub workflow total:
+
+- pull duration;
+- build duration;
+- Molecule duration;
+- overall duration;
+- whether execution was native or emulated; and
+- the proportion of overall platform time spent building the test image.
+
+Keep run-specific measurements in established evidence stores or ignored
+`.tmp/` reports; link only decision-relevant evidence in PRs.
+
+## Acceptance criteria
+
+The current contract is satisfied when:
+
+1. Molecule and `containers.podman` are exactly pinned through uv and Galaxy
+   dependency management;
+2. `mise run test:molecule -- system_maintenance/default` runs Debian with
+   Podman only;
+3. local ARM64 and AMD64 runs select native Debian, and GitHub's AMD64 matrix
+   runs Debian natively;
+4. Podman is rootless and all scenario hosts use `container_privileged: false`
+   and `container_systemd: always`; maintenance scenarios add no capabilities,
+   while application scenarios use only the allowances defined above;
+5. one embedded global preflight rejects invalid selectors, unavailable or
+   rootful Podman, cgroup v1, and overlapping local invocations before touching
+   container state, without a privilege or runtime fallback;
+6. every worker pulls its fully qualified maintained tag exactly once with an
+   always-refresh policy, builds with no second pull, and logs the resolved
+   local image identity;
+7. base and built images remain after local testing, while exact label-owned
+   scenario containers are destroyed after both success and failure;
+8. converge, deterministic-task idempotence, and independent verification pass
+   for Debian; live full-upgrade tasks run during converge and are
+   excluded only from the idempotence pass because maintained package
+   repositories can change during a scenario run;
+9. native automatic reboot policy remains enabled by default and disabled in
+   disposable scenarios; explicit playbook reboots remain a separate lifecycle;
+10. verification covers representative current Debian role invariants;
+11. the classifier retains four depths and selects affected scenario/platform
+    rows within `molecule`; unknown impact selects the complete Molecule suite,
+    shallower changes retain their depth, and `full` runs all validation;
+12. GitHub executes the bounded registered scenario matrix and the stable
+    merge gate requires its success when selected;
+13. local and GitHub workers report pull, build, Molecule, and platform-total
+    timing; local summaries retain overall elapsed time and performance decisions
+    use retrievable workflow evidence rather than routine implementation reports;
+14. acquisition, build, assertion, and cleanup failures are distinguishable;
+15. no test contacts inventory hosts, reads Vault material, uses infrastructure
+    credentials, or claims VM or hardware evidence; and
+16. support claims, executable behavior, Molecule coverage, CI execution, and
+    documentation agree on the Debian platform set while generic CPU-
+    architecture logic remains; and
+17. all repository-required change-directed validation passes from the issue
+    branch before completion is claimed.
