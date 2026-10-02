@@ -318,11 +318,31 @@ class Fixture:
             if record["status"] == "success": return
             if record["status"] in {"error", "stopped", "failed"}:
                 detail = self._recent_task_output(project, task)
+                if "Could not resolve host: fixture-target" in detail:
+                    self._diagnose_source_dns()
                 raise FixtureFailure(
                     f"source task failed: {record['status']}; recent task output:\n{detail}"
                 )
             time.sleep(1)
         raise FixtureFailure("source fixture task timed out")
+
+    def _diagnose_source_dns(self) -> None:
+        """Observe the disposable source container before cleanup removes evidence."""
+        probe = """id
+ls -l /etc/resolv.conf
+getent hosts fixture-target
+curl --fail --silent --show-error --max-time 10 --output /dev/null http://fixture-target:8000/recovery.git/info/refs
+git ls-remote http://fixture-target:8000/recovery.git
+env -i PATH="$PATH" git ls-remote http://fixture-target:8000/recovery.git
+"""
+        try:
+            result = self.podman("exec", self.application, "/bin/sh", "-c", probe, check=False)
+            detail = f"source DNS probe exit={result.returncode}\n{result.stdout}\n{result.stderr}"
+            for value in sorted(self.private_values, key=len, reverse=True):
+                detail = detail.replace(value, "<redacted>")
+            print(detail[-TASK_OUTPUT_CHARACTERS:], file=sys.stderr)
+        except (FixtureFailure, OSError, subprocess.TimeoutExpired):
+            print("source DNS probe unavailable", file=sys.stderr)
 
     def _recent_task_output(self, project: int, task: int) -> str:
         try:
