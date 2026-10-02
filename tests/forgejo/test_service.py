@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import tempfile
 import socket
+import sys
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
@@ -77,6 +78,28 @@ class ServiceTests(unittest.TestCase):
         for name in self.service.REQUIRED_FILES:
             if name != "manifest.json":
                 self.targets[name] = self.root / "installed" / name
+
+    def test_child_commands_do_not_inherit_operator_private_directory(self):
+        original = Path.cwd()
+        try:
+            os.chdir(self.root)
+            result = self.service.execute([
+                sys.executable, "-I", "-c", "import os; print(os.getcwd())",
+            ])
+        finally:
+            os.chdir(original)
+        self.assertEqual("/", result.stdout.strip())
+
+    def test_failed_child_command_does_not_disclose_private_output(self):
+        with self.assertRaises(RuntimeError) as raised:
+            self.service.execute([
+                sys.executable, "-I", "-c",
+                "import sys; print('fixture-private-output'); "
+                "print('fixture-private-error', file=sys.stderr); sys.exit(17)",
+            ])
+        self.assertIn("exited 17", str(raised.exception))
+        self.assertNotIn("fixture-private-output", str(raised.exception))
+        self.assertNotIn("fixture-private-error", str(raised.exception))
 
     def test_candidate_rejects_foreign_allocation_before_publication(self):
         expected = dict(self.allocation, uid=self.allocation["uid"] + 1)

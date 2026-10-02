@@ -3,7 +3,7 @@ forgejo_backend_port: ENC[AES256_GCM,data:KiP6KL0=,iv:rIm95wETFFLOoRpCxhBNBaJf7o
 forgejo_certificate_name: ENC[AES256_GCM,data:X8pgr44=,iv:X/HvyBqh6WQIsVPWMhB+ZcF9NCVXOuPuyV0nOcqI0RU=,tag:BtIMpz9sN2ZH+Z28G1qzyQ==,type:str]
 forgejo_database_admin_password: ENC[AES256_GCM,data:EnaNMa+EAJVqBuhIZwOcIW1L8f5sdWawaLLmEVKOpTVHz/DpZ0xCZw==,iv:RNElnVzGdNw42XA6DRARSSPUarXuH5p798t34Y9cavc=,tag:62ANv+eyJbyUjPdEIQe5rg==,type:str]
 forgejo_database_password: ENC[AES256_GCM,data:CjqGxPy0F6qsCJAX5/QWlwlmVD0otV1pE9IHG4McgK16joTrfjOqxA==,iv:vj6PDrsKmGbFNyMk25e5aLqvVzr0OxOSqQTPl2VXK4w=,tag:9FFfBs0VsCjcYk+E/NvyKw==,type:str]
-forgejo_admin_login: ENC[AES256_GCM,data:78vs7jw=,iv:OsU6RNndWk9QulakVLl9UCpT69aN4DWyJJrahZtyXhg=,tag:GPnBkNiPNW94nU72Z61yXg==,type:str]
+forgejo_admin_login: ENC[AES256_GCM,data:Mu495NguWP1B/65W9A==,iv:SH0H+u1oK1OL+XiDubl5qn8dmIvaWDP7vznZt6stqAU=,tag:8tgtA/+Mh1z4w4i+riRizQ==,type:str]
 forgejo_admin_password: ENC[AES256_GCM,data:e301mjpdcHyTV7pddmrjCC87midm1xNae/1ea8IgPUTWcvz0LohFsw==,iv:sfFYy0eFuhKLUtIUo21FIQ0k27k79afl1vvgoJWRan8=,tag:iPm0Za/HF4mP0K/l0ozl4w==,type:str]
 forgejo_admin_email: ENC[AES256_GCM,data:G9oshBu4yj5/qStZOgeeB1BkalKVUtKfePcpDEoZKA==,iv:eNsEzOhrRaqlp8/PLTphngGvgm6xcLhJV9wksPTh3mw=,tag:C0+FinOGu0TWNT9L/SO6Kg==,type:str]
 forgejo_secret_key: ENC[AES256_GCM,data:ChfcNV8MYtM/P7ilAfNRM7srhD0d/oYY7O9YlM8ASnIixk7R9tbB6U7GAQ==,iv:8QYytrQr2O/Tr2zE9gC2TaZu8JAbRKXq5dECNjX3WZQ=,tag:CYI15NrfZ8Zd0DBSRk7nAg==,type:str]
@@ -25,6 +25,6 @@ sops:
             -----END AGE ENCRYPTED FILE-----
           recipient: age1ehm0ehd2v2emfuycf2p0suhg94ej29zcu96ffmh3t6afchhjd99sxc4984
     encrypted_regex: ^(.*)$
-    lastmodified: "2026-10-02T17:46:43Z"
-    mac: ENC[AES256_GCM,data:0hj3LNSUtoSZ11mAVcOqStu3FVM6ukfhf1q73eSYRBKe6NwDiZQE/KiOVhLiYvfIY1/Q2zSwIuI/xckZIyPR3XpsYCi5XvDORxv8BEe2N4hWsUnoyK+M2zGNBHybajSRjmskiz8sxAyR9TxIu77PRoymm9D/UZCb/RyFpKmAmPk=,iv:oK2ng0sUUwYr2POVeELFKgYFcBk/PoA24/cz/xxVn3k=,tag:mmPk7t7OPbM20WHunuslRA==,type:str]
+    lastmodified: "2026-10-02T22:06:34Z"
+    mac: ENC[AES256_GCM,data:N5MX1lcTaW9MzgsCwXQ3ZoVW4iPPllCc0TXpGPg+qhqv0VV4f9GiB2FDGzChRm8rVSKWJyGSG5Hz1SVKSr/QoxeNvUXhIDeeid599Gwyl47WsXIw+K2EiuYnqT5WjGJo8giEH+Fvb4eS4zT9XMqinqZ142WnOGKSF/2aocbX5B4=,iv:lDFH/HJ+ZNj/C8w5+3My7K+vAqh4AmE+yQkFHXrQX50=,tag:teERSq8ICap1/DInqT14Uw==,type:str]
     version: 3.13.2
