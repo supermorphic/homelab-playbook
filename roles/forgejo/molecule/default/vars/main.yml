@@ -10,7 +10,6 @@ forgejo_foundation_account:
 forgejo_hostname: forgejo.example.test
 forgejo_backend_port: 18081
 forgejo_certificate_name: forgejo-fixture
-forgejo_proxy_source: 127.0.0.1/32
 reverse_proxy_routes:  # noqa: var-naming[no-role-prefix] -- shared proxy input
   - hostname: forgejo.example.test
     backend_port: 18081

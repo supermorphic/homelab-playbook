@@ -10,8 +10,17 @@ semaphore_foundation_account: &semaphore_account
   subuid_count: 65536
   subgid_start: 200000
   subgid_count: 65536
+forgejo_foundation_account: &forgejo_account
+  name: svc-forgejo
+  uid: 2002
+  gid: 2002
+  subuid_start: 300000
+  subuid_count: 65536
+  subgid_start: 300000
+  subgid_count: 65536
 podman_foundation_accounts:
   - *semaphore_account
+  - *forgejo_account
 
 semaphore_hostname: semaphore.infra.supermorphic.com
 semaphore_backend_port: 18080

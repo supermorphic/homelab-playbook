@@ -132,11 +132,24 @@ list while preserving unrelated routes. The existing proxy workflow owns route
 activation and certificate access; Forgejo mounts neither TLS private keys nor
 the Caddy administration socket.
 
-Use application authentication. Disable reverse-proxy authentication and explicitly
-restrict trusted proxy sources to the effective local proxy path. Confirm the
-source seen through rootless port forwarding rather than using a wildcard trust
-setting. Ordinary application verification observes local HTTP health; a trusted
-HTTPS check from the intended client network is separate live acceptance.
+Use application authentication and disable reverse-proxy authentication. Set
+`REVERSE_PROXY_LIMIT = 0` to disable processing of forwarded client identity.
+The configured HTTPS root URL supplies the public endpoint. Caddy owns TLS,
+routing and ingress client restrictions; Forgejo uses the connection peer for
+client identity, which can be a Podman forwarding address. Per-client IP auditing
+or policy inside Forgejo is outside this deployment's contract.
+
+There is no forwarding-address enrollment, temporary discovery listener, or
+startup dependency on address measurement. Offline runtime evidence must show
+that forwarded IP and authentication headers cannot replace the connection peer
+or sign a user in, and that generated clone URLs use the configured HTTPS root.
+Prove browser password login, secure session cookies and cross-origin write
+rejection at the HTTP backend with the public HTTPS host and origin.
+Exercise both the published port and container loopback, including an
+upstream-default trusted source, so ignored headers are proved independently of
+the container subnet. Ordinary application verification observes local HTTP
+health; a trusted HTTPS check from the intended client network is separate live
+acceptance.
 
 ## Nightly backup and NAS transfer
 

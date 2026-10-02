@@ -110,6 +110,7 @@ assert production["podman"].get("hosts", []) == ["nuc4"]
 assert production["reverse_proxy"].get("hosts", []) == ["nuc4"]
 assert production["tls_issuer"].get("hosts", []) == ["nuc4"]
 assert production["semaphore"].get("hosts", []) == ["nuc4"]
+assert production["forgejo"].get("hosts", []) == ["nuc4"]
 for retired_group in ("servers", "pihole", "ansible"):
     assert retired_group not in production
 host_variables = production.get("_meta", {}).get("hostvars", {}).get("nuc4", {})
@@ -120,8 +121,14 @@ semaphore_account = {
     "subuid_start": 200000, "subuid_count": 65536,
     "subgid_start": 200000, "subgid_count": 65536,
 }
-assert host_variables.get("podman_foundation_accounts") == [semaphore_account]
+forgejo_account = {
+    "name": "svc-forgejo", "uid": 2002, "gid": 2002,
+    "subuid_start": 300000, "subuid_count": 65536,
+    "subgid_start": 300000, "subgid_count": 65536,
+}
+assert host_variables.get("podman_foundation_accounts") == [semaphore_account, forgejo_account]
 assert host_variables.get("semaphore_foundation_account") == semaphore_account
+assert host_variables.get("forgejo_foundation_account") == forgejo_account
 assert host_variables.get("semaphore_hostname") == "semaphore.infra.supermorphic.com"
 assert host_variables.get("semaphore_backend_port") == 18080
 assert host_variables.get("semaphore_certificate_name") == "infra"

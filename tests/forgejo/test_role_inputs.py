@@ -1,6 +1,7 @@
 """Evaluate actual role assertions against synthetic input, without inventory."""
 
 import json
+import configparser
 import os
 from pathlib import Path
 import subprocess
@@ -8,6 +9,7 @@ import tempfile
 import unittest
 
 import yaml
+from jinja2 import Template
 
 ROOT = Path(__file__).resolve().parents[2]
 INPUTS = ROOT / "roles/forgejo/tasks/inputs.yml"
@@ -23,7 +25,6 @@ class InputTests(unittest.TestCase):
                 "subgid_start": 200000, "subgid_count": 65536,
             },
             "forgejo_hostname": "forgejo.infra.example.com",
-            "forgejo_proxy_source": "127.0.0.1/32",
             "forgejo_rclone_remote": "nas:fixture-forgejo",
             "reverse_proxy_routes": [{"hostname": "forgejo.infra.example.com",
                 "backend_port": 18081, "certificate_name": "infra"}],
@@ -67,6 +68,15 @@ class InputTests(unittest.TestCase):
     def test_declared_synthetic_inputs_are_accepted(self):
         self.assertEqual(0, self.evaluate(self.settings()))
 
+    def test_proxy_headers_cannot_supply_client_identity_or_authentication(self):
+        values = self.settings()
+        template = ROOT / 'roles/forgejo/templates/app.ini.j2'
+        config = configparser.ConfigParser(interpolation=None)
+        config.read_string('[DEFAULT]\n' + Template(template.read_text()).render(**values))
+        self.assertEqual(0, config.getint('security', 'REVERSE_PROXY_LIMIT'))
+        self.assertFalse(config.getboolean('service', 'ENABLE_REVERSE_PROXY_AUTHENTICATION'))
+        self.assertEqual('https://forgejo.infra.example.com/', config['server']['ROOT_URL'])
+
     def test_unbounded_backup_budget_is_rejected(self):
         values = self.settings()
         values["forgejo_backup_timeout_seconds"] = 7200
@@ -85,16 +95,6 @@ class InputTests(unittest.TestCase):
     def test_missing_protected_input_is_rejected_without_disclosure(self):
         values = self.settings()
         del values["forgejo_secret_key"]
-        self.assertNotEqual(0, self.evaluate(values))
-
-    def test_wildcard_proxy_source_is_rejected(self):
-        values = self.settings()
-        values["forgejo_proxy_source"] = "*"
-        self.assertNotEqual(0, self.evaluate(values))
-
-    def test_invalid_ipv4_proxy_source_is_rejected(self):
-        values = self.settings()
-        values["forgejo_proxy_source"] = "999.0.0.1/32"
         self.assertNotEqual(0, self.evaluate(values))
 
     def test_newline_in_protected_single_line_input_is_rejected(self):
@@ -142,7 +142,6 @@ class InputTests(unittest.TestCase):
             values["forgejo_helper_root"] = str(state)
             manifest = {"schema": 1, "allocation": values["forgejo_foundation_account"],
                 "hostname": values["forgejo_hostname"], "backend_port": values["forgejo_backend_port"],
-                "proxy_source": values["forgejo_proxy_source"],
                 "health_timeout_seconds": values["forgejo_health_timeout_seconds"],
                 "image": values["forgejo_image"], "postgres_image": values["forgejo_postgres_image"],
                 "rclone_image": values["forgejo_rclone_image"],
