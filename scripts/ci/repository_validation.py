@@ -10,6 +10,9 @@ import sys
 import tomllib
 from pathlib import Path
 from typing import NamedTuple, Sequence
+from urllib.parse import unquote, urlsplit
+
+from markdown_it import MarkdownIt
 
 
 APACHE_LICENSE_SIGNATURES = (
@@ -23,11 +26,15 @@ EXACT_TOOL_VERSION_PATTERN = re.compile(
 BOOTSTRAP_RECOVERY = "run mise run bootstrap"
 TRUST_POLICY_EXCLUDES_OPTION = "trust_policy_excludes"
 DOCUMENT_SUFFIXES = {
-    ".md", ".markdown", ".mdx", ".rst", ".txt", ".text",
-    ".adoc", ".asciidoc", ".org",
+    ".md", ".markdown", ".mdown", ".mkd", ".mdx", ".rst", ".txt", ".text",
+    ".adoc", ".asciidoc", ".org", ".html", ".htm", ".rtf", ".pdf",
+    ".doc", ".docx", ".odt",
 }
-# Root policy and its thin, tool-consumed adapter are the only current exceptions.
-DOCUMENT_EXCEPTIONS = {"AGENTS.md", "CLAUDE.md"}
+# Explicit policy, adapter, and legal records; no speculative functional paths.
+DOCUMENT_EXCEPTIONS = {
+    "AGENTS.md", "CLAUDE.md", "LICENSE", "LICENSE.md", "LICENSE.txt",
+    "NOTICE", "NOTICE.md", "NOTICE.txt",
+}
 
 
 class TrustPolicyExceptionIdentity(NamedTuple):
@@ -58,6 +65,42 @@ def validate_document_path(file_path: Path, repo_root: Path) -> list[str]:
     if re.fullmatch(r"docs/specs/[0-9]{3}-[a-z0-9]+(?:-[a-z0-9]+)*\.md", name):
         return []
     return [f"{name}: general documentation belongs in README.md or docs/specs/"]
+
+
+def validate_document(file_path: Path, repo_root: Path) -> list[str]:
+    errors = validate_document_path(file_path, repo_root)
+    if errors or file_path.suffix != ".md":
+        return errors
+    name = relative_name(file_path, repo_root)
+    if file_path.is_symlink():
+        return [f"{name}: cannot check links through a document symlink"]
+    try:
+        content = file_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return [f"{name}: cannot read Markdown"]
+    for block in MarkdownIt().parse(content):
+        for token in block.children or []:
+            target = token.attrGet("href") if token.type == "link_open" else (
+                token.attrGet("src") if token.type == "image" else None
+            )
+            if target is None:
+                continue
+            url = urlsplit(target)
+            # File/directory existence only; no network or heading/prose checks.
+            if url.scheme or url.netloc or not url.path:
+                continue
+            destination = file_path.parent / unquote(url.path)
+            if not destination.exists():
+                errors.append(f"{name}: missing local link target: {target}")
+    return errors
+
+
+def documentation_validation_errors(repo_root: Path) -> list[str]:
+    return [
+        error
+        for file_path in discover_repository_files(repo_root)
+        for error in validate_document(file_path, repo_root)
+    ]
 
 
 def validate_json(file_path: Path, repo_root: Path) -> list[str]:
@@ -267,7 +310,7 @@ def validate_mise_lock(repo_root: Path) -> list[str]:
 def repository_validation_errors(repo_root: Path) -> list[str]:
     errors: list[str] = []
     for file_path in discover_repository_files(repo_root):
-        errors.extend(validate_document_path(file_path, repo_root))
+        errors.extend(validate_document(file_path, repo_root))
         if file_path.suffix == ".json":
             errors.extend(validate_json(file_path, repo_root))
         elif file_path.suffix == ".toml":
@@ -282,11 +325,18 @@ def repository_validation_errors(repo_root: Path) -> list[str]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate repository structure")
     parser.add_argument("root", nargs="?", type=Path, default=Path.cwd())
+    parser.add_argument(
+        "--documents-only", action="store_true",
+        help="check documentation locations and local Markdown link targets only",
+    )
     arguments = parser.parse_args(argv)
     repo_root = arguments.root.resolve()
 
     try:
-        errors = repository_validation_errors(repo_root)
+        errors = (
+            documentation_validation_errors(repo_root)
+            if arguments.documents_only else repository_validation_errors(repo_root)
+        )
     except subprocess.CalledProcessError:
         print("error: repository file discovery failed", file=sys.stderr)
         return 1

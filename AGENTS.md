@@ -6,15 +6,24 @@ imports this file.
 ## Repository context
 
 This repository manages off-cluster homelab hosts with Ansible. Production
-contains active hosts, and staging is an explicit future boundary. Start with
-the task, applicable policy, relevant source, and tests. Load only needed sections
-of owning specifications; expand for cross-component constraints or uncertainty.
+contains active hosts, and staging is an explicit future boundary.
 
-This root file is the sole agent-policy surface. Supporting documentation
-supplies procedure, not competing instructions. Current repository policy and
-source state take precedence over historical specifications, transient plans,
-prior conversation context, and assumptions. Necessary tool adapters remain thin;
-do not duplicate policy or introduce nested agent-policy files.
+Before changing a subsystem, start with the task, this policy, relevant
+implementation, and associated tests. Read only needed sections of owning
+specifications; expand into callers, dependencies, and related specifications
+for actual cross-component constraints or uncertainty. Do not preload whole
+documentation trees or a README/guide/spec bundle. This root file is the sole
+repository-policy surface; supporting documents provide procedures, not
+competing instructions. Current
+repository policy, documentation, and source state take precedence over
+historical specifications, transient plans, prior conversation context, and
+assumptions.
+
+Repository artifact and communication rules override agent-skill defaults and
+older issue/spec instructions. Preserve real requirements, not obsolete demands
+for guides, committed plans, or exhaustive status reports. Investigate
+implementation/spec discrepancies instead of silently changing requirements to
+match code.
 
 ## Communication style
 
@@ -22,21 +31,37 @@ Communicate with the operator in clear, concrete English.
 
 Apply principles inspired by ASD-STE100 Simplified Technical English:
 
-- Use plain language when it preserves the same meaning.
+- Use plain language when doing so preserves the same meaning.
 - Avoid unnecessary jargon and abstract terminology.
 - Prefer concrete descriptions of behavior over abstract labels.
-- Reuse terminology established in the conversation or repository.
-- Explain specialized or repository-specific terms when they may be unclear.
-- Use concrete examples when they clarify an abstract concept.
+- Reuse terminology already established in the conversation or task.
+- Provide relevant context when needed to explain an implementation or recommendation.
+- Briefly explain specialized or project-specific terms when their meaning may not be
+  obvious from context.
+- Prefer concrete examples when they help explain an abstract concept.
 - Present sequential steps in their logical order.
-- Break up complex sentences when doing so improves clarity.
+- Break up long or complex sentences when doing so improves clarity.
 - Prefer active voice.
-- Lead with the outcome and omit incidental process detail.
-- Be concise without removing important technical content.
+- Be concise and direct. Avoid unnecessary verbosity while keeping important details.
+- Lead with the outcome. Omit repetition and incidental process detail. Expand only when
+  requested or necessary.
+- Simplify the wording, not the technical content.
 
-Write for a software engineer who may be unfamiliar with the specific tool,
-subsystem, or domain. Do not rewrite literal APIs, identifiers, commands,
-configuration fields, or quoted text solely to satisfy these style rules.
+Write for a software engineer who may be unfamiliar with the specific tool, subsystem, or
+domain.
+
+Do not rewrite literal APIs, identifiers, commands, configuration fields, or quoted text
+solely to satisfy these style rules.
+
+Apply these communication rules to issue bodies, PR descriptions, and comments.
+
+Post comments only when they add a material finding, decision, changed blocker,
+requested answer, or acceptance outcome. Skip routine progress, duplicate
+information, and session-end recaps.
+
+Write for readers without the agent conversation. Explain the problem, outcome,
+and necessary rationale; link retrievable evidence instead of repeating it.
+Preserve important decisions and authorization history.
 
 ## Git and worktrees
 
@@ -157,22 +182,45 @@ configuration fields, or quoted text solely to satisfy these style rules.
 ## Documentation
 
 - Documentation is not a default deliverable. Most fixes, refactors, dependency
-  updates, and implementation-only schema changes need no prose update.
+  changes, and implementation-only schema changes need no prose update.
 - General documentation belongs only in root `README.md` and `docs/specs/`.
-  Do not add nested READMEs, docs indexes, guides, references, runbooks,
+  Do not create nested READMEs, `docs/README.md`, guides, references, runbooks,
   contribution manuals, archives, or substitute documentation categories.
-  Root `AGENTS.md` is the policy exception; necessary adapters remain thin.
-- Preserve functional skills, prompts, machine-consumed assets, fixtures, and
-  required third-party licensing/provenance. Exceptions must be narrow and
-  justified by actual consumers, not a way to disguise general documentation.
-- Source, schemas, configuration, and command help own exact implementation
-  facts. Do not copy versions, field catalogs, defaults, or command inventories
-  into prose. Retain compatibility or migration reasoning that changes a contract.
-- Specs own intent, rationale, boundaries, and guarantees. Investigate source/spec
-  discrepancies; do not silently rewrite requirements to match code.
-- These artifact and communication rules override skill defaults and older
-  issue/spec instructions to create guides, committed plans, or exhaustive
-  reports. Preserve the underlying requirements and essential recovery knowledge.
+  Root `AGENTS.md` is the policy exception; do not add nested policy files.
+  Necessary thin tool adapters, functional skills/prompts/policies,
+  machine-consumed Markdown fixtures, and required provenance/licensing records
+  are distinct assets. Do not relabel general documentation to evade this rule.
+- Keep the README to purpose, current scope, bootstrap commands, and navigation.
+  Keep repository policy here; tool-specific instruction files adapt tools
+  without duplicating policy.
+- Give each documented contract or procedure one canonical home. Specifications
+  own intended behavior, rationale, boundaries, and acceptance requirements.
+  Link to the owning specification instead of repeating its contract elsewhere.
+  Code, schemas, configuration, and command help define exact implementation
+  details; explain only what those sources do not make clear.
+  Do not copy current schema revisions, field catalogs, defaults, provider/model
+  versions, or command inventories into prose. Preserve executable versioning
+  and immutable migration history.
+- Keep needed operating knowledge in the owning specification: attended steps,
+  cross-system sequencing, recovery, and interpretation of results that supported
+  code or command help cannot supply. Recovery must remain usable independently
+  of working services.
+  Include commands, prerequisites, and expected results where needed to act.
+  Add UI walkthroughs only for a demonstrated use.
+- Update documentation when a change affects its contract, procedure, or meaning.
+  A fix that restores behavior already described in a specification normally
+  needs no spec edit. When an edit is needed, limit it to the affected content
+  and preserve the surrounding design intent and rationale.
+  Internal refactoring alone does not require prose updates. Preserve useful
+  knowledge before removing duplicated text, and repair affected links.
+  As a routine procedure becomes a guarded command, keep only the instructions
+  and judgment that the command does not provide. Prompts, Markdown fixtures,
+  and provenance or licensing records are not expendable documentation.
+- Do not test documentation prose, headings, required phrases, or prescribed
+  cross-links. Review documentation content; allow mechanical Markdown lint and
+  generic link and structural path checks. Test machine-consumed examples only
+  against an independent parser or executable behavior. Functional Markdown
+  remains subject to its actual consumer checks.
 
 ## Design lifecycle
 
@@ -203,29 +251,6 @@ configuration fields, or quoted text solely to satisfy these style rules.
 - After a required rebase, rerun all validation affected by the new candidate.
 - Pull-request validation is offline and secret-free. Live verification is
   separate operator evidence and is not CI evidence.
-
-## Issue and PR communication
-
-- Post only a new decision with rationale, material finding, changed blocker or
-  dependency, answer, required operator request, or meaningful acceptance/closure
-  outcome. Skip routine activity, unchanged status, and recaps available in the
-  PR or CI. Ending a session does not require a comment.
-- Routine comments normally use 3–6 short sentences and fewer than 150 words.
-  This is a default, not a cap or template. Longer discussion must answer a real
-  question and lead with the outcome. Include the blocker, responsible actor,
-  next action, and evidence links only when relevant.
-- Retain exact versions, IDs, errors, or measurements only to identify evidence,
-  reproduce failures, explain decisions, or act safely. Distinguish implementation,
-  deployment, and native acceptance; CI is not production proof.
-- Link retrievable evidence and procedures instead of copying them. Vanished
-  `.tmp/` files are not durable handoffs; without a retained artifact, keep only
-  irreplaceable evidence in the comment. Preserve private evidence boundaries;
-  do not create documents or services to accommodate verbosity.
-- Keep issue bodies on current scope and acceptance. Read those and the latest
-  relevant status first; retrieve older discussion only as needed. Refresh owned
-  status text when useful, preserving decisions, authorization provenance, and
-  meaningful outcomes. Do not move walls of text into bodies, specs, or collapsed
-  comments.
 
 ## Completion
 
