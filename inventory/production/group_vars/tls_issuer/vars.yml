@@ -7,5 +7,5 @@ tls_automation_issuer_gid: 2010
 reverse_proxy_deferred_certificates:
   - infra
 # Supply namespace, ACME contact, listener/client networks, routes, and optional
-# Cloudflare credential through operator-managed secrets.sops.yml. The installed
-# Caddy group supplies certificate read access; do not allocate another proxy GID.
+# Cloudflare credential through operator-managed TLS and proxy *.sops.yml files.
+# The installed Caddy group supplies certificate read access; do not allocate another proxy GID.

@@ -113,6 +113,46 @@ class SopsIntegrationTests(unittest.TestCase):
         spec.loader.exec_module(validation)
         self.assertEqual([], validation.validate_encrypted_file(self.group_secret, {self.recipient}))
 
+    def test_service_files_load_together_with_shared_routes(self):
+        host = self.inventory / "host_vars" / "fixture-host"
+        self.encrypt(host / "tls.sops.yml", {"tls_automation_namespace": "infra.example.com"})
+        self.encrypt(host / "reverse-proxy.sops.yml", {"reverse_proxy_routes": [
+            {"hostname": "semaphore.infra.example.com", "backend_port": 18080,
+             "certificate_name": "infra"},
+            {"hostname": "forgejo.infra.example.com", "backend_port": 18081,
+             "certificate_name": "infra"},
+        ]})
+        self.encrypt(host / "semaphore.sops.yml", {"semaphore_database_password": "fixture-semaphore"})
+        self.encrypt(host / "forgejo.sops.yml", {
+            "forgejo_database_password": "fixture-forgejo",
+            "forgejo_hostname": "forgejo.{{ tls_automation_namespace }}",
+        })
+        with self.playbook.open("a") as output:
+            output.write("""
+    - name: Prove sibling service files share one host scope
+      ansible.builtin.assert:
+        that:
+          - tls_automation_namespace == 'infra.example.com'
+          - semaphore_database_password == 'fixture-semaphore'
+          - forgejo_database_password == 'fixture-forgejo'
+          - forgejo_hostname == 'forgejo.infra.example.com'
+          - reverse_proxy_routes | length == 2
+          - reverse_proxy_routes[0].hostname == 'semaphore.infra.example.com'
+          - reverse_proxy_routes[1].hostname == forgejo_hostname
+        quiet: true
+      no_log: true
+""")
+        result = self.play()
+        self.assertEqual(0, result.returncode, (result.stdout + result.stderr).decode())
+
+    def test_modified_service_file_mac_fails(self):
+        target = self.inventory / "host_vars" / "fixture-host" / "forgejo.sops.yml"
+        self.encrypt(target, {"forgejo_database_password": "fixture-forgejo"})
+        document = yaml.safe_load(target.read_bytes())
+        document["unexpected"] = "unauthenticated-value"
+        target.write_text(yaml.safe_dump(document))
+        self.assertNotEqual(0, self.play().returncode)
+
     def test_unavailable_identity_fails(self):
         self.env["ANSIBLE_SOPS_AGE_KEY_CMD"] = "/usr/bin/false"
         self.assertNotEqual(0, self.play().returncode)
