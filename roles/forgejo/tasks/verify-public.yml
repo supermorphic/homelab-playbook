@@ -13,7 +13,6 @@
     - {key: allocation, value: "{{ forgejo_foundation_account }}"}
     - {key: hostname, value: "{{ forgejo_hostname }}"}
     - {key: backend_port, value: "{{ forgejo_backend_port }}"}
-    - {key: proxy_source, value: "{{ forgejo_proxy_source }}"}
     - {key: health_timeout_seconds, value: "{{ forgejo_health_timeout_seconds }}"}
     - {key: image, value: "{{ forgejo_image }}"}
     - {key: postgres_image, value: "{{ forgejo_postgres_image }}"}

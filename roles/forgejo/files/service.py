@@ -8,7 +8,6 @@ from contextlib import contextmanager
 import fcntl
 import grp
 import hashlib
-import ipaddress
 import json
 import os
 from pathlib import Path
@@ -84,9 +83,6 @@ def validate_candidate(candidate: Path, allocation: dict) -> dict:
     port = manifest.get("backend_port")
     if type(port) is not int or not 1024 <= port <= 65535:
         raise ValueError("invalid backend port")
-    network = ipaddress.ip_network(manifest["proxy_source"], strict=True)
-    if network.num_addresses != 1:
-        raise ValueError("proxy trust must select exactly one address")
     patterns = {
         "image": r"codeberg[.]org/forgejo/forgejo:15[.]\d+[.]\d+-rootless@sha256:[0-9a-f]{64}",
         "postgres_image": r"docker[.]io/library/postgres:17[.]\d+@sha256:[0-9a-f]{64}",

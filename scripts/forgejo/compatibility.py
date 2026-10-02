@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import base64
-import ipaddress
 import json
 from pathlib import Path
 import re
 import secrets
-import socket
 import tempfile
 import time
 import urllib.error
@@ -40,10 +38,12 @@ class Application:
     """A synthetic instance; every resource belongs to the supplied experiment."""
 
     def __init__(self, run: Run, directory: Path, *, suffix: str = "source", auth_dir: Path | None = None,
-                 extra_environment: tuple[str, ...] = (), additional_volumes: tuple[str, ...] = ()):
+                 extra_environment: tuple[str, ...] = (), additional_volumes: tuple[str, ...] = (),
+                 access_log: bool = False):
         self.run = run
         self.directory = directory
         self.suffix = suffix
+        self.access_log = access_log
         self.pins = defaults()
         self.user = "fixture-admin"
         self.password = secrets.token_urlsafe(32)
@@ -59,9 +59,8 @@ class Application:
         self.db = run.create("container", f"{suffix}-postgres", [
             "--network", self.network, "--network-alias", "forgejo-postgres",
             "--env-file", str(self.postgres_env),
-            "--publish", "127.0.0.1::5432",
             "--volume", f"{self.database_volume}:/var/lib/postgresql/data",
-            self.pins["forgejo_postgres_image"], "postgres", "-c", "log_connections=on",
+            self.pins["forgejo_postgres_image"],
         ])
         run.wait([run.podman, "exec", self.db, "pg_isready", "-U", "postgres"])
         self.sql(database_sql(self.db_password))
@@ -91,7 +90,6 @@ class Application:
         from scripts.forgejo.runtime import ROOT
         values = {
             "forgejo_hostname": "forgejo.infra.example.com",
-            "forgejo_proxy_source": "127.0.0.1/32",
         }
         keys = {
             "database-password": self.db_password,
@@ -106,7 +104,13 @@ class Application:
         self.run.private_file(self.config, 'mirror-credential-helper.sh',
             (ROOT / 'roles/forgejo/files/mirror-credential-helper.sh').read_text()).chmod(0o700)
         template = ROOT / "roles/forgejo/templates/app.ini.j2"
-        return Template(template.read_text()).render(**values) + "\n"
+        configuration = Template(template.read_text()).render(**values) + "\n"
+        if self.access_log:
+            # Synthetic-only evidence of the application's effective client identity.
+            configuration = configuration.replace('LEVEL = Warn', 'LEVEL = Info')
+            configuration += ('LOGGER_ACCESS_MODE = console\n'
+                'ACCESS_LOG_TEMPLATE = forgejo-proxy-probe={{.Ctx.Req.URL.RawQuery}} peer={{.Ctx.RemoteHost}}\n')
+        return configuration
 
     def sql(self, text: str) -> str:
         return self.run.command([
@@ -121,8 +125,9 @@ class Application:
         ]).stdout
 
     def request(self, path: str, *, method: str = "GET", payload: dict | None = None,
-                password: str | None = None):
+                password: str | None = None, extra_headers: dict | None = None):
         headers = {"Content-Type": "application/json"}
+        headers.update(extra_headers or {})
         credential = f"{self.user}:{password or self.password}".encode()
         headers["Authorization"] = "Basic " + base64.b64encode(credential).decode()
         data = json.dumps(payload).encode() if payload is not None else None
@@ -172,7 +177,7 @@ def run() -> int:
     phase = "create application"
     try:
         with tempfile.TemporaryDirectory(prefix="forgejo-compat-", dir=temp_root()) as scratch:
-            application = Application(experiment, Path(scratch))
+            application = Application(experiment, Path(scratch), access_log=True)
             phase = "database role privileges"
             flags = application.sql("SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication "
                                     "FROM pg_roles WHERE rolname='forgejo';")
@@ -192,6 +197,8 @@ def run() -> int:
             phase = "persistent repository and application state"
             repo = application.request("/user/repos", method="POST",
                 payload={"name": "compatibility", "auto_init": True, "private": True})
+            if repo['clone_url'] != f'https://forgejo.infra.example.com/{application.user}/compatibility.git':
+                raise RuntimeError('repository clone URL differs from the canonical HTTPS URL')
             application.request(f"/repos/{application.user}/compatibility/issues",
                                 method="POST", payload={"title": "persisted fixture"})
             before = application.request(f"/repos/{application.user}/compatibility/branches")
@@ -211,8 +218,9 @@ def run() -> int:
                                 "git", "--version"])
             experiment.command([experiment.podman, "exec", application.db, "/bin/sh", "-c",
                 "pg_dump --version && pg_restore --version && command -v tar && command -v gzip && command -v sha256sum"])
-            phase = "rootless forwarded client identity"
-            probe_forwarded_source(experiment, application, Path(scratch))
+            phase = "forwarded-header isolation"
+            from scripts.forgejo.proxy import verify_headers
+            verify_headers(experiment, application)
             phase = 'native HTTPS nightly mirror experiment'
             from scripts.forgejo.mirror import run_fixture
             run_fixture(experiment)
@@ -233,28 +241,3 @@ def temp_root() -> Path:
     directory = ROOT / ".tmp/forgejo"
     directory.mkdir(parents=True, exist_ok=True)
     return directory
-
-
-def probe_forwarded_source(experiment: Run, application: Application, directory: Path):
-    """Measure rootless forwarding; the production address is an operator input."""
-    port = experiment.command([experiment.podman, "port", application.db, "5432/tcp"]).stdout.strip().rsplit(":", 1)[-1]
-    deadline = time.monotonic() + 30
-    while True:
-        try:
-            with socket.create_connection(("127.0.0.1", int(port)), timeout=5) as connection:
-                connection.sendall(b"0000")
-            break
-        except OSError:
-            if time.monotonic() >= deadline:
-                raise RuntimeError("forwarding probe readiness failed") from None
-            time.sleep(1)
-    while True:
-        logs = experiment.command([experiment.podman, "logs", application.db])
-        source = re.findall(r"connection received: host=([0-9.]+) port=", logs.stdout + logs.stderr)
-        if source:
-            address = str(ipaddress.ip_address(source[-1]))
-            break
-        if time.monotonic() >= deadline:
-            raise RuntimeError("forwarded client identity was not recorded")
-        time.sleep(0.1)
-    experiment.private_file(directory, "forwarded-source.txt", address + "\n")

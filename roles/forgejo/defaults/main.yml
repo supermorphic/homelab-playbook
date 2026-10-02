@@ -9,8 +9,6 @@ forgejo_postgres_major: '17'
 forgejo_hostname: ''
 forgejo_backend_port: 18081
 forgejo_certificate_name: infra
-# Exact source observed through the selected host's rootless forwarding path.
-forgejo_proxy_source: ''
 forgejo_database_name: forgejo
 forgejo_database_user: forgejo
 forgejo_state_root: /var/lib/svc-forgejo/forgejo

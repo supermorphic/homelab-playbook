@@ -30,7 +30,8 @@ LFS_JWT_SECRET_URI = file:/etc/gitea/lfs-jwt-secret
 INSTALL_LOCK = true
 SECRET_KEY_URI = file:/etc/gitea/secret-key
 INTERNAL_TOKEN_URI = file:/etc/gitea/internal-token
-REVERSE_PROXY_TRUSTED_PROXIES = {{ forgejo_proxy_source }}
+; Caddy owns HTTPS ingress. Use the connection peer, not forwarded client identity.
+REVERSE_PROXY_LIMIT = 0
 DISABLE_GIT_HOOKS = true
 
 [service]
