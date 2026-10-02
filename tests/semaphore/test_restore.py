@@ -34,6 +34,19 @@ def load_fixture():
 
 
 class FixtureContractTests(unittest.TestCase):
+    def test_http_client_reuses_application_network_namespace(self) -> None:
+        fixture = load_fixture()
+        run = fixture.Fixture("semaphore-20260910T031500Z-Ab12", Path("unused"))
+        with tempfile.TemporaryDirectory() as directory:
+            run.root = Path(directory)
+            run.command = mock.Mock()
+            run._curl("http://source-semaphore:3000/api/ping")
+
+        command = run.command.call_args.args
+        self.assertEqual(f"container:{run.application}", command[command.index("--network") + 1])
+        self.assertIn("--cap-drop=all", command)
+        self.assertIn("--security-opt=no-new-privileges", command)
+
     def test_fixture_preregisters_owned_oneshot_before_ambiguous_failure(self) -> None:
         fixture_module = load_fixture()
         run = fixture_module.Fixture(
@@ -455,6 +468,18 @@ class RecordingRunner:
 
 
 class RestoreOrchestrationTests(RestorePlanTests):
+    def test_http_client_reuses_application_network_namespace(self) -> None:
+        runner = RecordingRunner(self.restore, b"custom archive")
+        experiment = self.restore.RestoreExperiment(self.options(), runner)
+        experiment._curl("http://semaphore:3000/api/ping")
+
+        command, _ = runner.calls[-1]
+        self.assertEqual(
+            f"container:{experiment.application}", command[command.index("--network") + 1]
+        )
+        self.assertIn("--cap-drop=all", command)
+        self.assertIn("--security-opt=no-new-privileges", command)
+
     def test_ambiguous_oneshot_failure_is_preowned_and_cleaned(self) -> None:
         options = self.options()
         runner = RecordingRunner(self.restore, b"custom archive")

@@ -410,8 +410,9 @@ class RestoreExperiment:
         mounts: list[str] = []
         if self.auth_config.is_file():
             mounts = ["-v", f"{self.auth_config.resolve()}:/restore-auth.conf:ro"]
+        # Avoid DNS endpoint churn while Semaphore runs asynchronous Git tasks.
         return self._podman(
-            "run", "--rm", "--interactive", "--network", self.network,
+            "run", "--rm", "--interactive", "--network", f"container:{self.application}",
             "--security-opt=no-new-privileges", "--cap-drop=all",
             "--user", "0:0",
             *mounts,
