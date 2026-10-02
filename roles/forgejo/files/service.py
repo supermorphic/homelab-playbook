@@ -236,7 +236,7 @@ def execute(argv: list[str], *, input_text: str | None = None, check: bool = Tru
             timeout: int = 120, environment: dict | None = None):
     try:
         result = subprocess.run(argv, input=input_text, capture_output=True, text=True,
-                                check=False, timeout=timeout, env=environment)
+                                check=False, timeout=timeout, env=environment, cwd="/")
     except (OSError, subprocess.TimeoutExpired) as error:
         raise RuntimeError(f"{Path(argv[0]).name} could not complete") from error
     if check and result.returncode:
