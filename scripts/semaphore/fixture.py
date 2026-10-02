@@ -266,7 +266,8 @@ class Fixture:
         mounts: list[str] = []
         if self.cookie_config and self.cookie_config.exists():
             mounts = ["-v", f"{self.cookie_config}:/fixture-auth.conf:ro"]
-        return self.podman("run", "--rm", "--interactive", "--network", self.network,
+        # Avoid DNS endpoint churn while Semaphore runs asynchronous Git tasks.
+        return self.podman("run", "--rm", "--interactive", "--network", f"container:{self.application}",
                            "--security-opt=no-new-privileges", "--cap-drop=all", "--user", "0:0",
                            *mounts, "--entrypoint", "/usr/bin/curl", self.restore.SEMAPHORE_IMAGE,
                            "--silent", "--show-error", *args, input_text=input_text, check=check)

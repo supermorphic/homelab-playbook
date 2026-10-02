@@ -329,7 +329,12 @@ create fixtures, produce backups, synchronize mirrors, rotate secrets or restart
 services. Missing first-backup evidence is reported as incomplete acceptance;
 verification does not manufacture that evidence.
 
-Document prerequisites and diagnosis in `playbooks/forgejo/README.md`.
+This spec owns independent recovery prerequisites. Discover exact attended
+restore inputs with `mise run test:forgejo -- restore --help` and
+[the restore workflow](../../scripts/forgejo/restore.py). Use bounded service-user
+journals through authorized access to distinguish capture, recovery, transfer and
+mirror failures; keep protected settings and upstream errors out of public logs.
+Resolve the failed precondition before authorizing reconciliation.
 Keep all important procedures usable with this repository from GitHub, independent
 of Forgejo, its runners, Semaphore and the managed cluster.
 
@@ -399,7 +404,7 @@ consumer repository Forgejo-authoritative or claim CI parity for future runners.
 - [Podman foundation](006-podman-quadlet-foundation.md)
 - [Shared private reverse proxy](008-shared-private-reverse-proxy.md)
 - [Semaphore service and recovery pattern](009-semaphore-infrastructure-automation.md)
-- [Repository command lifecycle](../guides/repository-command-lifecycle.md)
+- [Repository command lifecycle](001-agentic-development-modernization.md#repository-command-lifecycle)
 - [Forgejo LTS releases](https://forgejo.org/releases/15.x/)
 - [Upstream rootless container deployment](https://forgejo.org/docs/v15.0/admin/installation/docker/)
 - [Database recommendations](https://forgejo.org/docs/v15.0/admin/setup/recommendations/#databasedb_type)

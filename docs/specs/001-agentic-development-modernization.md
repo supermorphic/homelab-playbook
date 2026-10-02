@@ -6,7 +6,12 @@ The modernization audit and decisions below provide historical context.
 Later specifications and current source define changed subsystems. In particular, [Specification 005](005-sops-age-secrets.md)
 supersedes the Ansible Vault design with SOPS and age. Vault-specific inventory
 examples and scope statements below are historical unless restated by a later
-specification.
+specification. Original design and migration sections remain as history, not
+instructions to repeat completed work. Root [AGENTS.md](../../AGENTS.md) owns
+current execution and documentation policy: only root README and specs hold
+general documentation, plans remain ignored under `.tmp/`, and prose updates
+are conditional on a design change. Source and command help own exact current
+facts; historical examples below are not command inventories to synchronize.
 
 ## Purpose
 
@@ -364,7 +369,7 @@ external mutation repeats current-state preconditions, requires operator authori
 and a target-bound confirmation, and reads back its result. An observational
 command does not gain an accidental-execution confirmation merely for symmetry.
 
-The current public command families therefore use:
+The original public command families were:
 
 ```text
 validate:fast                 focused local repository validation
@@ -382,6 +387,18 @@ confirmation variable—owns authority to execute them against a target.
 
 An approved lifecycle rename updates every repository-owned consumer atomically.
 The former `check:fast` and `check:ansible` tasks are removed without aliases.
+
+A `cleanup` operation removes only its exactly identified owned target and
+verifies absence. An aggregate inherits its components' effects; bounded tests
+inside validation retain their ownership and cleanup requirements. A dry-run
+exercises validation without persisting the intended mutation; it grants no
+execution authority. Standalone preflight exists only when independently useful;
+repeat live preconditions immediately before consequential mutation.
+
+Invalid usage or unsupported dispatch returns status `2`; runtime failures return
+`1`, preserving signal statuses when practical. Expected operator errors use
+concise stderr without a traceback. Preserve primary and cleanup outcomes
+separately; cleanup failure fails the experiment without hiding the first failure.
 
 ## Validation architecture
 

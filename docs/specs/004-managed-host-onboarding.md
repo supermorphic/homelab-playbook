@@ -47,9 +47,9 @@ does not deploy a container runtime or an application.
 10. Pull-request validation remains offline and secret-free. Live provisioning
     occurs only after merge and only after explicit authorization for the
     exact playbook, action, inventory, host limit, and arguments.
-11. The source-adjacent OS README describes the playbook subsystem. The
-    goal-oriented setup and operator procedure lives in
-    `docs/guides/managed-host-onboarding.md`, and `docs/README.md` indexes it.
+11. This spec owns the minimum independent onboarding procedure. Root README
+    supplies topic discovery; the gateway and source own exact current inputs.
+    Issue #61 retires the former guide, docs index, and subsystem README.
 
 ## Scope
 
@@ -67,9 +67,8 @@ does not deploy a container runtime or an application.
   `os_managed` baseline-input boundary;
 - migration of OS playbooks and their complete-baseline test composition from
   `servers` to `os_managed`;
-- a reusable managed-host guide with `nuc4` as the current example, including
-  exact workstation commands for inventory preparation, inspection, initial
-  provisioning, and live confirmation; and
+- a reusable minimum onboarding procedure in this spec, with `nuc4` as the
+  example and canonical workflow discovery for exact commands; and
 - offline contract, inventory, lint, and Molecule coverage.
 
 ### Excluded
@@ -108,10 +107,16 @@ distinct key in the complete desired key set; private keys are never shared.
 After reconciliation, OpenSSH accepts only the authoritative keys for the
 `ansible` account and rejects password and direct root login.
 
-The [managed host onboarding guide](../guides/managed-host-onboarding.md)
-contains the commands that establish and verify these prerequisites. Keeping
-the procedure in the guide prevents the specification and operator workflow
-from drifting independently.
+Keep trusted Debian rescue media and boot-menu access available. The workstation
+needs its Git checkout, SSH key and independently recoverable SOPS identity even
+when the managed host and its services are unavailable.
+
+Use a named `~/.ssh/config` entry selecting `User ansible`, the dedicated key,
+and `IdentitiesOnly yes`. Through installer/console authority, establish the sudo
+policy `ansible ALL=(ALL:ALL) NOPASSWD: ALL` and validate it with `visudo -c`
+before locking the account password. Inspect `passwd --status ansible`. A new
+named SSH connection must return `ansible` for `id -un` and `0` for
+`sudo -n id -u`; keep independent recovery available while proving access.
 
 ## Inventory design
 
@@ -217,8 +222,10 @@ identity sources and defaults to the repository Keychain helper. Normal playbook
 commands use the configured `community.sops` loader and the same isolation
 without an extra secret flag. The canonical runner still rejects SSH and sudo
 password prompts for mutating OS operations because those would violate the
-established key-only, passwordless-sudo authority boundary. The onboarding and
-SOPS guides own the exact commands.
+established key-only, passwordless-sudo authority boundary. The gateway owns
+current syntax; Specification 005 owns identity recovery. New protected paths
+require a reviewed change to `.sops.yaml` and the static validation scope before
+operator enrollment; creating an unregistered file is not a setup shortcut.
 
 Future controllers use separate age identities and override
 `ANSIBLE_SOPS_AGE_KEY_CMD` with their controller-owned retrieval command. They
@@ -269,7 +276,7 @@ maintain` to finish incomplete onboarding.
 
 After provisioning, the operator confirms the effective hostname, the
 deployment-local timezone, and non-interactive root access through sudo. The
-onboarding guide owns the exact live commands and expected output. These
+minimum onboarding sequence below gives the required observations. These
 operator observations complement the playbook's effective-state verifier; they
 do not replace the playbook result or become pull-request CI evidence.
 
@@ -320,9 +327,8 @@ Offline evidence includes:
 - the complete provisioning role order applies identity before baseline
   reconciliation and verifies it afterward;
 - no new target package or Galaxy dependency is introduced; and
-- `docs/guides/managed-host-onboarding.md` gives the exact protected-input and
-  onboarding commands while the source-adjacent OS README remains a brief
-  subsystem description.
+- the minimum onboarding procedure remains usable from an independent
+  workstation, with protected-input recovery owned by Specification 005.
 
 Molecule may use synthetic hostnames, the `Etc/UTC` timezone, and generated
 disposable SSH keys. It must not read the production protected file or contact
@@ -343,6 +349,36 @@ mise run ci:changed
 The change-directed classifier may require additional registered validation.
 It sets the minimum depth; implementation may escalate to `mise run ci` but may
 not skip required work.
+
+## Minimum onboarding sequence
+
+After controller bootstrap and identity setup, obtain authorization for each
+exact live action, inventory, host limit, and extra arguments. These examples
+use the existing `nuc4` alias; substitute the approved target for another host.
+
+1. Prove manual key-only access and `sudo -n` as above. Optionally collect the
+   allowlisted non-privileged snapshot with
+   `mise run playbook -- os inspect production --limit nuc4`. Inspection is not
+   a baseline-health assertion.
+2. Reconfirm the exact mutation and run
+   `mise run playbook -- os provision production --limit nuc4`. Provisioning
+   processes one host at a time, updates, reconciles identity/security,
+   configures native updates, reboots if needed, reconnects, and verifies.
+3. After success, observe `hostnamectl --static`,
+   `timedatectl show --property=Timezone --value`, and `sudo -n id -u` through
+   the named SSH connection. Results must match the approved hostname/timezone
+   and root UID. These observations are live evidence, never PR CI evidence.
+
+Provisioning already includes full update and verification. Later
+`mise run playbook -- os verify production --limit nuc4` observes effective
+baseline drift without repair, while `os maintain` performs the periodic full
+package update without reconciling identity/security policy. Native daily
+security updates remain independent. Exact options and gateway rejection rules
+belong to [the playbook gateway](../../scripts/playbook.sh).
+
+Rotate SSH access by adding the replacement, proving a new connection and sudo,
+then removing the old key in a later authorized reconciliation. Never remove
+working access based on an untested replacement.
 
 ## Historical implementation sequence
 
@@ -367,8 +403,9 @@ not skip required work.
    authorization immediately before running `os provision` against production
    with `--limit nuc4 --ask-vault-pass`.
 
-Steps 6 and 9 record the original Vault-based rollout. They do not describe the
-current secret or command interface.
+Steps 6 and 9 record the original Vault-based rollout; step 7 records the retired
+documentation layout. These are historical decisions, not current secret,
+command, or documentation instructions.
 
 ## Acceptance criteria
 
@@ -400,6 +437,5 @@ Issue #2 is complete when:
 12. after merge and fresh explicit authorization, `os provision` completes for
     `nuc4`, its included verifier passes, and the operator confirms effective
     hostname, timezone, key-only login, and passwordless sudo.
-13. the managed-host guide owns the reusable operator procedure, uses `nuc4`
-    only as the current example, and the source-adjacent OS README remains a
-    concise description of the playbook subsystem.
+13. this spec retains the reusable independent onboarding procedure, using
+    `nuc4` only as the example; no separate guide or subsystem README is required.

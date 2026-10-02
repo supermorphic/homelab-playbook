@@ -51,6 +51,43 @@ reported. Recovery restores that encrypted backup into a new Mac's login
 Keychain. Keep the backup and its passphrase independently recoverable without
 Semaphore, the cluster, or the original workstation.
 
+After bootstrap, create a new identity with
+`mise run secrets:bootstrap -- --backup /outside/repository/operator.age`, or
+restore the existing identity on a replacement Mac with
+`mise run secrets:bootstrap -- --restore /outside/repository/operator.age`.
+These are alternatives. Enter the passphrase only at the prompt and confirm the
+reported public recipient matches an authorized recipient before relying on access.
+
+## Controller identities
+
+Each automation controller has its own identity and only the inventory scope it
+needs. `ANSIBLE_SOPS_AGE_KEY_CMD` selects its Ansible retrieval command;
+`SOPS_AGE_KEY_CMD` selects retrieval for direct SOPS operations. Setting either
+does not grant access: the public recipient must also be enrolled and existing
+file keys rewrapped. Never give a controller the workstation identity.
+
+[Semaphore](009-semaphore-infrastructure-automation.md) uses a private socket
+adapter that returns one bounded identity response directly into SOPS. A host
+systemd service decrypts the enrolled credential; neither routine jobs nor the
+adapter use a plaintext key file. The role does not create, inspect or replace
+the live identity.
+
+For separately authorized enrollment, establish root-owned private
+`/etc/semaphore` on the selected host. Pipe the dedicated identity from its
+approved protected source into:
+
+```sh
+sudo systemd-creds encrypt --with-key=host --name=semaphore-age - \
+  /etc/semaphore/controller-age.cred
+```
+
+Keep the credential root-owned, mode `0600`. Never supply the identity in shell
+arguments, a here-document or temporary file. Keep the original identity in
+independent protected recovery storage: the encrypted host credential alone is
+not portable. A replacement host must enroll that same identity under its own
+host key before the socket adapter starts. Verify socket ownership and selected
+host enforcement before enabling controller jobs.
+
 ## Recipients and encryption
 
 `.sops.yaml` selects inventory `*.sops.yml` files and encrypts every scalar value,

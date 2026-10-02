@@ -227,6 +227,7 @@ dev = [
     { name = "ansible-core" },
     { name = "ansible-lint" },
     { name = "codespell" },
+    { name = "markdown-it-py" },
     { name = "molecule" },
     { name = "pyyaml" },
     { name = "yamllint" },
@@ -234,6 +235,7 @@ dev = [
 ]
 fast = [
     { name = "codespell" },
+    { name = "markdown-it-py" },
     { name = "yamllint" },
     { name = "zizmor" },
 ]
@@ -253,6 +255,7 @@ dev = [
     { name = "ansible-core", specifier = "==2.21.3" },
     { name = "ansible-lint", specifier = "==26.8.0" },
     { name = "codespell", specifier = "==2.4.3" },
+    { name = "markdown-it-py", specifier = "==4.2.0" },
     { name = "molecule", specifier = "==26.6.0" },
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "yamllint", specifier = "==1.38.0" },
@@ -260,6 +263,7 @@ dev = [
 ]
 fast = [
     { name = "codespell", specifier = "==2.4.3" },
+    { name = "markdown-it-py", specifier = "==4.2.0" },
     { name = "yamllint", specifier = "==1.38.0" },
     { name = "zizmor", specifier = "==1.29.0" },
 ]

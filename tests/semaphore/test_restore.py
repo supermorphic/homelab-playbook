@@ -34,6 +34,19 @@ def load_fixture():
 
 
 class FixtureContractTests(unittest.TestCase):
+    def test_http_client_reuses_application_network_namespace(self) -> None:
+        fixture = load_fixture()
+        run = fixture.Fixture("semaphore-20260910T031500Z-Ab12", Path("unused"))
+        with tempfile.TemporaryDirectory() as directory:
+            run.root = Path(directory)
+            run.command = mock.Mock()
+            run._curl("http://source-semaphore:3000/api/ping")
+
+        command = run.command.call_args.args
+        self.assertEqual(f"container:{run.application}", command[command.index("--network") + 1])
+        self.assertIn("--cap-drop=all", command)
+        self.assertIn("--security-opt=no-new-privileges", command)
+
     def test_fixture_preregisters_owned_oneshot_before_ambiguous_failure(self) -> None:
         fixture_module = load_fixture()
         run = fixture_module.Fixture(
@@ -455,6 +468,39 @@ class RecordingRunner:
 
 
 class RestoreOrchestrationTests(RestorePlanTests):
+    def test_success_waits_for_buffered_task_output(self) -> None:
+        runner = RecordingRunner(self.restore, b"custom archive")
+        response = runner.curl_response
+        outputs = iter(["[]", '[{"task_id": 2, "output": "RECOVERY_CREDENTIAL_ACCEPTED"}]'])
+
+        def delayed_output(command, input_text):
+            if command[-1].endswith("/tasks/2/output"):
+                return next(outputs)
+            return response(command, input_text)
+
+        runner.curl_response = delayed_output
+        with mock.patch.object(self.restore.time, "sleep"):
+            self.restore.RestoreExperiment(self.options(), runner).run()
+
+    def test_success_without_expected_output_still_fails(self) -> None:
+        runner = RecordingRunner(self.restore, b"custom archive")
+        runner.api_responses["/api/project/1/tasks/2/output"] = []
+        with mock.patch.object(self.restore.time, "sleep"):
+            with self.assertRaisesRegex(self.restore.RestoreFailure, "expected response"):
+                self.restore.RestoreExperiment(self.options(), runner).run()
+
+    def test_http_client_reuses_application_network_namespace(self) -> None:
+        runner = RecordingRunner(self.restore, b"custom archive")
+        experiment = self.restore.RestoreExperiment(self.options(), runner)
+        experiment._curl("http://semaphore:3000/api/ping")
+
+        command, _ = runner.calls[-1]
+        self.assertEqual(
+            f"container:{experiment.application}", command[command.index("--network") + 1]
+        )
+        self.assertIn("--cap-drop=all", command)
+        self.assertIn("--security-opt=no-new-privileges", command)
+
     def test_ambiguous_oneshot_failure_is_preowned_and_cleaned(self) -> None:
         options = self.options()
         runner = RecordingRunner(self.restore, b"custom archive")

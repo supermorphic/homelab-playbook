@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import os
 import subprocess
 import tempfile
@@ -50,6 +52,143 @@ class RepositoryValidationTests(unittest.TestCase):
         errors = repository_validation.validate_json(file_path, self.repo_root)
 
         self.assertEqual([], errors)
+
+    def test_repository_guard_allows_document_owners_and_functional_assets(self) -> None:
+        subprocess.run(["git", "init", "--quiet"], cwd=self.repo_root, check=True)
+        self.write("LICENSE", "Apache License\nVersion 2.0, January 2004\n")
+        self.write(".mise.toml", "[tools]\n")
+        self.write("mise.lock", "[tools]\n")
+        for name in (
+            "README.md",
+            "AGENTS.md",
+            "CLAUDE.md",
+            "LICENSE.md",
+            "LICENSE.txt",
+            "NOTICE",
+            "NOTICE.md",
+            "NOTICE.txt",
+            "docs/specs/011-example.md",
+            "roles/example/templates/config.j2",
+        ):
+            self.write(name, "fixture\n")
+
+        self.assertEqual(
+            [], repository_validation.repository_validation_errors(self.repo_root)
+        )
+
+    def test_repository_guard_rejects_unsanctioned_document_paths(self) -> None:
+        subprocess.run(["git", "init", "--quiet"], cwd=self.repo_root, check=True)
+        self.write("LICENSE", "Apache License\nVersion 2.0, January 2004\n")
+        self.write(".mise.toml", "[tools]\n")
+        self.write("mise.lock", "[tools]\n")
+        for name in (
+            "docs/README.md",
+            "roles/example/README.md",
+            "nested/AGENTS.md",
+            "docs/guides/usage.md",
+            "CONTRIBUTING.md",
+            "runbook.rst",
+            "notes.txt",
+            "archive.adoc",
+            "notes.markdown",
+            "notes.mdx",
+            "notes.org",
+            "notes.text",
+            "notes.asciidoc",
+            "notes.MD",
+            "notes.mdown",
+            "notes.mkd",
+            "notes.html",
+            "notes.htm",
+            "notes.rtf",
+            "notes.pdf",
+            "notes.doc",
+            "notes.docx",
+            "notes.odt",
+            "nested/LICENSE.md",
+            "nested/NOTICE.txt",
+            "docs/specs/archive/011-example.md",
+            "docs/specs/README.md",
+        ):
+            with self.subTest(path=name):
+                file_path = self.write(name, "fixture\n")
+                errors = repository_validation.repository_validation_errors(self.repo_root)
+                self.assertEqual(1, len(errors))
+                self.assertIn(name, errors[0])
+                file_path.unlink()
+
+    def test_document_links_accept_relative_files_directories_and_encoded_paths(self) -> None:
+        self.write("assets/example file.png", "image fixture")
+        file_path = self.write(
+            "docs/specs/011-example.md",
+            "[directory](../../assets/)\n"
+            "![image](../../assets/example%20file.png)\n"
+            "[self](011-example.md#any-fragment)\n"
+            "[fragment](#any-fragment)\n"
+            "[external](https://example.invalid/missing)\n"
+            "[email](mailto:operator@example.invalid)\n",
+        )
+        self.assertEqual([], repository_validation.validate_document(file_path, self.repo_root))
+
+    def test_document_links_report_missing_inline_reference_and_image_targets(self) -> None:
+        file_path = self.write(
+            "README.md",
+            "[inline](missing.py)\n[reference][example]\n"
+            "![image](missing.png)\n\n[example]: absent.sh\n",
+        )
+        self.assertEqual(
+            [f"README.md: missing local link target: {target}" for target in (
+                "missing.py", "absent.sh", "missing.png",
+            )],
+            repository_validation.validate_document(file_path, self.repo_root),
+        )
+
+    def test_document_links_ignore_code_examples(self) -> None:
+        file_path = self.write(
+            "README.md",
+            "`[inline example](missing.py)`\n\n"
+            "```markdown\n[fenced example](missing.py)\n```\n\n"
+            "    [indented example](missing.py)\n",
+        )
+        self.assertEqual([], repository_validation.validate_document(file_path, self.repo_root))
+
+    def test_document_links_do_not_read_symlink_sources(self) -> None:
+        target = self.write("private.data", "not documentation")
+        file_path = self.repo_root / "README.md"
+        file_path.symlink_to(target)
+        self.assertEqual(
+            ["README.md: cannot check links through a document symlink"],
+            repository_validation.validate_document(file_path, self.repo_root),
+        )
+
+    def test_document_cli_checks_untracked_files_and_excludes_ignored_or_deleted_files(self) -> None:
+        subprocess.run(["git", "init", "--quiet"], cwd=self.repo_root, check=True)
+        self.write(".gitignore", ".tmp/\n")
+        self.write(".tmp/notes.md", "[ignored](missing.py)\n")
+        deleted = self.write("deleted.md", "[deleted](missing.py)\n")
+        subprocess.run(["git", "add", "deleted.md"], cwd=self.repo_root, check=True)
+        deleted.unlink()
+        self.write("README.md", "[untracked](missing.py)\n")
+        arguments = [str(self.repo_root), "--documents-only"]
+        with contextlib.redirect_stderr(io.StringIO()) as output:
+            self.assertEqual(1, repository_validation.main(arguments))
+        self.assertEqual(
+            "error: README.md: missing local link target: missing.py\n", output.getvalue()
+        )
+        self.write("missing.py", "# resolved\n")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(0, repository_validation.main(arguments))
+
+    def test_full_repository_validator_checks_document_links(self) -> None:
+        subprocess.run(["git", "init", "--quiet"], cwd=self.repo_root, check=True)
+        self.write("LICENSE", "Apache License\nVersion 2.0, January 2004\n")
+        self.write(".mise.toml", "[tools]\n")
+        self.write("mise.lock", "[tools]\n")
+        self.write("README.md", "[missing](missing.py)\n")
+        self.assertEqual(
+            ["README.md: missing local link target: missing.py"],
+            repository_validation.repository_validation_errors(self.repo_root),
+        )
 
     def test_json_parser_reports_relative_path_for_invalid_json(self) -> None:
         file_path = self.write("nested/config.json", '{"private-marker": }\n')

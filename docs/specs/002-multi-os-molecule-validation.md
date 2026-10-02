@@ -43,7 +43,7 @@ change-directed validation, and container-only boundaries.
 ### Included
 
 - `default` and `baseline` scenarios for `roles/system_maintenance`, plus
-  `reverse_proxy/default` and `semaphore/default` integration coverage;
+  registered application integration scenarios;
 - the Debian 13 container platform;
 - rootless Podman preflight, image acquisition, image building, container
   lifecycle, and cleanup;
@@ -120,7 +120,7 @@ rootful service.
 
 ## Command lifecycle classification
 
-The [repository command lifecycle](../guides/repository-command-lifecycle.md)
+The [repository command lifecycle](001-agentic-development-modernization.md#repository-command-lifecycle)
 classifies a command by its effects. Molecule deliberately creates and removes
 bounded local containers to obtain executable evidence, so it is a controlled
 `test`, not a read-only `validate` command.
@@ -293,7 +293,7 @@ the exact names owned by this scenario. It does not prune Podman storage or
 remove unrelated containers, images, networks, or volumes.
 
 Each scenario uses distinct container names, built-image tags, logs, and
-Molecule ephemeral state. GitHub runs the four scenario jobs on separate
+Molecule ephemeral state. GitHub runs the registered scenario jobs on separate
 ephemeral hosts. Local scenario invocations use the shared invocation lock.
 
 ## Role contract and reboot control
@@ -362,7 +362,7 @@ the platform, and the final summary reports its result.
 
 Molecule's experimental collection-only worker interface is not part of this
 design. The repository runner owns each role-based scenario lifecycle;
-GitHub supplies parallel execution across the four scenario jobs.
+GitHub supplies parallel execution across the registered scenario jobs.
 
 ## Timing and diagnostic output
 
@@ -400,23 +400,13 @@ host identifiers, or result objects enter timing records.
 Internal Ansible role identifiers are hashed with a random per-process salt
 before emission; their embedded controller identity is never emitted.
 
-The runner consumes callback records as they arrive and retains bounded
-aggregates: at most 64 phase executions and 4,096 task sources, role groups, and
-role invocation identifiers per platform. Reports show the 20 slowest task totals
-and role totals across phase executions, task call counts and maximum durations,
-and role invocation counts. A role invocation means an Ansible role instance in
-one playbook process; skipped tasks still contribute dispatch overhead. Collection
-limits, invalid records, and missing task timing are explicit. The callback keeps
-only the current task in memory. Timing records are omitted from streamed logs;
-ordinary Ansible output is unchanged.
-
-Terminal output and GitHub job summaries include these tables together with the
-scenario, architecture, Git commit, and worktree status at invocation start.
-Untracked, staged, and unstaged changes mark local evidence as including
-uncommitted changes. Git inspection failure produces unknown provenance.
-Structured reports contain bounded timing data and existing platform provenance,
-never copies of raw playbook output. They survive Molecule's ephemeral-directory
-cleanup.
+The runner retains bounded aggregates and reports slow task/role totals, counts,
+and missing or invalid timing explicitly. Limits and report fields belong to
+[the runner](../../scripts/molecule.py). Timing records are omitted from
+streamed logs; ordinary Ansible output is unchanged. Terminal and GitHub summaries
+include scenario, architecture, source revision and worktree provenance; Git
+inspection failure reports unknown provenance. Structured reports survive
+Molecule cleanup and never copy raw playbook output.
 
 Ordinary lifecycle failures preserve available timings and cleanup behavior.
 The last task of an interrupted playbook may lack a duration because its next
@@ -429,9 +419,10 @@ implementation reports.
 
 GitHub writes the same platform data to each job summary. The workflow and
 merge-gate summaries make infrastructure acquisition failures distinguishable
-from role assertion failures. The implementation report records GitHub's
-workflow elapsed time from the completed run rather than adding API access only
-to calculate it inside the workflow. Logs and summaries contain no environment
+from role assertion failures. When a performance decision needs GitHub elapsed
+time, use the completed run rather than adding API access only to calculate it
+inside the workflow. No routine implementation report is required. Logs and
+summaries contain no environment
 dump, credentials, inventory content, or Vault material.
 
 ## GitHub Actions topology
@@ -447,9 +438,10 @@ classify
          `-- Debian 13 ----------------------------|
 ```
 
-The matrix uses `ubuntu-24.04`, `fail-fast: false`, and at most four concurrent
-jobs. Debian is native AMD64 in GitHub Actions. Each matrix job invokes
-the same platform worker used by the local command and has a bounded timeout.
+The matrix uses `ubuntu-24.04`, `fail-fast: false`, and bounded concurrent
+jobs configured in the workflow. Debian is native AMD64 in GitHub Actions. Each
+matrix job invokes the same platform worker used by the local command and has
+a bounded timeout.
 The initial timeout allows for a cold image build and full package upgrade; it
 must be tightened later if measured results support a smaller reliable bound.
 
@@ -482,38 +474,14 @@ declaration. Exact-file entries do not participate in scenario-path matching.
 Rules naming `all` broaden to the complete suite.
 Selections and reasons are deduplicated and emitted in stable registry order.
 
-| Changed input | Scenario selection |
-| --- | --- |
-| Maintenance role | Both maintenance scenarios |
-| OS playbooks, host identity, or bootstrap | Baseline scenario |
-| Podman foundation | Baseline and Semaphore scenarios |
-| Shared security policy and OS baseline verifier | Baseline and proxy scenarios |
-| Proxy or TLS role/playbook | Baseline and proxy scenarios |
-| `tests/tls/` and the three TLS-specific Ansible test files | Baseline and proxy scenarios |
-| Semaphore role or playbook | Semaphore scenario |
-| Default maintenance scenario assertions | Default maintenance scenario |
-| Proxy scenario assertions | Proxy scenario |
-| Baseline or Semaphore scenario assertions | Corresponding scenario |
-| Shared default scenario create, cleanup, or destroy | Complete suite |
-| Molecule configuration, Containerfiles, create/destroy/cleanup | Complete suite |
-| Runner, CI, classifier, impact map, dependencies | Complete suite |
-| Unknown Molecule-relevant path or invalid impact map | Complete suite |
-| Documentation under `docs/` or direct subsystem README | No Molecule scenarios |
-
-The baseline scenario is a declared consumer of both proxy and TLS roles. A
-proxy-only role change therefore excludes `system_maintenance/default` but
-retains `system_maintenance/baseline`. The proxy also imports shared firewall
-policy and verification from `security_baseline` and `os_baseline_verify`, so
-changes to those roles select both consumers. A maintenance role change excludes
-the proxy scenario. Shared create, cleanup, and destroy implementations under the
-default maintenance scenario serve all four scenarios.
-
-The TLS-specific Ansible files are `test_tls_role.py`, `test_tls_proxy_policy.py`,
-and `test_tls_fixture_material.py` under `tests/ansible/`. These exact files and
-`tests/tls/` cover TLS runtime, policy, and disposable certificate fixtures used
-by the baseline and proxy scenarios. Other files under `tests/ansible/` continue
-to require full validation. Changes to this classifier or impact map also require
-the complete suite, even when combined with TLS changes.
+The [impact map](../../scripts/ci/molecule-impact.json) owns exact consumers;
+do not duplicate its path table here. Shared role changes select every declared
+consumer, scenario-local assertions may select one scenario, and shared lifecycle,
+CI, dependency or impact-selection changes require the complete suite. Unknown
+Molecule inputs or invalid mappings also select the complete suite. For example,
+the baseline consumes proxy and TLS roles, so a proxy change cannot select only
+the dedicated proxy scenario. Shallower documentation changes retain their
+classified depth.
 
 The existing Git discovery retains deletion paths, both rename/copy paths, and
 local committed, staged, unstaged, and untracked paths. Discovery failure or an
@@ -579,13 +547,13 @@ Implementation follows repository test and validation policy:
 
 Focused tests use positive current invariants as their oracles. They require the
 exact Debian role dispatch set, the exact Debian 13 Molecule set, and the
-complete four-row planned matrix. Complete OS provisioning
+complete registered scenario matrix. Complete OS provisioning
 must reject an unsupported operating-system family before configuration roles
 run, and the Molecule runner must reject an unknown workflow platform before
 invoking Podman. No permanent forbidden-reference scan is part of the contract.
 
-The implementation report records, for every platform and for the local and
-GitHub workflow totals:
+When measurements are needed for a performance decision, compare the following
+for each platform and local/GitHub workflow total:
 
 - pull duration;
 - build duration;
@@ -594,8 +562,8 @@ GitHub workflow totals:
 - whether execution was native or emulated; and
 - the proportion of overall platform time spent building the test image.
 
-Run-specific measurements belong in implementation reports rather than this
-durable specification.
+Keep run-specific measurements in established evidence stores or ignored
+`.tmp/` reports; link only decision-relevant evidence in PRs.
 
 ## Acceptance criteria
 
@@ -628,11 +596,11 @@ The current contract is satisfied when:
 11. the classifier retains four depths and selects affected scenario/platform
     rows within `molecule`; unknown impact selects the complete Molecule suite,
     shallower changes retain their depth, and `full` runs all validation;
-12. GitHub executes the bounded four-row scenario matrix and the stable
+12. GitHub executes the bounded registered scenario matrix and the stable
     merge gate requires its success when selected;
 13. local and GitHub workers report pull, build, Molecule, and platform-total
-    timing; the local summary and implementation report add their respective
-    overall elapsed times to evaluate future prebuilt images;
+    timing; local summaries retain overall elapsed time and performance decisions
+    use retrievable workflow evidence rather than routine implementation reports;
 14. acquisition, build, assertion, and cleanup failures are distinguishable;
 15. no test contacts inventory hosts, reads Vault material, uses infrastructure
     credentials, or claims VM or hardware evidence; and

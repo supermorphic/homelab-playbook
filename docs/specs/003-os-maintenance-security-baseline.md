@@ -523,7 +523,11 @@ not claim evidence for:
 Those behaviors require later explicitly authorized live verification. No live
 verification result becomes pull-request CI evidence.
 
-## Migration sequence
+## Original migration sequence
+
+This records the initial implementation order. Current AGENTS.md supersedes the
+original expectation of additional operator documents; update the owning design
+only when its contract changes.
 
 1. Add the focused dependency pins and dependency contract tests.
 2. Add bootstrap preflight and minimum Python handling.
@@ -581,25 +585,11 @@ The current baseline contract is satisfied when:
 15. no test contacts inventory hosts, reads protected inventory values, performs a real
     reboot, or overstates container evidence;
 16. repository-required change-directed validation passes before publication;
-17. no obsolete Red Hat-family role, scenario, package, template, helper, or
-    task-result branch remains, and no permanent forbidden-reference test is
-    added;
-18. the four Debian 13 Molecule rows defined by Specification 002 cover the
-    maintenance default, complete baseline, reverse proxy, and Semaphore
-    scenarios.
+17. tests assert the current Debian contract without permanent forbidden-reference
+    scans, and the complete registered scenario set is validated as defined by
+    Specification 002.
 
-### Issue #40 acceptance mapping
-
-| Requirement | Current contract |
-| --- | --- |
-| Support one managed-host OS | Debian 13 is the sole complete-provisioning and maintenance platform. |
-| Reject unsupported hosts safely | Raw bootstrap and fact-based preflight reject non-Debian or non-version-13 targets before package or configuration mutation. |
-| Remove obsolete implementation | Red Hat-family role tasks, templates, variables, helper branches, and result references have no retained contract. |
-| Preserve Debian behavior | APT trust, unattended security updates, conditional reboot, AppArmor, firewalld, SSH, auditd, time synchronization, Podman identities, Caddy safeguards, and Semaphore credential permissions remain required. |
-| Narrow application roles | Podman, TLS, reverse proxy, and Semaphore preflights require Debian 13; Caddy uses Debian packages and Semaphore has no platform-specific labeling path. |
-| Retain required dependencies | `ansible.posix` remains for Debian firewalld and authorized keys; `community.general` remains for host timezone configuration; its explicit inventory-filtering dependency and all SSH, Podman, SOPS, TLS, and application dependencies remain. |
-| Preserve useful generic behavior | Native ARM64 and AMD64 selection and generic lifecycle, cleanup, timing, and impact behavior remain supported. |
-| Use the complete current test matrix | Specification 002 defines exactly four Debian rows: maintenance default, complete baseline, reverse proxy default, and Semaphore default. |
-| Keep documentation stable | Existing specification identifiers and paths remain; README files, guides, and subsystem specifications state the Debian 13 contract and link to this platform contract. |
-| Test current behavior | Molecule fixtures and Ansible/CI contracts cover Debian 13 and the exact four-row registry; tests assert current invariants without a permanent forbidden-reference scan. |
-| Keep platform scope narrow | No Raspberry Pi behavior is added; generic native ARM64 and AMD64 selection remains. |
+Issue #40 narrowed the platform to Debian 13 while preserving native ARM64 and
+AMD64 execution, required Galaxy dependencies, and the existing security and
+application contracts. No Raspberry Pi implementation was added. Exact scenario
+registration belongs to the runner, not a repeated migration checklist.

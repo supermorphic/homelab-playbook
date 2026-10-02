@@ -184,7 +184,8 @@ Existing OS provisioning and maintenance retain their included verification;
 a second verify command is not required after either succeeds. The standalone
 action permits later drift checks and reports the first failed assertion rather
 than promising an exhaustive drift report. `os inspect` remains the basic
-OS-fact snapshot. Update the OS design records and guide with this interface.
+OS-fact snapshot. The OS design records own this interface; command help owns
+its exact syntax.
 
 Add a narrow `podman_foundation` role for prerequisite packages, account input
 validation, conflict checks, account and mapping creation, private directories,
@@ -252,5 +253,5 @@ immediately before execution.
   documents rootless storage and subordinate identity requirements.
 - [Specification 003](003-os-maintenance-security-baseline.md) defines the OS
   baseline and administrative authority that this foundation builds on.
-- [Repository command lifecycle](../guides/repository-command-lifecycle.md)
+- [Repository command lifecycle](001-agentic-development-modernization.md#repository-command-lifecycle)
   distinguishes provisioning, observation, and bounded experiments.

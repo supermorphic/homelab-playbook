@@ -31,6 +31,14 @@ run = "./scripts/playbook.sh"
 description = "Run fast repository and security validation"
 run = "./scripts/ci/validate-fast.sh"
 
+[tasks."validate:docs"]
+description = "Check documentation paths, local Markdown links, and Markdown lint"
+# The full repository validator and Markdown lint also run in validate:fast.
+run = '''
+uv run --frozen --no-sync python scripts/ci/repository_validation.py --documents-only
+markdownlint-cli2 '**/*.md' '#.ansible' '#.cache/galaxy' '#.venv' '#.tmp'
+'''
+
 [tasks."validate:ansible"]
 description = "Run offline Ansible, inventory, and SOPS validation"
 run = "./scripts/ci/validate-ansible.sh"

@@ -91,33 +91,19 @@ directories. Certificate selection uses only the explicitly defined version
 symlink below; arbitrary path indirection is not accepted. Caddy cannot edit
 its configuration, certificate files, deployment helper, or systemd unit.
 
-Issue #51 bounds filesystem metadata acquisition to the explicit parent,
-managed-directory, and managed-file lists. The role-local `proxy_metadata`
-module observes each list in one call and returns ordered `item` and `stat`
-records for the existing independent assertions. It uses `lstat` without
-following the final symlink and preserves existence, object type, numeric and
-named ownership, four-digit permission mode, and link count. Missing paths
-return only `exists: false`; other lookup errors stop the batch, fail the task,
-and identify the failing path without accepting partial results. Unknown user or
-group names remain absent, matching the pinned Ansible `stat` behavior.
+Issue #51 batches filesystem metadata acquisition for explicit parent,
+managed-directory and managed-file lists through the role-local `proxy_metadata`
+module. It observes without following final symlinks, reading content or caching.
+Missing paths report absence; other lookup errors fail the batch without accepting
+partial results. Existing independent assertions retain their order, including
+fresh observations before package installation and before filesystem mutation.
+Results never cross a mutation boundary; certificate, trust and installation
+checks retain their own content and metadata observations.
 
-Each observation is read-only, supports check mode, and has no cache. Preserve
-the three assertion groups and their order, including the separate observations
-before package installation and before filesystem configuration. Results must
-not cross a mutation boundary. Installation ownership checks, trust and
-certificate validation, and standalone verification retain their independent
-content checksums and observations. The module neither reads file contents nor
-collects unused MIME types or extended attributes.
-
-The disposable Debian proxy scenario compares metadata with
-`ansible.builtin.stat`, then runs the role's existing assertions against
-independently specified safe, unsafe, and missing-path outcomes. It covers
-symlinks, hard links, special files, ownership, writable and sticky directories,
-and lookup errors. Performance acceptance requires alternating at least three
-unchanged and three candidate scenarios under equivalent image, architecture,
-source-base, and cache conditions. Retain run-specific medians, ranges, affected
-task and phase totals, complete scenario time, and uncertainty in uncommitted
-implementation evidence; keep batching only when it demonstrates a benefit.
+Disposable tests compare with `ansible.builtin.stat` and independently specified
+safe, unsafe and missing-path outcomes. Batching was selected to reduce repeated
+metadata calls without weakening these checks; run-specific performance reports
+belong in ignored evidence rather than this design.
 
 ## Declarative ingress and routes
 
@@ -199,15 +185,13 @@ Other paths and methods return 404. The schema rejects backend fields and
 custom response fragments on health routes. Existing application and device
 routes keep their forwarding behavior.
 
-Use a dedicated `caddy.infra.supermorphic.com` hostname so the edge check remains
-stable when Semaphore, Forgejo, or other application routes change. The selected
-edge URL is `https://caddy.infra.supermorphic.com/healthz`; the separate application
-probe is `https://semaphore.infra.supermorphic.com/api/ping` (unauthenticated GET,
-expected 200). Both use private TCP/443 and hostname-verified TLS. A private DNS
-record and coverage by the existing `infra` wildcard are deployment prerequisites;
-no new issuer or renewal workflow is introduced. An existing application hostname
-would save a DNS record, but would tie the edge contract to that application's
-route lifecycle.
+Use a dedicated edge hostname, such as `caddy.infra.example.com`, so the check
+remains stable when application routes change. Probe its `/healthz` separately
+from application health, such as Semaphore's `/api/ping` (unauthenticated GET,
+expected 200). Both use private TCP/443 and hostname-verified TLS. Private DNS
+and coverage by the existing `infra` wildcard are deployment prerequisites;
+no new issuer or renewal workflow is introduced. Reusing an application hostname
+would save a DNS record but tie edge health to that application's route lifecycle.
 
 The health route participates in the same desired manifest, ingress binding,
 certificate deferral and publication, validation, reload, rollback, and startup
@@ -219,10 +203,8 @@ The signal proves the HTTPS edge responds, not general host or application
 health. A disposable scenario stops its backend while retaining a successful
 edge response, and checks the response after certificate and startup recovery.
 Production deployment and a read-only probe from the intended monitoring network
-remain separate operator evidence. The
-[proxy README](../../playbooks/reverse-proxy/README.md#monitoring-endpoint-contract)
-records the endpoint contract. The [reverse-proxy guide](../guides/reverse-proxy.md)
-covers protected route enrollment, deployment, and consumer handoff.
+remain separate operator evidence. This section owns the endpoint contract;
+route enrollment uses protected inventory and the canonical proxy gateway.
 [homelab-talos#423](https://github.com/supermorphic/homelab-talos/issues/423) owns
 Homepage/Gatus configuration and must receive deployment readiness before
 activating its edge check. Neither observation service is a host recovery
@@ -392,7 +374,18 @@ reload, repair state, pull images, issue certificates, or create test routes.
 Service logs use journald with the baseline retention policy. HTTP access
 logging is disabled by default; do not add request credentials, query strings,
 or protected configuration content to deployment diagnostics.
-Document `systemctl status` and `journalctl -u caddy` as normal diagnostics.
+Use `systemctl status caddy` and bounded `journalctl -u caddy` as normal
+diagnostics through authorized access; keep deployment details private. Correct
+the failed address, certificate or configuration before an authorized restart.
+Do not delete transaction records to force recovery.
+
+Reconstruct from independently accessible Git and encrypted certificate, trust
+and transaction state after restoring administrative access and the OS baseline.
+Caddy caches are not authoritative recovery material. Keep direct device access
+independent of Pi-hole, Caddy, the host and Internet connectivity. Disable only a
+failed device route until trust and compatibility checks pass. Package maintenance
+also needs allowed-client HTTPS and outside-boundary denial checks; local
+observation alone does not prove DNS or private-network reachability.
 
 Register the temporary backend experiment as a `test` workflow. It creates
 only run-owned synthetic routes, backend processes, and disposable certificate

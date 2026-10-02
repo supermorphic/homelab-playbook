@@ -249,8 +249,12 @@ timer configuration, and backup status without repair or test mutations.
 Register restore experiments as `test` workflows under the repository command
 lifecycle. Require explicit target and archive selection for attended tests, bind
 resources to the run, and repeat live preconditions immediately before mutation.
-Document workstation recovery and normal systemd/journald diagnostics in the
-Semaphore playbook README and a recovery guide.
+The recovery contract above remains usable from an independent workstation.
+Discover the existing attended workflow with
+`mise run test:semaphore -- restore --help`; command help and
+[the restore workflow](../../scripts/semaphore/restore.py) own exact arguments.
+Use bounded systemd status and journald observations through authorized access,
+keeping deployment details private. No separate recovery guide is required.
 
 Offline validation uses disposable identities, databases, application fixtures,
 and SMB storage. Cover effective Quadlet behavior, first provisioning and
@@ -294,7 +298,7 @@ on the intended supported host.
 - [TLS trust](007-off-cluster-tls-trust.md) and
   [shared reverse proxy](008-shared-private-reverse-proxy.md).
 - [OS maintenance](003-os-maintenance-security-baseline.md).
-- [SOPS controller contract](../guides/sops-secrets.md#automation-controllers).
-- [Repository command lifecycle](../guides/repository-command-lifecycle.md).
+- [SOPS controller contract](005-sops-age-secrets.md#controller-identities).
+- [Repository command lifecycle](001-agentic-development-modernization.md#repository-command-lifecycle).
 - [Semaphore configuration](https://semaphoreui.com/docs/admin-guide/configuration).
 - [Quadlet reference](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html).
