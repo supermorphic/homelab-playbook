@@ -12,7 +12,7 @@ forgejo_lfs_jwt_secret: ENC[AES256_GCM,data:AW93sPxEw2/M4CJV1cZOkBLr/syR9rDKV2hq
 forgejo_oauth2_jwt_secret: ENC[AES256_GCM,data:mVrJTDSy8RmcW6mlX+n3Zv2xFz+X57KgOwXmT0bUWb6NFZYJu2Hh2FXIyQ==,iv:7HE3mJGGizt91XYUHcjDZns8Ggo42bUFRB9mHpB8BSI=,tag:MuJbAw2nXG5m2Wi1aO8evg==,type:str]
 forgejo_mirror_credentials: ""
 forgejo_rclone_remote: ENC[AES256_GCM,data:H/RDtVQ33qCrls3hAKH5aGnjVbw=,iv:ck/qc8LcFvmMp6Iw/F9D0u+JBa8H/mKzc3aVoWhbPp4=,tag:r8QMkUbtXKO5yimzSF9OIQ==,type:str]
-forgejo_rclone_config: ENC[AES256_GCM,data:fzRi9vvHxf5bZiveICSWfCRnu/biOkIbXK4AO3ILrvRGNG3yOeNu/vML/b83wLd1dXvh2ocSWtwiur5gM+hM1QRanp7ElOGIXjcpKDVTjQ==,iv:o6eUT4Y4RzetN3GoWlOTQqD0Y2Kcpt30Lg81J6KaSRI=,tag:YQNumbUjqZ2uQgfh3+8lTA==,type:str]
+forgejo_rclone_config: ENC[AES256_GCM,data:KPtIdF/ylAaya71dgQmb9FsXTTfEcltYZ7B7NR9WOXAu9nA6PXkkPLGbvQKcWmfjznZS6BZBbi75Ay5qBBQBMKrLYVPnRTmRv+YWdTjP8XTEhE6mzwIUwjdeT1x8Im1ZDOjiBkOsDJRSllA=,iv:HPiNZZUCwbWyzo77gZK6Vqg8h0c3afLjKMKteRf9nMI=,tag:44Xj7rJHImFRiR+iE5yzaQ==,type:str]
 sops:
     age:
         - enc: |
@@ -25,6 +25,6 @@ sops:
             -----END AGE ENCRYPTED FILE-----
           recipient: age1ehm0ehd2v2emfuycf2p0suhg94ej29zcu96ffmh3t6afchhjd99sxc4984
     encrypted_regex: ^(.*)$
-    lastmodified: "2026-10-02T22:06:34Z"
-    mac: ENC[AES256_GCM,data:N5MX1lcTaW9MzgsCwXQ3ZoVW4iPPllCc0TXpGPg+qhqv0VV4f9GiB2FDGzChRm8rVSKWJyGSG5Hz1SVKSr/QoxeNvUXhIDeeid599Gwyl47WsXIw+K2EiuYnqT5WjGJo8giEH+Fvb4eS4zT9XMqinqZ142WnOGKSF/2aocbX5B4=,iv:lDFH/HJ+ZNj/C8w5+3My7K+vAqh4AmE+yQkFHXrQX50=,tag:teERSq8ICap1/DInqT14Uw==,type:str]
+    lastmodified: "2026-10-03T21:36:59Z"
+    mac: ENC[AES256_GCM,data:y7ZjP4k+ka8MaqP1siUiQjM2kGu2XvdFeOULdU6fA1QDUFSZjWRCJX6BfubRmfIpOI+R/dKGnj/q2HbdPyFJi6SkMdNfHaz3aOCV8X9tIEKGuz5++rizoNoXgpVB5B7QP0TS4x40fMOiGDwr3bV5rXl6ZwSSaLqIfwFaSxp+B9c=,iv:uGi+lA8V7zLqFjS0/NHWeswSfNQy5hlA5fQyY7nfW64=,tag:HWtgeKyJWO5flVkxgw0Cpg==,type:str]
     version: 3.13.2
