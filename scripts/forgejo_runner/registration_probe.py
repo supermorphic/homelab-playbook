@@ -39,11 +39,11 @@ def token_request(url: str, path: str, token: str, *, method: str = "GET",
         raise RuntimeError("Synthetic registration API did not return usable evidence") from error
 
 
-def run_registration(experiment, directory):
+def run_registration(experiment, directory, *, empty=False):
     application = ActionsApplication(experiment, directory)
     application.initialize_admin()
     first = application.request("/user/repos", method="POST", payload={
-        "name": "runner-first", "auto_init": True, "default_branch": "main"})
+        "name": "runner-first", "auto_init": not empty, "default_branch": "main"})
     application.request("/user/repos", method="POST", payload={
         "name": "runner-second", "auto_init": True, "default_branch": "main"})
     credential = application.request(f"/users/{application.user}/tokens", method="POST", payload={
@@ -79,7 +79,7 @@ class ControllerFailureInjected(RuntimeError):
 
 
 def run_one_job(experiment, directory, application, repository, token, runtime, candidate,
-                *, controller_failure=False):
+                *, controller_failure=False, workload=None):
     image = candidate["runner_image"]
     if image is None:
         raise ValueError("Compatibility requires an immutable runner image")
@@ -88,7 +88,8 @@ def run_one_job(experiment, directory, application, repository, token, runtime, 
     path = f"/repos/{application.user}/{repository['name']}"
     registration = token_request(application.url, path + "/actions/runners", token,
         method="POST", payload={"name": experiment.name("one-job"), "ephemeral": True})
-    config = {"log": {"level": "debug"}, "runner": {"capacity": 1, "labels": [f"{label}:docker://{candidate['probe_image']}"],
+    job_image = workload["image"] if workload else candidate["probe_image"]
+    config = {"log": {"level": "debug"}, "runner": {"capacity": 1, "labels": [f"{label}:docker://{job_image}"],
                          "timeout": "1m"},
               "container": {"docker_host": "unix://" + runtime["socket"], "network": application.network,
                             "options": ("--tmpfs /var/lib/containers --tmpfs /home/podman/.local/share/containers "
@@ -97,10 +98,18 @@ def run_one_job(experiment, directory, application, repository, token, runtime, 
               "server": {"connections": {"fixture": {
                   "url": f"http://{application.app}:3000", "uuid": registration["uuid"],
                   "token": registration["token"]}}}}
+    if workload:
+        config["runner"]["timeout"] = "120m"
+        config["container"]["force_pull"] = False
+        config["container"]["options"] += " --security-opt label=disable"
+        config["container"]["options"] += " --volume " + str(workload["workspace"]) + ":" + str(workload["workspace"]) + ":U"
     experiment.private_file(directory, "runner.yml", yaml.safe_dump(config))
     workflow = ("name: single-job admission\non: [push]\njobs:\n"
                 f"  first:\n    runs-on: {label}\n    steps:\n      - run: echo independent-first-job\n"
                 f"  second:\n    runs-on: {label}\n    steps:\n      - run: echo unexpected-second-job\n")
+    if workload:
+        from scripts.forgejo_runner.workload import workflow as workload_workflow
+        workflow = workload_workflow(label, application, repository, workload["workspace"], workload["selector"])
     if controller_failure:
         workflow = workflow.replace("echo independent-first-job", "sleep 90")
     created = application.request(path + "/contents/.forgejo/workflows/probe.yml", method="POST",
@@ -134,7 +143,7 @@ def run_one_job(experiment, directory, application, repository, token, runtime, 
                 raise ControllerFailureInjected("Synthetic controller failure was injected")
             time.sleep(1)
         raise RuntimeError("Fault probe did not observe the job container")
-    waited = experiment.command([experiment.podman, "wait", runner], timeout=120)
+    waited = experiment.command([experiment.podman, "wait", runner], timeout=7500 if workload else 120)
     from scripts.forgejo_runner.fixture import ROOT
     evidence = ROOT / ".tmp/forgejo-runner"
     evidence.mkdir(parents=True, exist_ok=True)
@@ -162,6 +171,9 @@ def run_one_job(experiment, directory, application, repository, token, runtime, 
             experiment.private_file(evidence, experiment.run_id + f".task-{index}.base64",
                                     content.stdout.replace(registration["token"], "[redacted]"))
         raise RuntimeError("One-job execution did not produce a successful task")
+    if workload:
+        from scripts.forgejo_runner.workload import require_success
+        require_success(rows, commit)
     if len(success) != 1:
         raise RuntimeError("Ephemeral runner executed more than its single assigned job")
     deadline = time.monotonic() + 30
@@ -175,4 +187,10 @@ def run_one_job(experiment, directory, application, repository, token, runtime, 
     remaining = token_request(application.url, path + "/actions/runners?visible=false", token)
     if any(r["id"] == registration["id"] for r in remaining):
         raise RuntimeError("Forgejo did not retire the ephemeral runner")
+    if workload:
+        evidence_record = {"source_tree": workload["source_tree"], "workflow_commit": commit,
+                           "selector": workload["selector"], "status": "success"}
+        experiment.private_file(evidence, experiment.run_id + ".workload.json",
+                                json.dumps(evidence_record, indent=2) + "\n")
+        print(f"Forgejo workload {workload['selector']} passed at {commit}")
     print("One-job runner completed one job and its registration was retired by Forgejo")

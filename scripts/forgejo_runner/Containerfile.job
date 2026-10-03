@@ -1,0 +1,11 @@
+# Fixture image only. Promote deployment pins after Debian host acceptance.
+ARG MISE_IMAGE
+ARG PODMAN_IMAGE
+FROM ${MISE_IMAGE} AS mise
+FROM ${PODMAN_IMAGE}
+USER root
+RUN dnf install --assumeyes git nodejs python3 gcc gcc-c++ make openssl-devel \
+        libffi-devel postgresql-devel tar gzip xz unzip findutils which \
+    && dnf clean all
+COPY --from=mise /usr/local/bin/mise /usr/local/bin/mise
+ENV MISE_YES=1

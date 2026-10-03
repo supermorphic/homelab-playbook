@@ -36,6 +36,8 @@ class RunnerRun(Run):
         super().__init__(**kwargs)
         self.baseline_volumes = None
         self.child_volumes = {}
+        self.job_images = []
+        self.molecule_scenario = None
 
     def observe_volumes(self):
         response = self.command([self.podman, "volume", "ls", "--format", "{{.Name}}"])
@@ -81,6 +83,28 @@ class RunnerRun(Run):
         except (RuntimeError, ValueError, KeyError, IndexError, TypeError):
             errors.append("Runner child discovery failed")
         errors.extend(super().cleanup())
+        # The host invocation lock is held until cleanup completes. No selected
+        # scenario container existed before this job, and job creation is stopped.
+        if not errors and self.molecule_scenario is not None:
+            from scripts.molecule import ownership_labels
+            for platform in self.molecule_scenario.platforms:
+                try:
+                    name = platform.container
+                    exists = self.command([self.podman, "container", "exists", name], check=False)
+                    if exists.returncode == 1:
+                        continue
+                    if exists.returncode:
+                        raise RuntimeError("Molecule container inspection failed")
+                    document = json.loads(self.command([self.podman, "container", "inspect", name]).stdout)[0]
+                    labels = document["Config"]["Labels"]
+                    expected = ownership_labels(platform, self.molecule_scenario)
+                    if any(labels.get(key) != value for key, value in expected.items()):
+                        raise RuntimeError("Molecule child ownership changed")
+                    self.command([self.podman, "container", "rm", "--force", document["Id"]])
+                    if self.command([self.podman, "container", "exists", name], check=False).returncode != 1:
+                        raise RuntimeError("Molecule child survived cleanup")
+                except (RuntimeError, ValueError, KeyError, IndexError, TypeError):
+                    errors.append("Molecule child cleanup failed")
         for name, identity in self.child_volumes.items():
             try:
                 exists = self.command([self.podman, "volume", "exists", name], check=False)
@@ -95,6 +119,14 @@ class RunnerRun(Run):
                 self.command([self.podman, "volume", "rm", name], timeout=30)
             except (RuntimeError, ValueError, KeyError, IndexError, TypeError):
                 errors.append("Runner child volume cleanup failed")
+        for name in self.job_images:
+            try:
+                image = json.loads(self.command([self.podman, "image", "inspect", name]).stdout)[0]
+                if image["Config"]["Labels"].get(self.label) != self.run_id:
+                    raise RuntimeError("Workload image ownership changed")
+                self.command([self.podman, "image", "rm", name])
+            except (RuntimeError, ValueError, KeyError, IndexError, TypeError):
+                errors.append("Workload image cleanup failed")
         return errors
 
 

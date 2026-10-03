@@ -4,11 +4,12 @@ import json
 from pathlib import Path
 import shlex
 import tempfile
+from contextlib import nullcontext
 
 from scripts.forgejo_runner.fixture import ROOT, cleaned_up, load_candidate, preflight
 
 
-def run(descriptor: Path | None, *, registration: bool = False, controller_failure=False) -> int:
+def run(descriptor: Path | None, *, registration: bool = False, controller_failure=False, workload=None) -> int:
     experiment, runtime = preflight()
     if descriptor is None:
         raise ValueError("A reviewed synthetic image fixture descriptor is required")
@@ -17,8 +18,10 @@ def run(descriptor: Path | None, *, registration: bool = False, controller_failu
     experiment.observe_volumes()
     scratch_root = ROOT / ".tmp/forgejo-runner"
     scratch_root.mkdir(parents=True, exist_ok=True)
+    from scripts.forgejo_runner.workload import workload_lock
+    lock = workload_lock(ROOT) if workload else nullcontext()
     try:
-        with tempfile.TemporaryDirectory(prefix="probe-", dir=scratch_root) as directory, cleaned_up(experiment):
+        with lock, tempfile.TemporaryDirectory(prefix="probe-", dir=scratch_root) as directory, cleaned_up(experiment):
             experiment.command([experiment.podman, "pull", image], timeout=300)
             probe = experiment.foreground("client", [
                 "--userns=keep-id:uid=1000,gid=1000", "--user", "1000:1000",
@@ -65,9 +68,21 @@ def run(descriptor: Path | None, *, registration: bool = False, controller_failu
                 from scripts.forgejo_runner.registration_probe import run_one_job, run_registration
                 inputs = Path(directory) / "registration"
                 inputs.mkdir(mode=0o700)
-                application, repository, token = run_registration(experiment, inputs)
+                workload_config = None
+                if workload:
+                    from scripts.forgejo_runner.workload import build_image, seed_repository, check_workload_available
+                    job_image = build_image(experiment, descriptor, runtime["architecture"])
+                    workspace = Path(directory) / "workspace"
+                    workspace.mkdir()
+                    workload_config = {"image": job_image, "workspace": workspace, "selector": workload}
+                application, repository, token = run_registration(experiment, inputs, empty=bool(workload))
+                if workload:
+                    check_workload_available(experiment, workload)
+                    from scripts.molecule import SCENARIOS
+                    experiment.molecule_scenario = SCENARIOS[workload]
+                    workload_config["source_tree"] = seed_repository(ROOT, application, repository)
                 run_one_job(experiment, inputs, application, repository, token, runtime, candidate,
-                            controller_failure=controller_failure)
+                            controller_failure=controller_failure, workload=workload_config)
     except RuntimeError as error:
         from scripts.forgejo_runner.registration_probe import ControllerFailureInjected
         if not controller_failure or type(error) is not ControllerFailureInjected:
