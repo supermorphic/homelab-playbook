@@ -42,4 +42,5 @@ help own implementation details.
   [TLS, UniFi, and trust recovery](docs/specs/007-off-cluster-tls-trust.md),
   [private reverse proxy](docs/specs/008-shared-private-reverse-proxy.md).
 - [Semaphore](docs/specs/009-semaphore-infrastructure-automation.md),
-  [Forgejo](docs/specs/010-forgejo-service.md).
+  [Forgejo](docs/specs/010-forgejo-service.md),
+  [Forgejo runners](docs/specs/011-forgejo-runners.md).
