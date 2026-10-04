@@ -14,12 +14,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Test Forgejo runners with disposable fixtures")
     parser.add_argument("mode", choices=("unit", "compatibility", "host-fixture", "job-fixture"))
     parser.add_argument("--fixture", type=Path)
+    parser.add_argument("--host-fixture", type=Path,
+                        help="Explicit disposable Debian target descriptor under .tmp")
+    parser.add_argument("--preflight-only", action="store_true",
+                        help="Observe the disposable host without setup or containment acceptance")
     parser.add_argument("--workload", choices=("forgejo/default", "system_maintenance/default",
                         "system_maintenance/baseline", "semaphore/default", "reverse_proxy/default"),
                         help="Run a staged repository Molecule candidate in a real Forgejo job")
     parser.add_argument("--controller-failure", action="store_true",
                         help="Exercise forced controller failure during compatibility probes")
     args = parser.parse_args(argv)
+    if (args.host_fixture or args.preflight_only) and args.mode != "host-fixture":
+        parser.error("host options require host-fixture mode")
     if args.workload and (args.mode != "compatibility" or args.controller_failure):
         parser.error("workloads require compatibility mode without controller failure")
     if args.controller_failure and args.mode != "compatibility":
@@ -33,7 +39,8 @@ def main(argv: list[str] | None = None) -> int:
         ], cwd=ROOT, check=False, timeout=900).returncode
     try:
         if args.mode == "host-fixture":
-            raise RuntimeError("A separately supplied disposable Debian host fixture is required")
+            from scripts.forgejo_runner.host_fixture import run
+            return run(args.fixture, args.host_fixture, preflight_only=args.preflight_only)
         from scripts.forgejo_runner.compatibility import run
         return run(args.fixture, registration=args.mode == "compatibility",
                    controller_failure=args.controller_failure, workload=args.workload)

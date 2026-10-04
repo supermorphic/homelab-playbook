@@ -32,6 +32,18 @@ class DispatchTests(unittest.TestCase):
         self.assertIn("Podman", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_host_options_are_rejected_outside_host_mode(self):
+        result = self.run_cli("compatibility", "--host-fixture", "target.json")
+        self.assertEqual(2, result.returncode)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_host_preflight_requires_a_target_without_using_local_podman(self):
+        result = self.run_cli("host-fixture", "--preflight-only")
+        self.assertEqual(1, result.returncode)
+        self.assertIn("disposable", result.stderr)
+        self.assertNotIn("Podman", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_host_fixture_requires_an_explicit_disposable_target(self):
         result = self.run_cli("host-fixture")
         self.assertEqual(1, result.returncode)
