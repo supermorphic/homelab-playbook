@@ -68,6 +68,21 @@ class InputTests(unittest.TestCase):
     def test_declared_synthetic_inputs_are_accepted(self):
         self.assertEqual(0, self.evaluate(self.settings()))
 
+    def test_multiline_https_mirror_credentials_are_accepted(self):
+        values = self.settings()
+        values['forgejo_mirror_credentials'] = ''.join(
+            'https://fixture-user:synthetic-only-not-live@github.com/example/' + name + '.git\n'
+            for name in ('fixture-playbook', 'fixture-talos', 'fixture-career')
+        )
+        self.assertEqual(0, self.evaluate(values))
+
+    def test_carriage_return_in_mirror_credentials_is_rejected(self):
+        values = self.settings()
+        values['forgejo_mirror_credentials'] = (
+            'https://fixture-user:synthetic-only-not-live@github.com/example/fixture.git\r'
+        )
+        self.assertNotEqual(0, self.evaluate(values))
+
     def test_proxy_headers_cannot_supply_client_identity_or_authentication(self):
         values = self.settings()
         template = ROOT / 'roles/forgejo/templates/app.ini.j2'
