@@ -39,6 +39,39 @@ def token_request(url: str, path: str, token: str, *, method: str = "GET",
         raise RuntimeError("Synthetic registration API did not return usable evidence") from error
 
 
+def runner_rows(url: str, path: str, token: str) -> list[dict]:
+    rows = []
+    for page in range(1, 21):
+        result = token_request(url, path + f"?visible=false&page={page}&limit=50", token)
+        if isinstance(result, dict):
+            result = result.get("runners")
+        if not isinstance(result, list) or any(not isinstance(row, dict) for row in result):
+            raise RuntimeError("Runner lookup returned invalid evidence")
+        rows.extend(result)
+        if len(result) < 50:
+            return rows
+    raise RuntimeError("Runner lookup exceeded its bounded page limit")
+
+
+def retire_uncertain_registration(url: str, path: str, token: str, *,
+                                  repo_id: int, name: str, marker: str) -> int:
+    """Retire one uncertain fixture identity; never retry enrollment blindly."""
+    matches = [row for row in runner_rows(url, path, token) if row.get("name") == name]
+    if len(matches) != 1:
+        raise RuntimeError("Uncertain registration has no unique owned identity")
+    owned = matches[0]
+    if (owned.get("description") != marker or owned.get("repo_id") != repo_id
+            or owned.get("ephemeral") is not True or type(owned.get("id")) is not int
+            or owned["id"] <= 0):
+        raise RuntimeError("Uncertain registration ownership does not match")
+    identity = owned["id"]
+    token_request(url, path + "/" + str(identity), token, method="DELETE")
+    remaining = runner_rows(url, path, token)
+    if any(row.get("id") == identity or row.get("name") == name for row in remaining):
+        raise RuntimeError("Uncertain registration retirement was not observed")
+    return identity
+
+
 def run_registration(experiment, directory, *, empty=False):
     application = ActionsApplication(experiment, directory)
     application.initialize_admin()
@@ -71,6 +104,9 @@ def run_registration(experiment, directory, *, empty=False):
             raise RuntimeError("Enrollment credential exceeded its repository boundary")
     token_request(application.url, path + "/" + str(registration["id"]), token, method="DELETE")
     print("Repository-limited token registered and retired an ephemeral runner; broader scope was denied")
+    from scripts.forgejo_runner.registration_fault import probe_lost_response, probe_rotation
+    probe_lost_response(experiment, application, first, token)
+    token = probe_rotation(experiment, application, first, credential)
     return application, first, token
 
 
