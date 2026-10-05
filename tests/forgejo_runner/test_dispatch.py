@@ -32,6 +32,12 @@ class DispatchTests(unittest.TestCase):
         self.assertIn("Podman", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_workflow_contracts_are_dispatched_to_the_bounded_runtime(self):
+        result = self.run_cli('compatibility', '--workflow-contracts')
+        self.assertEqual(1, result.returncode)
+        self.assertIn('Podman', result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
+
     def test_host_options_are_rejected_outside_host_mode(self):
         result = self.run_cli("compatibility", "--host-fixture", "target.json")
         self.assertEqual(2, result.returncode)

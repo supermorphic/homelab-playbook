@@ -46,9 +46,18 @@ class CleanupTests(unittest.TestCase):
                     self.assertEqual({}, containers)
 
     def test_failed_controller_children_and_new_volumes_are_removed(self):
+        for suffix in ('one-job', 'workflow-1', 'workflow-2'):
+            with self.subTest(controller=suffix):
+                self.check_controller_cleanup(suffix)
+
+    def test_failed_controller_start_is_retained_for_ordered_cleanup(self):
+        self.check_controller_cleanup('workflow-3', failed_start=True)
+
+    def check_controller_cleanup(self, suffix, *, failed_start=False):
         experiment = RunnerRun(run_id="cleanup123")
         experiment.baseline_volumes = {"preexisting-volume"}
-        controller = experiment.name("one-job")
+        controller = experiment.name(suffix)
+        experiment.controllers = set() if failed_start else {controller}
         child = "engine-created-child"
         foreign = "unrelated-container"
         containers = {
@@ -58,9 +67,15 @@ class CleanupTests(unittest.TestCase):
                 {"Type": "volume", "Name": "preexisting-volume"}]},
             foreign: {"Config": {"Labels": {experiment.label: "different123"}}, "Mounts": []},
         }
+        controller_document = containers[controller]
+        if failed_start:
+            del containers[controller]
         volumes = {name: {"Name": name, "CreatedAt": "2026-01-01T00:00:00Z", "Labels": {}}
                    for name in ("new-workspace", "preexisting-volume")}
         def command(argv, **kwargs):
+            if argv[1] == 'run':
+                containers[controller] = controller_document
+                raise RuntimeError('Synthetic engine failed after controller creation')
             kind, action = argv[1:3]
             if action == "ls":
                 self.assertNotIn(controller, containers, "controller must stop before child discovery")
@@ -79,7 +94,13 @@ class CleanupTests(unittest.TestCase):
                 return subprocess.CompletedProcess(argv, 0, "", "")
             self.fail("unexpected external operation")
         experiment.command = command
-        experiment.resources.append(("container", controller))
+        if failed_start:
+            self.assertTrue(callable(getattr(experiment, 'create_controller', None)),
+                            'Controller ownership is not recorded before engine creation')
+            with self.assertRaises(RuntimeError):
+                experiment.create_controller(suffix, [])
+        else:
+            experiment.resources.append(("container", controller))
         self.assertEqual([], experiment.cleanup())
         self.assertEqual({foreign}, set(containers))
         self.assertEqual({"preexisting-volume"}, set(volumes))

@@ -9,7 +9,8 @@ from contextlib import nullcontext
 from scripts.forgejo_runner.fixture import ROOT, cleaned_up, load_candidate, preflight
 
 
-def run(descriptor: Path | None, *, registration: bool = False, controller_failure=False, workload=None) -> int:
+def run(descriptor: Path | None, *, registration: bool = False, controller_failure=False,
+        workload=None, workflow_contracts=False) -> int:
     experiment, runtime = preflight()
     if descriptor is None:
         raise ValueError("A reviewed synthetic image fixture descriptor is required")
@@ -81,8 +82,12 @@ def run(descriptor: Path | None, *, registration: bool = False, controller_failu
                     from scripts.molecule import SCENARIOS
                     experiment.molecule_scenario = SCENARIOS[workload]
                     workload_config["source_tree"] = seed_repository(ROOT, application, repository)
-                run_one_job(experiment, inputs, application, repository, token, runtime, candidate,
-                            controller_failure=controller_failure, workload=workload_config)
+                if workflow_contracts:
+                    from scripts.forgejo_runner.workflow_probe import run
+                    run(experiment, inputs, application, repository, token, runtime, candidate, descriptor)
+                else:
+                    run_one_job(experiment, inputs, application, repository, token, runtime, candidate,
+                                controller_failure=controller_failure, workload=workload_config)
     except RuntimeError as error:
         from scripts.forgejo_runner.registration_probe import ControllerFailureInjected
         if not controller_failure or type(error) is not ControllerFailureInjected:

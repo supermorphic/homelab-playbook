@@ -125,6 +125,7 @@ class RegistrationProbeTests(unittest.TestCase):
             application.db_password = "synthetic-database-value"
             application.run = RunnerRun(run_id="fixture123")
             application.access_log = False
+            application.suffix = 'source'
             try:
                 rendered = application.configuration()
             except configparser.Error:
@@ -133,6 +134,8 @@ class RegistrationProbeTests(unittest.TestCase):
             parsed.read_string(rendered)
             self.assertTrue(parsed.getboolean("actions", "ENABLED"))
             self.assertEqual("Forgejo", parsed[configparser.UNNAMED_SECTION]["APP_NAME"])
+            self.assertEqual('http://runner-forgejo-test-fixture123-source-app:3000/',
+                             parsed['server']['ROOT_URL'])
 
     def test_server_error_does_not_expose_the_response_or_token(self):
         self.assertTrue(MODULE.is_file(), "scoped registration probe is missing")
