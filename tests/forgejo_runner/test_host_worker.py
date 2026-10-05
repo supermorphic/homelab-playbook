@@ -78,6 +78,72 @@ class HostWorkerTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     host_fixture.inspect_workers(self.target())
 
+    def test_worker_acceptance_requires_published_loopback_http(self):
+        from scripts.forgejo_runner import host_fixture
+        outcomes = {name: True for name in ('rootless_api', 'sibling_containers', 'mapped_bind',
+            'private_loopback', 'user_manager', 'bounded_storage', 'outer_limits', 'process_boundary')}
+        for result in (outcomes, {**outcomes, 'published_loopback': False}):
+            outcome = {'exit_code': 0, 'primary_error': None, 'cleanup_errors': [],
+                       'acceptance': 'worker-only', 'observations': result}
+            with patch.object(host_fixture, 'ssh_observation', return_value=outcome):
+                with self.assertRaises(ValueError):
+                    host_fixture.inspect_workers(self.target())
+        outcome['observations'] = {**outcomes, 'published_loopback': True}
+        with patch.object(host_fixture, 'ssh_observation', return_value=outcome):
+            self.assertEqual(outcome, host_fixture.inspect_workers(self.target()))
+
+    def test_published_port_rejects_non_loopback_or_ambiguous_bindings(self):
+        from scripts.forgejo_runner import worker_probe
+        parser = getattr(worker_probe, 'published_port', None)
+        self.assertTrue(callable(parser), 'Published-port validation is missing')
+        self.assertEqual(49152, parser({'8080/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '49152'}]}))
+        for bindings in ({}, {'8080/tcp': []},
+                {'8080/tcp': [{'HostIp': '0.0.0.0', 'HostPort': '49152'}]},
+                {'8080/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '0'}]},
+                {'8080/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '65536'}]},
+                {'8080/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '80'}]},
+                {'8080/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '49152'}] * 2}):
+            with self.subTest(bindings=bindings), self.assertRaises(ValueError):
+                parser(bindings)
+
+    def test_mapped_runtime_exec_preserves_namespace_capabilities(self):
+        from scripts.forgejo_runner import worker_probe
+        validator = getattr(worker_probe, 'validate_namespace_credentials', None)
+        self.assertTrue(callable(validator), 'Mapped runtime credential observation is missing')
+        status = {'Uid': '0 0 0 0', 'Gid': '0 0 0 0',
+                  'CapEff': '1ffffffffff', 'CapPrm': '1ffffffffff', 'CapBnd': '1ffffffffff'}
+        validator(status, 40)
+        for key, value in (('Uid', '1 1 1 1'), ('Gid', '1 1 1 1'),
+                           ('CapEff', 'c0'), ('CapPrm', 'c0'), ('CapBnd', 'c0')):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                validator({**status, key: value}, 40)
+
+    def test_published_http_uses_actual_loopback_response(self):
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        import threading
+        from scripts.forgejo_runner import worker_probe
+        checker = getattr(worker_probe, 'check_published_http', None)
+        self.assertTrue(callable(checker), 'Published-port HTTP observation is missing')
+        class Handler(BaseHTTPRequestHandler):
+            payload = b'{"fixture":"published-loopback"}'
+            response = 200
+            def do_GET(self):
+                self.send_response(self.response); self.end_headers(); self.wfile.write(self.payload)
+            def log_message(self, *args):
+                pass
+        server = HTTPServer(('127.0.0.1', 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        bindings = {'8080/tcp': [{'HostIp': '127.0.0.1', 'HostPort': str(server.server_port)}]}
+        try:
+            checker(bindings)
+            for status, payload in ((503, b'{"fixture":"published-loopback"}'),
+                                    (200, b'{"fixture":"unrelated"}'), (200, b'x' * 1025)):
+                Handler.response, Handler.payload = status, payload
+                with self.subTest(status=status, payload_size=len(payload)), self.assertRaises(ValueError):
+                    checker(bindings)
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
     def test_worker_credentials_leave_only_mapping_helper_bounding_capabilities(self):
         try:
             probe = importlib.import_module('scripts.forgejo_runner.worker_probe')
@@ -104,7 +170,9 @@ class HostWorkerTests(unittest.TestCase):
             unit = {'MainPID': '4321', 'ControlGroup': '/system.slice/owned.service'}
             result = image / 'work/worker-result.json'
             result.write_text('{"synthetic":true}')
-            self.assertEqual({'synthetic': True}, self.worker.read_worker_result(target, unit, root / 'proc')['observations'])
+            with patch.object(self.worker, 'validate_runtime_storage', create=True) as runtime_check:
+                self.assertEqual({'synthetic': True}, self.worker.read_worker_result(target, unit, root / 'proc')['observations'])
+                runtime_check.assert_called_once()
             result.unlink()
             outside = root / 'unrelated'; outside.write_text('private unrelated sentinel')
             result.symlink_to(outside)
@@ -116,10 +184,34 @@ class HostWorkerTests(unittest.TestCase):
             self.assertIsNone(self.worker.read_worker_result(target, unit, root / 'proc')['observations'],
                               'Initial manager startup is not completed acceptance')
 
+    def test_runtime_storage_requires_the_owned_bounded_mount(self):
+        from types import SimpleNamespace
+        validator = getattr(self.worker, 'validate_runtime_mount', None)
+        self.assertTrue(callable(validator), 'Independent runtime mount validation is missing')
+        source = SimpleNamespace(st_dev=12, st_ino=34, st_uid=2202, st_gid=2202, st_mode=0o40700)
+        filesystem = SimpleNamespace(f_blocks=65536, f_frsize=4096)
+        validator(self.target(), source, source, 12, filesystem)
+        for replacement in ({'st_dev': 13}, {'st_ino': 35}, {'st_uid': 0},
+                             {'st_gid': 0}, {'st_mode': 0o40755}):
+            runtime = SimpleNamespace(**{**vars(source), **replacement})
+            with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                validator(self.target(), source, runtime, 12, filesystem)
+        with self.assertRaises(ValueError):
+            validator(self.target(), source, source, 13, filesystem)
+        with self.assertRaises(ValueError):
+            validator(self.target(), source, source, 12, SimpleNamespace(f_blocks=65537, f_frsize=4096))
+
     def test_offline_policy_allows_local_tarballs_and_rejects_registry_images(self):
         policy = json.loads(self.worker.worker_files(self.target(), 'trusted launcher')['etc/containers/policy.json'])
         self.assertEqual([{'type': 'reject'}], policy['default'])
         self.assertEqual({'tarball': {'': [{'type': 'insecureAcceptAnything'}]}}, policy['transports'])
+
+    def test_private_runtime_storage_uses_standard_uid_path(self):
+        import tomllib
+        files = self.worker.worker_files(self.target(), 'trusted launcher')
+        storage = tomllib.loads(files['etc/containers/storage.conf'])['storage']
+        self.assertEqual('/run/user/2202/storage', storage['runroot'])
+        self.assertEqual('/work/graph', storage['graphroot'])
 
     def test_runtime_maps_require_the_declared_subordinate_ranges(self):
         from scripts.forgejo_runner import worker_probe
@@ -141,19 +233,26 @@ class HostWorkerTests(unittest.TestCase):
             root = Path(directory)
             (root / 'worker.json').write_text(json.dumps({'worker': self.target()['worker']}))
             captured = {}
+            def mount(argv, **kwargs):
+                if argv[:3] == ['/usr/bin/mount', '--bind', '/work/run']:
+                    captured['runtime_bind'] = argv[2:]
             def handoff(path, argv):
-                captured.update(argv=argv, user=os.environ.get('USER'), logname=os.environ.get('LOGNAME'))
+                captured.update(argv=argv, user=os.environ.get('USER'), logname=os.environ.get('LOGNAME'),
+                    runtime=os.environ.get('XDG_RUNTIME_DIR'), bus=os.environ.get('DBUS_SESSION_BUS_ADDRESS'))
                 raise Handoff
             with patch.object(worker_launch, 'Path', side_effect=lambda p: root / p.lstrip('/')), \
                  patch.object(worker_launch.os, 'geteuid', return_value=0), \
                  patch.object(worker_launch.os, 'getpid', return_value=1), \
                  patch.object(worker_launch.os, 'chown'), \
-                 patch.object(worker_launch.subprocess, 'run'), \
+                 patch.object(worker_launch.subprocess, 'run', side_effect=mount), \
                  patch.object(worker_launch.os, 'execv', side_effect=handoff), \
                  patch.dict(os.environ, {'USER': 'root', 'LOGNAME': 'root'}), self.assertRaises(Handoff):
                 worker_launch.main()
             self.assertEqual('fixture-worker', captured['user'])
             self.assertEqual('fixture-worker', captured['logname'])
+            self.assertEqual(['/work/run', '/run/user/2202'], captured.get('runtime_bind'))
+            self.assertEqual('/run/user/2202', captured['runtime'])
+            self.assertEqual('unix:path=/run/user/2202/bus', captured['bus'])
             self.assertEqual(['/usr/bin/setpriv', '--reuid=2202', '--regid=2202', '--clear-groups',
                 '--bounding-set=-all,+setuid,+setgid', '--inh-caps=-all', '--ambient-caps=-all',
                 '/usr/bin/catatonit', '--', '/usr/lib/systemd/systemd', '--user',

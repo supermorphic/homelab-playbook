@@ -76,7 +76,7 @@ def worker_files(target, launcher):
         # percentage default would give each child a fraction of that already
         # bounded maximum, preventing ordinary Podman startup.
         'etc/systemd/user.conf': '[Manager]\nDefaultTasksMax=infinity\n',
-        'etc/containers/storage.conf': '[storage]\ndriver="vfs"\ngraphroot="/work/graph"\nrunroot="/work/run/storage"\n',
+        'etc/containers/storage.conf': f'[storage]\ndriver="vfs"\ngraphroot="/work/graph"\nrunroot="/run/user/{uid}/storage"\n',
         'etc/containers/containers.conf': '[engine]\ncgroup_manager="systemd"\nevents_logger="file"\n',
         'etc/containers/policy.json': '{"default":[{"type":"reject"}],"transports":'
             '{"tarball":{"": [{"type":"insecureAcceptAnything"}]}}}\n',
@@ -89,6 +89,34 @@ def worker_files(target, launcher):
         # Ensure the runtime directory exists in the bounded image.
         'work/run/.fixture': 'synthetic runtime allocation\n',
     }
+
+
+def validate_runtime_mount(target, source, runtime, work_device, filesystem):
+    worker = target['worker']
+    if ((source.st_dev, source.st_ino) != (runtime.st_dev, runtime.st_ino)
+            or runtime.st_dev != work_device
+            or runtime.st_uid != worker['uid'] or runtime.st_gid != worker['gid']
+            or not stat.S_ISDIR(runtime.st_mode) or stat.S_IMODE(runtime.st_mode) != 0o700
+            or filesystem.f_blocks * filesystem.f_frsize > target['limits']['disk_bytes']):
+        raise ValueError('Worker runtime directory is outside its owned bounded storage')
+
+
+def validate_runtime_storage(target, root, work):
+    """Read mount identity through pinned process and directory descriptors."""
+    descriptors = []
+    try:
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        source = os.open('run', flags, dir_fd=work)
+        descriptors.append(source)
+        parent = root
+        for name in ('run', 'user', str(target['worker']['uid'])):
+            parent = os.open(name, flags, dir_fd=parent)
+            descriptors.append(parent)
+        validate_runtime_mount(target, os.fstat(source), os.fstat(parent),
+                               os.fstat(work).st_dev, os.fstatvfs(parent))
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
 
 
 def read_worker_result(target, unit, proc=Path('/proc')):
@@ -132,6 +160,8 @@ def read_worker_result(target, unit, proc=Path('/proc')):
             observation = json.loads(contents['worker-result.json']) if contents['worker-result.json'] else None
         except ValueError:
             observation = None  # A bounded single write is still in progress.
+        if observation is not None:
+            validate_runtime_storage(target, root, work)
         diagnostic = contents['probe-error.log']
         if diagnostic:
             diagnostic = (diagnostic + '\n' + contents['api-error.log'])[:4096]
@@ -146,7 +176,7 @@ def read_worker_result(target, unit, proc=Path('/proc')):
 def observe_worker_boundary(target, observed, unit):
     """Read kernel process ancestry and effective ancestor limits from the host."""
     required = {'rootless_api', 'sibling_containers', 'mapped_bind', 'private_loopback',
-                'user_manager', 'bounded_storage'}
+                'published_loopback', 'user_manager', 'bounded_storage'}
     if not isinstance(observed, dict) or set(observed) != required or any(observed[key] is not True for key in required):
         raise ValueError('Worker probe lacks required independent workload outcomes')
     outer = unit.get('ControlGroup', '')

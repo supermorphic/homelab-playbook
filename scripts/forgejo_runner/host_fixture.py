@@ -230,7 +230,7 @@ def inspect_workers(target: dict) -> dict:
         raise ValueError('Invalid worker experiment outcome')
     if outcome['exit_code'] == 0:
         required = {'rootless_api', 'sibling_containers', 'mapped_bind', 'private_loopback',
-                    'user_manager', 'bounded_storage', 'outer_limits', 'process_boundary'}
+                    'published_loopback', 'user_manager', 'bounded_storage', 'outer_limits', 'process_boundary'}
         result = outcome.get('observations', {})
         if (outcome['cleanup_errors'] or outcome.get('primary_error') is not None
                 or set(result) != required or any(result[key] is not True for key in required)):

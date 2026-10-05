@@ -416,14 +416,16 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                 'AmbientCapabilities=', 'Environment=', 'ProtectProc=', 'BindReadOnlyPaths='))]
             properties += ['ProtectControlGroupsEx=private', 'Delegate=yes', 'NoNewPrivileges=no',
                 'PrivatePIDs=yes', 'ProtectProc=default',
+                # Rootless network helpers need a tun device in their owned
+                # network namespaces, without exposing the host's other devices.
+                'BindPaths=/dev/net/tun', 'DeviceAllow=/dev/net/tun rw',
                 'BindReadOnlyPaths=/usr ' + ' '.join(helper_binds),
                 # Only the fixed root-owned launcher retains these setup caps.
                 # It isolates setuid helpers and clears all active privileges
                 # before executing the disposable user manager.
                 'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID CAP_SETPCAP',
                 'AmbientCapabilities=CAP_SYS_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID',
-                'Environment=HOME=/work TMPDIR=/work XDG_RUNTIME_DIR=/work/run '
-                'DBUS_SESSION_BUS_ADDRESS=unix:path=/work/run/bus']
+                'Environment=HOME=/work TMPDIR=/work']
         for setting in properties:
             argv.append('--property=' + setting)
         if worker:
