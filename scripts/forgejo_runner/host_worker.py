@@ -1,0 +1,186 @@
+"""Independent host observations for the offline temporary rootless worker stage."""
+
+import json
+import os
+from pathlib import Path
+import stat
+
+
+def validate_worker_budget(target, capacity=None):
+    limits = target['limits']
+    ranges = {'memory_bytes': (512 * 1024**2, 1024**3),
+              'disk_bytes': (256 * 1024**2, 1024**3),
+              'pids': (128, 256), 'cpu_percent': (25, 50), 'job_seconds': (30, 120)}
+    if any(type(limits[key]) is not int or not low <= limits[key] <= high
+           for key, (low, high) in ranges.items()):
+        raise ValueError('Worker probe exceeds its bounded experiment budgets')
+    if capacity is not None:
+        if (capacity['memory_available'] < limits['memory_bytes'] + 2 * 1024**3
+                or capacity['memory_total'] < limits['memory_bytes'] * 4
+                or capacity['disk_available'] < limits['disk_bytes'] + 2 * 1024**3):
+            raise ValueError('Insufficient host reserve; no setup was performed')
+
+
+def worker_cleanup_errors(target, proc=Path('/proc')):
+    worker = target['worker']
+    for process in proc.iterdir():
+        if not process.name.isdigit():
+            continue
+        try:
+            status = dict(line.split(':', 1) for line in (process / 'status').read_text().splitlines() if ':' in line)
+            identities = list(map(int, status['Uid'].split()))
+        except FileNotFoundError:
+            continue
+        if any(uid == worker['uid'] or worker['subuid_start'] <= uid < worker['subuid_start'] + worker['subid_count']
+               for uid in identities):
+            return ['Worker processes survived; allocation preserved']
+    return []
+
+
+def validate_process_boundary(target, records, outer, host_net, host_userns, host_pidns):
+    """Host-kernel metadata, not a container's assertion about its own ancestry."""
+    worker = target['worker']
+    if not records or not outer.startswith('/system.slice/') or '..' in outer.split('/'):
+        raise ValueError('Worker process observation is incomplete')
+    direct = subordinate = False
+    for process in records:
+        uid, gid = process['uid'], process['gid']
+        direct |= uid == worker['uid']
+        subordinate |= worker['subuid_start'] <= uid < worker['subuid_start'] + worker['subid_count']
+        uid_allowed = uid == worker['uid'] or worker['subuid_start'] <= uid < worker['subuid_start'] + worker['subid_count']
+        gid_allowed = gid == worker['gid'] or worker['subgid_start'] <= gid < worker['subgid_start'] + worker['subid_count']
+        if (not uid_allowed or not gid_allowed
+                or not process['cgroup'].startswith(outer + '/')
+                or process['net'] == host_net
+                or process['pidns'] == host_pidns
+                or process['userns'] == host_userns and process['effective_caps'] != 0):
+            raise ValueError('Worker process escaped its declared boundary')
+    if not direct or not subordinate:
+        raise ValueError('Worker and subordinate container observations are required')
+
+
+def worker_files(target, launcher):
+    """Private image NSS records authorize only the declared unused ID ranges."""
+    worker = target['worker']
+    user, uid, gid = worker['user'], worker['uid'], worker['gid']
+    return {
+        'worker-launch.py': launcher,
+        'worker.json': json.dumps({'worker': worker, 'limits': target['limits']}),
+        'etc/passwd': f'root:x:0:0:root:/root:/usr/sbin/nologin\n{user}:x:{uid}:{gid}:fixture:/work:/usr/sbin/nologin\n',
+        'etc/group': f'root:x:0:\n{user}:x:{gid}:\n',
+        'etc/nsswitch.conf': 'passwd: files\ngroup: files\nshadow: files\nhosts: files\n',
+        'etc/subuid': f'{user}:{worker["subuid_start"]}:{worker["subid_count"]}\n',
+        'etc/subgid': f'{user}:{worker["subgid_start"]}:{worker["subid_count"]}\n',
+        'etc/machine-id': '11111111111111111111111111111111\n',
+        # The finite root-owned ancestor bounds the whole worker. systemd's
+        # percentage default would give each child a fraction of that already
+        # bounded maximum, preventing ordinary Podman startup.
+        'etc/systemd/user.conf': '[Manager]\nDefaultTasksMax=infinity\n',
+        'etc/containers/storage.conf': '[storage]\ndriver="vfs"\ngraphroot="/work/graph"\nrunroot="/work/run/storage"\n',
+        'etc/containers/containers.conf': '[engine]\ncgroup_manager="systemd"\nevents_logger="file"\n',
+        'etc/containers/policy.json': '{"default":[{"type":"reject"}],"transports":'
+            '{"tarball":{"": [{"type":"insecureAcceptAnything"}]}}}\n',
+        'etc/systemd/user/worker-probe.service':
+            '[Unit]\nDescription=Offline owned worker feasibility probe\n'
+            '[Service]\nType=oneshot\nRemainAfterExit=yes\nDelegate=yes\n'
+            'ExecStart=/usr/bin/python3 /probe.py\nStandardOutput=file:/work/worker-result.json\n'
+            'StandardError=file:/work/probe-error.log\n',
+        'etc/systemd/user/default.target.wants/worker-probe.service': ('link', '../worker-probe.service'),
+        # Ensure the runtime directory exists in the bounded image.
+        'work/run/.fixture': 'synthetic runtime allocation\n',
+    }
+
+
+def read_worker_result(target, unit, proc=Path('/proc')):
+    """Pin the manager's proc directory; never follow paths provided by a worker."""
+    pid = unit.get('MainPID', '0')
+    empty = {'observations': None, 'diagnostic': ''}
+    if not pid.isdigit() or pid == '0':
+        return empty
+    descriptors = []
+    try:
+        process = os.open(proc / pid, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptors.append(process)
+        descriptor = os.open('cgroup', os.O_RDONLY | os.O_NOFOLLOW, dir_fd=process)
+        with os.fdopen(descriptor) as stream:
+            group = stream.read(4096).strip().removeprefix('0::')
+        outer = unit['ControlGroup']
+        if not outer.startswith('/system.slice/') or not (group == outer or group.startswith(outer + '/')):
+            raise ValueError('Result producer is outside the owned ancestor')
+        # This is a kernel procfs link belonging to the pinned live process,
+        # not a user-controlled symlink in the disposable filesystem.
+        root = os.open('root', os.O_RDONLY | os.O_DIRECTORY, dir_fd=process)
+        descriptors.append(root)
+        work = os.open('work', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
+        descriptors.append(work)
+        contents = {}
+        for name, limit in (('worker-result.json', 16384), ('probe-error.log', 4096), ('api-error.log', 4096)):
+            try:
+                descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=work)
+            except FileNotFoundError:
+                contents[name] = ''
+                continue
+            with os.fdopen(descriptor) as stream:
+                metadata = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                        or metadata.st_uid != target['worker']['uid']):
+                    raise ValueError('Unsafe worker result file')
+                if name == 'worker-result.json' and metadata.st_size > limit:
+                    raise ValueError('Worker result exceeded its bound')
+                contents[name] = stream.read(limit)
+        try:
+            observation = json.loads(contents['worker-result.json']) if contents['worker-result.json'] else None
+        except ValueError:
+            observation = None  # A bounded single write is still in progress.
+        diagnostic = contents['probe-error.log']
+        if diagnostic:
+            diagnostic = (diagnostic + '\n' + contents['api-error.log'])[:4096]
+        return {'observations': observation, 'diagnostic': diagnostic}
+    except FileNotFoundError:
+        return empty
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def observe_worker_boundary(target, observed, unit):
+    """Read kernel process ancestry and effective ancestor limits from the host."""
+    required = {'rootless_api', 'sibling_containers', 'mapped_bind', 'private_loopback',
+                'user_manager', 'bounded_storage'}
+    if not isinstance(observed, dict) or set(observed) != required or any(observed[key] is not True for key in required):
+        raise ValueError('Worker probe lacks required independent workload outcomes')
+    outer = unit.get('ControlGroup', '')
+    if not outer.startswith('/system.slice/') or '..' in outer.split('/'):
+        raise ValueError('Worker ancestor cgroup is missing')
+    path = Path('/sys/fs/cgroup' + outer)
+    limits = target['limits']
+    expectations = {'memory.max': str(limits['memory_bytes']), 'memory.swap.max': '0',
+                    'pids.max': str(limits['pids'])}
+    for name, expected in expectations.items():
+        control = path / name
+        if control.stat().st_uid != 0 or control.read_text().strip() != expected:
+            raise ValueError('Worker ancestor limit is absent or replaceable')
+    cpu = path / 'cpu.max'
+    quota, period = cpu.read_text().split()
+    if cpu.stat().st_uid != 0 or quota == 'max' or int(quota) * 100 != int(period) * limits['cpu_percent']:
+        raise ValueError('Worker ancestor CPU limit is absent or replaceable')
+    worker = target['worker']
+    records = []
+    for process in Path('/proc').iterdir():
+        if not process.name.isdigit():
+            continue
+        try:
+            status = dict(line.split(':', 1) for line in (process / 'status').read_text().splitlines() if ':' in line)
+            uid = int(status['Uid'].split()[1])
+            if uid != worker['uid'] and not worker['subuid_start'] <= uid < worker['subuid_start'] + worker['subid_count']:
+                continue
+            records.append({'uid': uid, 'gid': int(status['Gid'].split()[1]),
+                'cgroup': (process / 'cgroup').read_text().strip().removeprefix('0::'),
+                'net': (process / 'ns/net').stat().st_ino, 'userns': (process / 'ns/user').stat().st_ino,
+                'pidns': (process / 'ns/pid').stat().st_ino,
+                'effective_caps': int(status['CapEff'], 16)})
+        except FileNotFoundError:
+            continue  # A short-lived helper ended during metadata observation.
+    validate_process_boundary(target, records, outer, os.stat('/proc/self/ns/net').st_ino,
+                              os.stat('/proc/self/ns/user').st_ino, os.stat('/proc/self/ns/pid').st_ino)
+    return {**observed, 'outer_limits': True, 'process_boundary': True}

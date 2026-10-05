@@ -1,7 +1,4 @@
-"""Owned resources for a bounded, preliminary host experiment.
-
-This stage does not establish Podman, runner or repository workload acceptance.
-"""
+"""Owned images and units for bounded resource and offline worker experiments."""
 
 import os
 from pathlib import Path
@@ -73,6 +70,8 @@ def run_with_cleanup(primary, cleanup):
         # Remote diagnostics can contain private paths and identifiers. Keep the
         # primary failure independent of teardown without publishing its text.
         result['primary_error'] = type(error).__name__
+        if isinstance(error, HostCommandError):
+            result['diagnostic'] = error.diagnostic
     finally:
         try:
             result['cleanup_errors'] = cleanup()
@@ -99,6 +98,14 @@ def validate_probe_budget(target, capacity=None):
             raise ValueError('Insufficient host reserve; no setup was performed')
 
 
+class HostCommandError(RuntimeError):
+    """Sanitized exception text with a bounded diagnostic for private outcomes."""
+
+    def __init__(self, diagnostic):
+        super().__init__('Host resource command failed')
+        self.diagnostic = diagnostic[:4096]
+
+
 def command(argv):
     result = subprocess.run(argv, capture_output=True, text=True, timeout=30,
                             env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'},
@@ -106,7 +113,7 @@ def command(argv):
     if result.returncode:
         # systemctl show uses a nonzero status for an absent unit.
         if argv[:2] != ['systemctl', 'show'] or 'LoadState=not-found' not in result.stdout:
-            raise RuntimeError('Host resource command failed')
+            raise HostCommandError(result.stderr)
     return result.stdout
 
 
@@ -122,7 +129,7 @@ class OwnedUnit:
 
     def observe(self):
         output = self.execute(['systemctl', 'show',
-            '--property=LoadState,InvocationID,RootImage,ActiveState,SubState,ControlGroup',
+            '--property=LoadState,InvocationID,RootImage,ActiveState,SubState,ControlGroup,MainPID',
             '--', self.name])
         return dict(line.split('=', 1) for line in output.splitlines() if '=' in line)
 
@@ -211,9 +218,20 @@ def image_attached(image):
 
 def run_resource_probe(target, observe, validate, probe_source):
     """Synthetic resource stage; never run a runner, socket or repository code."""
+    return run_image_probe(target, observe, validate, probe_source)
+
+
+def run_image_probe(target, observe, validate, probe_source, *, stage='resources-only',
+                    budget_validator=validate_probe_budget, extra_files=None, worker_observer=None,
+                    worker_reader=None, after_stop=None):
+    """Fixed trusted experiments share the same image ownership and disposal path."""
+    if stage not in ('resources-only', 'worker-only'):
+        raise ValueError('Unknown host experiment')
+    worker = stage == 'worker-only'
     resources = Resources()
     root = Path(target['state_root'])
-    unit = OwnedUnit('forgejo-resource-' + target['ownership_marker'] + '.service', root / 'worker.ext4')
+    unit = OwnedUnit(('forgejo-worker-' if worker else 'forgejo-resource-')
+                     + target['ownership_marker'] + '.service', root / 'worker.ext4')
     services = None
     diagnostic = ''
 
@@ -232,6 +250,8 @@ def run_resource_probe(target, observe, validate, probe_source):
                 # log. Never forward it to console, CI logs or a public PR.
                 diagnostic = stream.read(4096)
         errors = unit.cleanup()
+        if not errors and unit.attempted and after_stop is not None:
+            errors = after_stop(target)
         if not errors:
             deadline = time.monotonic() + 5
             while image_attached(root / 'worker.ext4'):
@@ -251,8 +271,11 @@ def run_resource_probe(target, observe, validate, probe_source):
             raise ValueError('Administrator fixture access is required')
         validate(target, observe(target), allow_new_fixture=True)
         destination = root.parent if root.parent.exists() else root.parent.parent
-        validate_probe_budget(target, host_capacity(destination))
-        for tool in ('fallocate', 'mkfs.ext4', 'systemd-run', 'setpriv'):
+        budget_validator(target, host_capacity(destination))
+        tools = ('fallocate', 'mkfs.ext4', 'systemd-run', 'setpriv')
+        if worker:
+            tools += ('setcap', 'getcap', 'catatonit')
+        for tool in tools:
             if shutil.which(tool) is None:
                 raise ValueError('A resource probe prerequisite is missing')
         if command(['systemctl', 'is-system-running']).strip() != 'running':
@@ -270,6 +293,22 @@ def run_resource_probe(target, observe, validate, probe_source):
             resources.record_file(ownership)
         root.mkdir(mode=0o700)
         resources.record_file(root)
+        helper_binds = []
+        if worker:
+            for helper, capability in (('newuidmap', 'cap_setuid'), ('newgidmap', 'cap_setgid')):
+                copy = root / helper
+                # These fixed public package binaries are copied, never modified
+                # in place. File capabilities preserve the calling UID, unlike
+                # the Debian setuid binaries, and grant only mapping authority.
+                with copy.open('xb'):
+                    pass
+                copy.chmod(0o755)
+                resources.record_file(copy)
+                shutil.copyfile('/usr/bin/' + helper, copy)
+                command(['setcap', capability + '=ep', str(copy)])
+                if command(['getcap', str(copy)]).strip() != str(copy) + ' ' + capability + '=ep':
+                    raise ValueError('Owned mapping helper capability differs from its declaration')
+                helper_binds.append(str(copy) + ':/usr/bin/' + helper)
         staging = root / 'rootfs'
         staging.mkdir(mode=0o755)
         resources.record_file(staging)
@@ -289,6 +328,31 @@ def run_resource_probe(target, observe, validate, probe_source):
         probe.write_text(probe_source)
         probe.chmod(0o444)
         resources.record_file(probe)
+        for relative, content in (extra_files or {}).items():
+            if relative.startswith('/') or '..' in Path(relative).parts:
+                raise ValueError('Invalid trusted experiment file')
+            path = staging / relative
+            missing = []
+            parent = path.parent
+            while not parent.exists():
+                missing.append(parent)
+                parent = parent.parent
+            for parent in reversed(missing):
+                parent.mkdir(mode=0o755)
+                if parent.is_relative_to(staging / 'work'):
+                    os.chown(parent, target['worker']['uid'], target['worker']['gid'])
+                    parent.chmod(0o700)
+                resources.record_file(parent)
+            if isinstance(content, tuple):
+                kind, destination = content
+                if kind != 'link' or not (path.parent / destination).resolve(strict=True).is_relative_to(staging.resolve()):
+                    raise ValueError('Trusted image link leaves the allocation')
+                path.symlink_to(destination)
+                resources.record_file(path, allow_link=True)
+            else:
+                path.write_text(content)
+                path.chmod(0o444)
+                resources.record_file(path)
         image = root / 'worker.ext4'
         with image.open('xb'):
             pass
@@ -296,7 +360,7 @@ def run_resource_probe(target, observe, validate, probe_source):
         resources.record_file(image)
         # Recheck the actual destination after setup, immediately before its
         # allocation. An existing fixture parent may be a separate filesystem.
-        validate_probe_budget(target, host_capacity(root))
+        budget_validator(target, host_capacity(root))
         command(['fallocate', '-l', str(target['limits']['disk_bytes']), str(image)])
         command(['mkfs.ext4', '-q', '-F', '-m', '0', '-d', str(staging), str(image)])
         output = root / 'result.json'
@@ -346,9 +410,26 @@ def run_resource_probe(target, observe, validate, probe_source):
             'Environment=HOME=/work TMPDIR=/work XDG_RUNTIME_DIR=/work/run',
         ]
         argv = ['systemd-run', '--quiet', '--unit=' + unit.name]
+        if worker:
+            properties = [setting for setting in properties if not setting.startswith((
+                'ProtectControlGroups=', 'NoNewPrivileges=', 'CapabilityBoundingSet=',
+                'AmbientCapabilities=', 'Environment=', 'ProtectProc=', 'BindReadOnlyPaths='))]
+            properties += ['ProtectControlGroupsEx=private', 'Delegate=yes', 'NoNewPrivileges=no',
+                'PrivatePIDs=yes', 'ProtectProc=default',
+                'BindReadOnlyPaths=/usr ' + ' '.join(helper_binds),
+                # Only the fixed root-owned launcher retains these setup caps.
+                # It isolates setuid helpers and clears all active privileges
+                # before executing the disposable user manager.
+                'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID CAP_SETPCAP',
+                'AmbientCapabilities=CAP_SYS_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID',
+                'Environment=HOME=/work TMPDIR=/work XDG_RUNTIME_DIR=/work/run '
+                'DBUS_SESSION_BUS_ADDRESS=unix:path=/work/run/bus']
         for setting in properties:
             argv.append('--property=' + setting)
-        argv.extend(['/usr/bin/setpriv', f'--reuid={target["worker"]["uid"]}',
+        if worker:
+            argv.extend(['/usr/bin/python3', '/worker-launch.py'])
+        else:
+            argv.extend(['/usr/bin/setpriv', f'--reuid={target["worker"]["uid"]}',
             f'--regid={target["worker"]["gid"]}', '--clear-groups', '--bounding-set=-all',
             '--inh-caps=-all', '--ambient-caps=-all', '/usr/bin/python3', '/probe.py', json.dumps({
             'limits': limits, 'uid': target['worker']['uid'], 'gid': target['worker']['gid'],
@@ -362,6 +443,22 @@ def run_resource_probe(target, observe, validate, probe_source):
             current = unit.observe()
             if current.get('InvocationID') != unit.invocation:
                 raise ValueError('Unit identity changed during probe')
+            if worker_reader is not None:
+                report = worker_reader(target, current)
+                if report['diagnostic']:
+                    raise HostCommandError(report['diagnostic'])
+                if report['observations'] is not None:
+                    return worker_observer(target, report['observations'], current)
+            if worker and output.stat().st_size:
+                if output.stat().st_size > 16384:
+                    raise ValueError('Worker probe output exceeded its budget')
+                try:
+                    observed = json.loads(output.read_text())
+                except ValueError:
+                    # The fixed probe may still be completing its one write.
+                    observed = None
+                if observed is not None:
+                    return worker_observer(target, observed, unit.observe())
             if current.get('SubState') == 'exited':
                 if output.stat().st_size > 16384:
                     raise ValueError('Resource probe output exceeded its budget')
@@ -378,4 +475,4 @@ def run_resource_probe(target, observe, validate, probe_source):
     result = run_with_cleanup(setup_and_probe, cleanup)
     if result['exit_code'] and diagnostic:
         result['diagnostic'] = diagnostic
-    return {**result, 'acceptance': 'resources-only'}
+    return {**result, 'acceptance': stage}

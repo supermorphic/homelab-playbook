@@ -59,6 +59,21 @@ class HostResourceTests(unittest.TestCase):
         self.assertEqual(1, result['exit_code'])
         self.assertEqual({'disk_bounded': True}, result['observations'])
 
+    def test_host_command_failure_retains_bounded_private_diagnostic(self):
+        import subprocess
+        response = subprocess.CompletedProcess(['synthetic-tool'], 1, '', 'private startup failure')
+        with patch.object(self.module.subprocess, 'run', return_value=response):
+            try:
+                self.module.command(['synthetic-tool'])
+            except RuntimeError as error:
+                self.assertNotIn('private startup failure', str(error))
+                def primary():
+                    raise error
+                outcome = self.module.run_with_cleanup(primary, lambda: [])
+                self.assertEqual('private startup failure', outcome.get('diagnostic'))
+            else:
+                self.fail('Failed host command was accepted')
+
     def test_cleanup_still_runs_after_partial_setup_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             owned = Path(directory) / 'owned'
@@ -223,6 +238,15 @@ class HostResourceTests(unittest.TestCase):
     def test_resource_stage_creates_bounded_unit_and_cleans_its_owned_image(self):
         self.check_resource_stage()
 
+    def test_worker_stage_uses_supported_transient_cgroup_namespace_property(self):
+        self.check_resource_stage(worker_stage=True)
+
+    def test_worker_default_target_references_loadable_probe_unit(self):
+        self.check_resource_stage(worker_stage=True, worker_unit=True)
+
+    def test_worker_process_cleanup_failure_preserves_its_image(self):
+        self.check_resource_stage(worker_stage=True, worker_cleanup_failure=True)
+
     def test_resource_stage_cleans_unit_created_before_start_response_was_lost(self):
         self.check_resource_stage(lost_start=True)
 
@@ -239,7 +263,8 @@ class HostResourceTests(unittest.TestCase):
         self.check_resource_stage(destination_shrunk=True)
 
     def check_resource_stage(self, *, lost_start=False, image_busy=False,
-                             small_destination=False, destination_shrunk=False, launch_failed=False):
+                             small_destination=False, destination_shrunk=False, launch_failed=False,
+                             worker_stage=False, worker_unit=False, worker_cleanup_failure=False):
         import json
         from types import SimpleNamespace
         with tempfile.TemporaryDirectory() as directory:
@@ -261,11 +286,29 @@ class HostResourceTests(unittest.TestCase):
                     return 'running'
                 if argv[:2] == ['systemctl', 'list-units']:
                     return 'unrelated.service loaded active running synthetic service'
-                if argv[0] in ('fallocate', 'mkfs.ext4'):
+                if argv[0] in ('fallocate', 'mkfs.ext4', 'setcap'):
                     return ''
+                if argv[0] == 'getcap':
+                    capability = 'cap_setuid' if argv[1].endswith('/newuidmap') else 'cap_setgid'
+                    return argv[1] + ' ' + capability + '=ep\n'
                 if argv[0] == 'systemd-run':
                     properties = dict(item.removeprefix('--property=').split('=', 1)
                                       for item in argv if item.startswith('--property='))
+                    if worker_stage:
+                        # systemd v257's transient API retains a boolean legacy
+                        # property and exposes the namespace enum through Ex.
+                        if properties.get('ProtectControlGroups', 'no') not in ('yes', 'no'):
+                            raise RuntimeError('Transient property requires a boolean')
+                        self.assertEqual('private', properties['ProtectControlGroupsEx'])
+                        self.assertEqual('yes', properties['Delegate'])
+                        self.assertEqual('no', properties['NoNewPrivileges'])
+                        self.assertEqual('yes', properties['PrivatePIDs'])
+                        self.assertEqual('default', properties['ProtectProc'])
+                        for helper in ('newuidmap', 'newgidmap'):
+                            copy = Path(properties['RootImage']).parent / helper
+                            self.assertTrue(copy.is_file(), 'Worker receives only an owned helper copy')
+                            self.assertEqual(0, copy.stat().st_mode & 0o6000)
+                            self.assertIn(str(copy) + ':/usr/bin/' + helper, properties['BindReadOnlyPaths'])
                     for key, value in {'MemoryMax': '134217728', 'MemorySwapMax': '0',
                                        'TasksMax': '32', 'CPUQuota': '25%', 'RuntimeMaxSec': '30s',
                                        'PrivateNetwork': 'yes', 'ProtectControlGroups': 'yes',
@@ -274,18 +317,34 @@ class HostResourceTests(unittest.TestCase):
                                        'User': '0', 'Group': '0', 'NoNewPrivileges': 'yes',
                                        'AmbientCapabilities': 'CAP_SETUID',
                                        'CapabilityBoundingSet': 'CAP_SETUID CAP_SETGID CAP_SETPCAP'}.items():
+                        if worker_stage and key in ('ProtectControlGroups', 'BindReadOnlyPaths', 'NoNewPrivileges',
+                                                     'AmbientCapabilities', 'CapabilityBoundingSet'):
+                            continue
                         self.assertEqual(value, properties[key])
-                    program = argv.index('/usr/bin/setpriv')
-                    self.assertEqual(['/usr/bin/setpriv', '--reuid=2202', '--regid=2202',
+                    if not worker_stage:
+                        program = argv.index('/usr/bin/setpriv')
+                        self.assertEqual(['/usr/bin/setpriv', '--reuid=2202', '--regid=2202',
                                       '--clear-groups', '--bounding-set=-all', '--inh-caps=-all',
                                       '--ambient-caps=-all', '/usr/bin/python3', '/probe.py'],
                                      argv[program:-1])
                     image = Path(properties['RootImage'])
                     self.assertTrue(image.is_file())
+                    if worker_unit:
+                        import configparser
+                        units = image.parent / 'rootfs/etc/systemd/user'
+                        canonical = units / 'worker-probe.service'
+                        self.assertTrue(canonical.is_file(), 'The user manager must find the actual unit')
+                        dependency = units / 'default.target.wants/worker-probe.service'
+                        self.assertTrue(dependency.is_symlink())
+                        self.assertEqual(canonical.resolve(), dependency.resolve(strict=True))
+                        configuration = configparser.ConfigParser()
+                        configuration.read(units.parent / 'user.conf')
+                        self.assertEqual('infinity', configuration['Manager']['DefaultTasksMax'])
                     receipt = image.parent / 'receipt.json'
                     self.assertTrue(receipt.is_file(), 'Ownership must survive an interrupted controller')
                     journal = json.loads(receipt.read_text())
-                    self.assertEqual('forgejo-resource-synthetic-57.service', journal['unit'])
+                    self.assertEqual('forgejo-' + ('worker-' if worker_stage else 'resource-')
+                                     + 'synthetic-57.service', journal['unit'])
                     self.assertEqual(str(image), journal['image'])
                     self.assertEqual(0, receipt.stat().st_mode & 0o077)
                     error_log = Path(properties['StandardError'].removeprefix('file:'))
@@ -326,17 +385,34 @@ class HostResourceTests(unittest.TestCase):
                     free = 1024
                 return {'memory_total': 8 * 1024**3, 'memory_available': 4 * 1024**3,
                         'disk_available': free}
+            def copy_helper(source, destination):
+                self.assertIn(source, ('/usr/bin/newuidmap', '/usr/bin/newgidmap'))
+                Path(destination).write_bytes(b'synthetic stock helper')
             with patch.object(self.module, 'command', side_effect=command), \
                  patch.object(self.module, 'host_capacity', side_effect=capacity), \
                  patch('os.geteuid', return_value=0), patch('os.chown'), \
                  patch('os.stat', side_effect=stat), patch('shutil.which', return_value='/synthetic/tool'), \
+                 patch.object(self.module.shutil, 'copyfile', side_effect=copy_helper), \
                  patch.object(self.module, 'image_attached', return_value=image_busy):
-                result = self.module.run_resource_probe(target, lambda _: {}, lambda *a, **k: None,
-                                                        'synthetic trusted probe')
-            failed = lost_start or image_busy or small_destination or destination_shrunk or launch_failed
+                if worker_stage:
+                    from scripts.forgejo_runner.host_worker import worker_files
+                    extra = (worker_files(target, 'synthetic trusted launcher') if worker_unit
+                             else {'worker-launch.py': 'synthetic trusted launcher'})
+                    def after_stop(target):
+                        self.assertEqual('inactive', state['ActiveState'])
+                        self.assertTrue((Path(target['state_root']) / 'worker.ext4').is_file())
+                        return ['Synthetic worker process survived'] if worker_cleanup_failure else []
+                    result = self.module.run_image_probe(target, lambda _: {}, lambda *a, **k: None,
+                        'synthetic trusted probe', stage='worker-only',
+                        extra_files=extra,
+                        worker_observer=lambda t, observed, unit: observed, after_stop=after_stop)
+                else:
+                    result = self.module.run_resource_probe(target, lambda _: {}, lambda *a, **k: None,
+                                                            'synthetic trusted probe')
+            failed = lost_start or image_busy or small_destination or destination_shrunk or launch_failed or worker_cleanup_failure
             self.assertEqual(1 if failed else 0, result['exit_code'], result)
             self.assertNotIn('synthetic private startup diagnostic', str(result))
-            self.assertEqual(image_busy or small_destination, parent.exists())
+            self.assertEqual(image_busy or small_destination or worker_cleanup_failure, parent.exists())
             if small_destination or destination_shrunk:
                 self.assertEqual('not-found', state['LoadState'], 'Unsafe capacity must prevent unit startup')
             else:
