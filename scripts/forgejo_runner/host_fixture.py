@@ -97,7 +97,7 @@ def validate_target(target: dict) -> dict:
     return target
 
 
-def validate_observation(target: dict, observed: dict) -> dict:
+def validate_observation(target: dict, observed: dict, *, allow_new_fixture=False) -> dict:
     """Require an independently observed empty, administrator-owned fixture."""
     validate_target(target)
     try:
@@ -107,7 +107,11 @@ def validate_observation(target: dict, observed: dict) -> dict:
         if observed["effective_uid"] != 0 or observed["cgroup_v2"] is not True or observed["user_namespaces"] is not True:
             raise ValueError
         marker = observed["marker"]
-        if (marker["value"] != target["ownership_marker"] or marker["uid"] != 0
+        new_parent = allow_new_fixture and observed.get('state_parent_exists') is False
+        if new_parent:
+            if marker != {'value': None, 'uid': None, 'mode': None, 'regular': False}:
+                raise ValueError
+        elif (marker["value"] != target["ownership_marker"] or marker["uid"] != 0
                 or marker["regular"] is not True or marker["mode"] & 0o022):
             raise ValueError
         if observed["state_root_exists"] is not False or observed["state_parent_secure"] is not True:
@@ -142,6 +146,12 @@ def inspect_target(target: dict) -> dict:
     validate_target(target)
     source = (ROOT / "scripts/forgejo_runner/host_probe.py").read_text()
     payload = source + "\nprint(json.dumps(observe(" + repr(target) + ")))\n"
+    return validate_observation(target, ssh_observation(target, payload))
+
+
+def ssh_observation(target: dict, payload: str, *, timeout=30) -> dict:
+    """Pinned noninteractive transport with bounded, sanitized response handling."""
+    validate_target(target)
     with tempfile.TemporaryDirectory(prefix="forgejo-runner-host-") as directory:
         known_hosts = Path(directory) / "known_hosts"
         known_hosts.write_text(target["ownership_marker"] + " " + target["host_key"] + "\n")
@@ -159,19 +169,49 @@ def inspect_target(target: dict) -> dict:
         argv.extend((target["ssh_alias"], "sudo -n -- /usr/bin/python3 -"))
         try:
             result = subprocess.run(argv, input=payload, text=True, capture_output=True,
-                                    timeout=30, check=False)
+                                    timeout=timeout, check=False)
         except (OSError, subprocess.TimeoutExpired) as error:
             raise RuntimeError("Disposable fixture SSH observation failed") from error
     if result.returncode:
         raise RuntimeError("Disposable fixture SSH observation failed; check supplied access and host key")
     try:
+        if len(result.stdout) > 65536:
+            raise ValueError('Host response exceeded its bounded output size')
         observed = json.loads(result.stdout)
     except (ValueError, TypeError) as error:
         raise ValueError("Disposable fixture returned invalid observation") from error
-    return validate_observation(target, observed)
+    return observed
 
 
-def run(images: Path | None, target: Path | None, *, preflight_only: bool = False) -> int:
+def inspect_resources(target: dict) -> dict:
+    """Run only the separately selected bounded resource experiment."""
+    from scripts.forgejo_runner.host_resources import validate_probe_budget
+    validate_target(target)
+    validate_probe_budget(target)
+    payload = "__file__ = '/fixture/scripts/forgejo_runner/host_fixture.py'\n"
+    # These repository-owned sources run outside the worker under existing
+    # operator fixture access. No server-installed helper or inventory input.
+    for name in ('host_fixture.py', 'host_probe.py', 'host_resources.py'):
+        source = (ROOT / 'scripts/forgejo_runner' / name).read_text()
+        payload += 'exec(' + repr(source) + ')\n'
+    probe = (ROOT / 'scripts/forgejo_runner/resource_probe.py').read_text()
+    payload += 'print(json.dumps(run_resource_probe(' + repr(target) + ', observe, validate_observation, ' + repr(probe) + ')))\n'
+    observed = ssh_observation(target, payload, timeout=300)
+    if (not isinstance(observed, dict) or observed.get('acceptance') != 'resources-only'
+            or type(observed.get('exit_code')) is not int or observed['exit_code'] not in (0, 1, 130)
+            or not isinstance(observed.get('cleanup_errors'), list)):
+        raise ValueError('Invalid resource experiment outcome')
+    if observed['exit_code'] == 0:
+        required = {'limits_verified', 'private_loopback', 'disk_bounded', 'pids_bounded'}
+        result = observed.get('observations', {})
+        if (observed['cleanup_errors'] or observed.get('primary_error') is not None
+                or set(result) != required or any(result[key] is not True for key in required)):
+            raise ValueError('Resource experiment lacks its required evidence')
+    return observed
+
+
+def run(images: Path | None, target: Path | None, *, preflight_only: bool = False,
+        resource_probe_only: bool = False) -> int:
     """Separate observational prerequisites from the unfinished containment gate."""
     if target is None:
         raise ValueError("An explicit disposable Debian host fixture descriptor is required")
@@ -185,6 +225,23 @@ def run(images: Path | None, target: Path | None, *, preflight_only: bool = Fals
     except (OSError, ValueError) as error:
         raise ValueError("Cannot load disposable host descriptor") from error
     validate_target(descriptor)
+    if resource_probe_only:
+        if preflight_only or images:
+            raise ValueError('Resource probe cannot be combined with other experiments')
+        from scripts.forgejo_runner.host_resources import validate_probe_budget
+        validate_probe_budget(descriptor)
+        result = inspect_resources(descriptor)
+        with tempfile.NamedTemporaryFile(mode='w', prefix='host-resource-outcome-', suffix='.json',
+                                         dir=target.parent, delete=False) as evidence:
+            json.dump(result, evidence, indent=2)
+            evidence.write('\n')
+        print(f'Host resource outcome saved to {evidence.name}')
+        if result['exit_code']:
+            if result.get('cleanup_errors'):
+                raise RuntimeError('Host resource cleanup failed; inspect retained allocation and saved outcome')
+            raise RuntimeError('Host resource probe failed; owned state removed; see saved outcome')
+        print('Host resource probe passed and owned state removed; runner containment was not tested')
+        return 0
     if not preflight_only:
         # Do not touch a target until combined acceptance is implemented. A
         # successful observation alone must never satisfy the host fixture gate.

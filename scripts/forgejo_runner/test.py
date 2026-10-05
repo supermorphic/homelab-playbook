@@ -18,6 +18,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="Explicit disposable Debian target descriptor under .tmp")
     parser.add_argument("--preflight-only", action="store_true",
                         help="Observe the disposable host without setup or containment acceptance")
+    parser.add_argument('--resource-probe-only', action='store_true',
+                        help='Bounded temporary host resource test; no runner or repository jobs')
     parser.add_argument("--workload", choices=("forgejo/default", "system_maintenance/default",
                         "system_maintenance/baseline", "semaphore/default", "reverse_proxy/default"),
                         help="Run a staged repository Molecule candidate in a real Forgejo job")
@@ -26,8 +28,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--workflow-contracts', action='store_true',
                         help='Exercise synthetic workflow outputs, artifacts and negative gates')
     args = parser.parse_args(argv)
-    if (args.host_fixture or args.preflight_only) and args.mode != "host-fixture":
+    if (args.host_fixture or args.preflight_only or args.resource_probe_only) and args.mode != "host-fixture":
         parser.error("host options require host-fixture mode")
+    if args.resource_probe_only and (args.preflight_only or args.fixture):
+        parser.error('resource probe cannot be combined with preflight or image fixtures')
     if args.workload and (args.mode != "compatibility" or args.controller_failure):
         parser.error("workloads require compatibility mode without controller failure")
     if args.controller_failure and args.mode != "compatibility":
@@ -44,6 +48,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.mode == "host-fixture":
             from scripts.forgejo_runner.host_fixture import run
+            if args.resource_probe_only:
+                return run(args.fixture, args.host_fixture, resource_probe_only=True)
             return run(args.fixture, args.host_fixture, preflight_only=args.preflight_only)
         from scripts.forgejo_runner.compatibility import run
         return run(args.fixture, registration=args.mode == "compatibility",
