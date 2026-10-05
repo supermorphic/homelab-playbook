@@ -37,6 +37,7 @@ class RunnerRun(Run):
         self.baseline_volumes = None
         self.child_volumes = {}
         self.job_images = []
+        self.controllers = set()
         self.molecule_scenario = None
 
     def observe_volumes(self):
@@ -52,12 +53,17 @@ class RunnerRun(Run):
                                  f"label={self.label}={self.run_id}", "--format", "{{.Names}}"])
         return response.stdout.splitlines()
 
+    def create_controller(self, suffix: str, arguments: list[str]) -> str:
+        # Record intent before engine execution, which can fail after creating it.
+        self.controllers.add(self.name(suffix))
+        return self.create('container', suffix, arguments)
+
     def cleanup(self):
         if self.baseline_volumes is None:
             return super().cleanup()
-        # Stop the only job creator before discovering its engine-created children.
+        # Stop every job creator before discovering its engine-created children.
         resources = self.resources
-        self.resources = [r for r in resources if r == ("container", self.name("one-job"))]
+        self.resources = [r for r in resources if r[0] == 'container' and r[1] in self.controllers]
         try:
             errors = super().cleanup()
         finally:

@@ -23,6 +23,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="Run a staged repository Molecule candidate in a real Forgejo job")
     parser.add_argument("--controller-failure", action="store_true",
                         help="Exercise forced controller failure during compatibility probes")
+    parser.add_argument('--workflow-contracts', action='store_true',
+                        help='Exercise synthetic workflow outputs, artifacts and negative gates')
     args = parser.parse_args(argv)
     if (args.host_fixture or args.preflight_only) and args.mode != "host-fixture":
         parser.error("host options require host-fixture mode")
@@ -30,6 +32,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("workloads require compatibility mode without controller failure")
     if args.controller_failure and args.mode != "compatibility":
         parser.error("controller failure requires compatibility mode")
+    if args.workflow_contracts and (args.mode != 'compatibility' or args.workload or args.controller_failure):
+        parser.error('workflow contracts require compatibility mode without other job probes')
     if args.mode == "unit":
         if args.fixture:
             parser.error("unit mode does not use a fixture descriptor")
@@ -43,7 +47,8 @@ def main(argv: list[str] | None = None) -> int:
             return run(args.fixture, args.host_fixture, preflight_only=args.preflight_only)
         from scripts.forgejo_runner.compatibility import run
         return run(args.fixture, registration=args.mode == "compatibility",
-                   controller_failure=args.controller_failure, workload=args.workload)
+                   controller_failure=args.controller_failure, workload=args.workload,
+                   workflow_contracts=args.workflow_contracts)
     except (RuntimeError, ValueError, OSError) as error:
         print(str(error), file=sys.stderr)
         return 1

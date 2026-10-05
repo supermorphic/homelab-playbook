@@ -19,6 +19,7 @@ class ActionsApplication(Application):
         parser.optionxform = str
         parser.read_string(super().configuration())
         parser["actions"]["ENABLED"] = "true"
+        parser['server']['ROOT_URL'] = f"http://{self.run.name(self.suffix + '-app')}:3000/"
         output = io.StringIO()
         parser.write(output)
         return output.getvalue()
@@ -161,7 +162,7 @@ def run_one_job(experiment, directory, application, repository, token, runtime, 
     handle = next(row["handle"] for row in queued if row.get("name") == "first")
     data = directory / "runner-data"
     data.mkdir(mode=0o700)
-    runner = experiment.create("container", "one-job", [
+    runner = experiment.create_controller("one-job", [
         "--network", application.network,
         "--userns=keep-id:uid=1000,gid=1000", "--user", "1000:1000",
         "--security-opt", "label=disable",
