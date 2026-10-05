@@ -132,6 +132,19 @@ class HostFixtureTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 self.module.validate_observation(target_descriptor(), value)
 
+    def test_resource_setup_accepts_only_a_secure_absent_fixture_parent(self):
+        item = observation()
+        item['marker'] = {'value': None, 'uid': None, 'mode': None, 'regular': False}
+        item['state_parent_exists'] = False
+        self.module.validate_observation(target_descriptor(), item, allow_new_fixture=True)
+        with self.assertRaises(ValueError):
+            self.module.validate_observation(target_descriptor(), item)
+        for key, value in [('state_parent_secure', False), ('state_parent_exists', True),
+                           ('state_root_exists', True)]:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.module.validate_observation(target_descriptor(), {**item, key: value},
+                                                 allow_new_fixture=True)
+
     def test_ssh_pins_host_key_and_restricts_interactive_side_effects(self):
         target = target_descriptor()
         captured = {}

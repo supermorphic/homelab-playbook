@@ -91,7 +91,12 @@ scenarios prepare and verify service definitions; separate stock-container tests
 prove application startup and recovery. Both forms of evidence remain required.
 Do not interpret a passing Molecule scenario as replacing the runtime tests.
 
-Establish these properties in a disposable Linux fixture before host installation:
+Establish these properties in a temporary, isolated runner slot on NUC4 before
+installing the production runners. The operator selected NUC4 for both testing
+and final placement because no separate test host is available. Disposable means
+the test slot's accounts, storage, containers and other owned resources. Preserve
+the host, Forgejo, PostgreSQL and unrelated services throughout the test and
+cleanup. The original separate disposable-host test approach is superseded.
 
 1. The actual Podman client, Ansible modules and connection plugin can build,
    inspect, exec, copy to and destroy containers through the worker API. The
@@ -273,12 +278,26 @@ bounded actions and their expected results before live delivery.
 
 ## Acceptance and implementation gates
 
-First prove one slot on disposable Debian with the intended rootless runtime.
+First prove one temporary slot on NUC4 with the intended rootless runtime.
+Observe host capacity and existing service health before setup. Declare bounded
+resource budgets that reserve capacity for those services, and verify the
+effective bounds before running exhaustion or failure tests. Abort the experiment
+if those preconditions fail or existing service health changes; do not repair
+unrelated services as part of the experiment. Recheck each resource's identity
+before cleanup and preserve ambiguous resources for operator inspection.
+
+After the temporary slot passes acceptance, remove its owned resources and verify
+their absence and the existing services' health. Then provision the production
+runner configuration through `mise run playbook` and perform standalone
+verification and production runner acceptance. Test-slot removal does not wipe
+or reprovision NUC4. Each live action remains subject to the repository's exact
+target/action authorization and immediate playbook reconfirmation requirements.
+
 Do not deploy the role until the sibling-runtime, network-namespace and cleanup
 contracts above work together. An unsupported capability is a design blocker,
 not authorization to lower the acceptance criteria.
 
-Offline evidence must cover:
+Validation must cover:
 
 - registration scope, credential separation and exact one-job admission;
 - real job checkout, build tools, output/matrix handling and artifact round trips;
@@ -292,7 +311,14 @@ Offline evidence must cover:
 - provisioning idempotence and verification that causes no target changes; and
 - Forgejo backup/restore of representative Actions logs and artifacts.
 
-Live acceptance is separate operator evidence: host capacity and effective
+Workstation unit and disposable job-runtime checks are offline evidence. The
+NUC4 experiment uses synthetic jobs but is live-host evidence; it is not ordinary
+PR CI and must not be reported as offline validation. Record the authorized test,
+its resource budgets, independent observations and cleanup in the established
+evidence store. The experiment receives no persistent application data or live
+deployment credentials.
+
+Production acceptance is separate operator evidence: host capacity and effective
 containment, repository-scoped runner availability, successful representative PR
 checks in all three repositories, expected failure behavior and merge protection.
 No claim of deployment readiness follows from documentation lint or unit tests.

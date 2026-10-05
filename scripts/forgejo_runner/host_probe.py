@@ -33,9 +33,10 @@ def observe(allocation: dict) -> dict:
     """Gather metadata only; do not open runtime sockets or protected inventory."""
     root = Path(allocation["state_root"])
     marker_path = root.parent / "ownership"
-    metadata = marker_path.lstat()
-    parent_secure = secure_path(root.parent)
-    regular = stat.S_ISREG(metadata.st_mode)
+    metadata = marker_path.lstat() if os.path.lexists(marker_path) else None
+    parent_exists = os.path.lexists(root.parent)
+    parent_secure = secure_path(root.parent if parent_exists else root.parent.parent)
+    regular = metadata is not None and stat.S_ISREG(metadata.st_mode)
     # Do not follow a replaceable/symlink marker or read a device/FIFO.
     marker = marker_path.read_text().strip() if parent_secure and regular and metadata.st_uid == 0 and not metadata.st_mode & 0o022 else None
     os_release = platform.freedesktop_os_release()
@@ -47,8 +48,9 @@ def observe(allocation: dict) -> dict:
         "architecture": platform.machine(), "effective_uid": os.geteuid(),
         "cgroup_v2": Path("/sys/fs/cgroup/cgroup.controllers").is_file(),
         "user_namespaces": userns,
-        "marker": {"value": marker, "uid": metadata.st_uid,
-                   "mode": stat.S_IMODE(metadata.st_mode), "regular": regular},
+        "marker": {"value": marker, "uid": metadata.st_uid if metadata else None,
+                   "mode": stat.S_IMODE(metadata.st_mode) if metadata else None, "regular": regular},
+        "state_parent_exists": parent_exists,
         "state_root_exists": os.path.lexists(root), "state_parent_secure": parent_secure,
         "users": [{"user": user.pw_name, "uid": user.pw_uid, "gid": user.pw_gid} for user in pwd.getpwall()],
         "groups": [{"group": group.gr_name, "gid": group.gr_gid} for group in grp.getgrall()],

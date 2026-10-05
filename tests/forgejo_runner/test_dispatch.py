@@ -43,6 +43,15 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(2, result.returncode)
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_resource_probe_cannot_be_combined_with_other_host_modes(self):
+        for arguments in [('unit', '--resource-probe-only'),
+                          ('host-fixture', '--preflight-only', '--resource-probe-only'),
+                          ('host-fixture', '--fixture', 'images.json', '--resource-probe-only')]:
+            with self.subTest(arguments=arguments):
+                result = self.run_cli(*arguments)
+                self.assertEqual(2, result.returncode)
+                self.assertNotIn('Traceback', result.stderr)
+
     def test_host_preflight_requires_a_target_without_using_local_podman(self):
         result = self.run_cli("host-fixture", "--preflight-only")
         self.assertEqual(1, result.returncode)
