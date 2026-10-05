@@ -210,8 +210,36 @@ def inspect_resources(target: dict) -> dict:
     return observed
 
 
+def inspect_workers(target: dict) -> dict:
+    """Run the fixed offline worker experiment, separately from runner acceptance."""
+    from scripts.forgejo_runner.host_worker import validate_worker_budget
+    validate_target(target)
+    validate_worker_budget(target)
+    payload = "__file__ = '/fixture/scripts/forgejo_runner/host_fixture.py'\n"
+    for name in ('host_fixture.py', 'host_probe.py', 'host_resources.py', 'host_worker.py'):
+        payload += 'exec(' + repr((ROOT / 'scripts/forgejo_runner' / name).read_text()) + ')\n'
+    probe = (ROOT / 'scripts/forgejo_runner/worker_probe.py').read_text()
+    launcher = (ROOT / 'scripts/forgejo_runner/worker_launch.py').read_text()
+    payload += 'print(json.dumps(run_image_probe(' + repr(target) + ', observe, validate_observation, '
+    payload += repr(probe) + ", stage='worker-only', budget_validator=validate_worker_budget, extra_files=worker_files("
+    payload += repr(target) + ', ' + repr(launcher) + '), worker_observer=observe_worker_boundary, worker_reader=read_worker_result, after_stop=worker_cleanup_errors)))\n'
+    outcome = ssh_observation(target, payload, timeout=300)
+    if (not isinstance(outcome, dict) or outcome.get('acceptance') != 'worker-only'
+            or type(outcome.get('exit_code')) is not int or outcome['exit_code'] not in (0, 1, 130)
+            or not isinstance(outcome.get('cleanup_errors'), list)):
+        raise ValueError('Invalid worker experiment outcome')
+    if outcome['exit_code'] == 0:
+        required = {'rootless_api', 'sibling_containers', 'mapped_bind', 'private_loopback',
+                    'user_manager', 'bounded_storage', 'outer_limits', 'process_boundary'}
+        result = outcome.get('observations', {})
+        if (outcome['cleanup_errors'] or outcome.get('primary_error') is not None
+                or set(result) != required or any(result[key] is not True for key in required)):
+            raise ValueError('Worker experiment lacks required evidence')
+    return outcome
+
+
 def run(images: Path | None, target: Path | None, *, preflight_only: bool = False,
-        resource_probe_only: bool = False) -> int:
+        resource_probe_only: bool = False, worker_probe_only: bool = False) -> int:
     """Separate observational prerequisites from the unfinished containment gate."""
     if target is None:
         raise ValueError("An explicit disposable Debian host fixture descriptor is required")
@@ -225,6 +253,21 @@ def run(images: Path | None, target: Path | None, *, preflight_only: bool = Fals
     except (OSError, ValueError) as error:
         raise ValueError("Cannot load disposable host descriptor") from error
     validate_target(descriptor)
+    if worker_probe_only:
+        if preflight_only or images or resource_probe_only:
+            raise ValueError('Worker probe cannot be combined with other experiments')
+        result = inspect_workers(descriptor)
+        with tempfile.NamedTemporaryFile(mode='w', prefix='host-worker-outcome-', suffix='.json',
+                                         dir=target.parent, delete=False) as evidence:
+            json.dump(result, evidence, indent=2)
+            evidence.write('\n')
+        print(f'Host worker outcome saved to {evidence.name}')
+        if result['exit_code']:
+            if result.get('cleanup_errors'):
+                raise RuntimeError('Host worker cleanup failed; inspect retained allocation and saved outcome')
+            raise RuntimeError('Host worker probe failed; owned state removed; see saved outcome')
+        print('Offline rootless worker probe passed and owned state removed; runner acceptance is still pending')
+        return 0
     if resource_probe_only:
         if preflight_only or images:
             raise ValueError('Resource probe cannot be combined with other experiments')

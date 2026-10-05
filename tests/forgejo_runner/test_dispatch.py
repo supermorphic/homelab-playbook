@@ -59,6 +59,22 @@ class DispatchTests(unittest.TestCase):
         self.assertNotIn("Podman", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_worker_probe_requires_explicit_target(self):
+        result = self.run_cli('host-fixture', '--worker-probe-only')
+        self.assertEqual(1, result.returncode)
+        self.assertIn('disposable', result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
+
+    def test_worker_probe_cannot_mix_experiments(self):
+        for arguments in [('unit', '--worker-probe-only'),
+                          ('host-fixture', '--worker-probe-only', '--resource-probe-only'),
+                          ('host-fixture', '--worker-probe-only', '--preflight-only'),
+                          ('host-fixture', '--worker-probe-only', '--fixture', 'images.json')]:
+            with self.subTest(arguments=arguments):
+                result = self.run_cli(*arguments)
+                self.assertEqual(2, result.returncode)
+                self.assertNotIn('Traceback', result.stderr)
+
     def test_host_fixture_requires_an_explicit_disposable_target(self):
         result = self.run_cli("host-fixture")
         self.assertEqual(1, result.returncode)
