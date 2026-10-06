@@ -16,10 +16,25 @@ Debian host baseline and rootless Podman foundation. Provision and recover from
 the workstation through `mise run playbook`, independently of working CI.
 
 This specification owns runner execution, registration, isolation and lifecycle.
-Consumer repositories own their workflow semantics and required merge checks.
-The delivery is usable only when PR validation works in all three repositories;
-installing runners alone does not meet that outcome. Coordinate the consumer
-changes through their own issue-backed worktrees and repository policies.
+Issue57 delivers an operational runner platform for all three repositories, with
+supported job images, labels and tested Molecule/runtime capabilities. Completion
+requires working registered runners and authorized foundation probe jobs; an
+installed but untested runner is insufficient.
+
+Issue57 can close when Ansible provisions the runners on NUC4 idempotently and
+standalone verification is read-only; repository-scoped registration, job images,
+isolation, resource limits, networking and cleanup work; the required Molecule
+and container-runtime capabilities pass on the selected runtime; and updates,
+credential rotation, retirement and recovery have supported operator procedures.
+
+Consumer workflow migration, provider adapters, CI parity and required merge
+checks belong to [homelab-playbook#58](https://forgejo.infra.supermorphic.com/supermorphic/homelab-playbook/issues/58),
+[homelab-talos#292](https://forgejo.infra.supermorphic.com/supermorphic/homelab-talos/issues/292)
+and [career-ops#208](https://forgejo.infra.supermorphic.com/supermorphic/career-ops/issues/208).
+They consume the platform after runner acceptance through their own issue-backed
+worktrees and repository policies. Their workflow migration is not a prerequisite
+for completing issue57. The earlier combined delivery criterion was superseded
+by the operator's ownership clarification on 2026-10-06.
 
 Deployment workers, Kubernetes access, application credentials, autoscaling,
 VM infrastructure and registry hosting are outside this delivery. Future trusted
@@ -78,7 +93,7 @@ introduce privileged containers, host execution or reduced test coverage.
 
 ## Workload compatibility
 
-| Consumer | Required execution support | Required workflow adaptation |
+| Consumer | Required execution support | Consumer migration handoff (outside issue57) |
 | --- | --- | --- |
 | `homelab-playbook` | Mise bootstrap, offline validation, rootless Podman with cgroup v2, systemd-capable Debian Molecule containers, stock Forgejo and Semaphore runtime/recovery experiments | Preserve change classification, selected scenarios and the aggregate merge gate on Forgejo. |
 | `career-ops` | Mise/Just, PostgreSQL compilation and test dependencies, selected validation domains, plan and evidence artifacts | Replace the GitHub-specific provider API integration and artifact actions while preserving exact-candidate and execution-evidence reconciliation. |
@@ -236,11 +251,15 @@ Activation is attended and ordered:
    observationally verify the authorized host configuration.
 2. Validate Actions data backup and restore using synthetic data. Enable the
    server feature and selected repository settings only under exact authorization.
-3. Enroll the repository-scoped controllers, land each reviewed consumer workflow
-   change, and run authorized representative PR acceptance.
-4. Observe the actual status contexts and configure required checks through
-   separately authorized repository settings changes. Prove that a failed
-   required job blocks merging and a valid complete run satisfies the gate.
+3. Enroll the repository-scoped controllers and run authorized foundation probe
+   jobs for each repository. Confirm runner availability, supported runtime
+   capabilities, failure handling and cleanup. This completes the runner-platform
+   handoff when the acceptance gates below also pass.
+4. Under the separate consumer migration issues, land reviewed workflows and
+   perform representative CI parity acceptance. Observe actual status contexts
+   and configure required checks through separately authorized settings changes.
+   Prove failed required jobs block merging and valid complete runs satisfy the
+   consumer's gate.
 
 Do not retire prior CI enforcement until the replacement evidence and required
 checks are accepted. This sequence does not authorize merging or live mutation.
@@ -318,11 +337,13 @@ its resource budgets, independent observations and cleanup in the established
 evidence store. The experiment receives no persistent application data or live
 deployment credentials.
 
-Production acceptance is separate operator evidence: host capacity and effective
-containment, repository-scoped runner availability, successful representative PR
-checks in all three repositories, expected failure behavior and merge protection.
-No claim of deployment readiness follows from documentation lint or unit tests.
-Record detailed runs in established evidence stores rather than in this spec.
+Production runner acceptance is separate operator evidence: host capacity and
+effective containment, repository-scoped runner availability for all three
+repositories, successful authorized foundation probe jobs, expected failure
+behavior, cleanup and recovery. Consumer CI parity, workflow migration and merge
+protection remain acceptance for their migration issues. No claim of deployment
+readiness follows from documentation lint or unit tests. Record detailed runs in
+established evidence stores rather than in this spec.
 
 ## Upstream references
 
