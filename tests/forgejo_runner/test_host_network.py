@@ -118,6 +118,7 @@ class HostNetworkTests(unittest.TestCase):
                 'inheritable_caps': 0, 'ambient_caps': 0}
         self.network.validate_peer_records(target, [peer], outer, 123, 456, 456)
         for changed in ({'effective_caps': 4096}, {'bounding_caps': 4096},
+                        {'inheritable_caps': 4096}, {'ambient_caps': 4096},
                         {'net': 123}, {'net': 456}, {'pidns': 123},
                         {'cgroup': outer + '-unrelated'}, {'uid': 0}):
             with self.subTest(changed=changed), self.assertRaises(ValueError):

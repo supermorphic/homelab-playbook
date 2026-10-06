@@ -1,6 +1,5 @@
 """Fixed reachable synthetic peer; no worker-supplied code or application state."""
 
-import ctypes
 import json
 import os
 from pathlib import Path
@@ -8,11 +7,33 @@ import select
 import socket
 import sys
 
-from host_network import ALLOWED, DENIED
-from network_setup import command
+if __package__:
+    from .host_network import ALLOWED, DENIED
+    from .network_setup import command
+else:
+    from host_network import ALLOWED, DENIED
+    from network_setup import command
 
 
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == '--serve':
+        descriptors = [int(value) for value in sys.argv[2].split(',')]
+        if len(descriptors) != len(ALLOWED + DENIED) or len(set(descriptors)) != len(descriptors) or min(descriptors) < 3:
+            raise ValueError('Invalid controlled listener handoff')
+        listeners = [socket.socket(fileno=descriptor) for descriptor in descriptors]
+        endpoints = {(listener.getsockname()[0], listener.getsockname()[1]) for listener in listeners}
+        if endpoints != set(ALLOWED + DENIED):
+            raise ValueError('Listener identity changed across peer handoff')
+        print('listeners-ready', flush=True)
+        while True:
+            readable, _, _ = select.select(listeners, [], [], 1)
+            for listener in readable:
+                connection, _ = listener.accept()
+                with connection:
+                    connection.settimeout(0.2)
+                    connection.sendall(b'owned-network-endpoint\n')
+    if len(sys.argv) != 1 or os.geteuid() != 0:
+        raise ValueError('Controlled peer preparation requires fixed trusted setup')
     print('namespace-ready', flush=True)
     ready, _, _ = select.select([sys.stdin], [], [], 10)
     if not ready or sys.stdin.readline(32) != 'configure\n':
@@ -30,28 +51,16 @@ def main():
         if family == socket.AF_INET6:
             listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
         listener.bind((address, port)); listener.listen(8)
+        listener.set_inheritable(True)
         listeners.append(listener)
     # Trusted setup ends here. Only synthetic sockets remain under an unused
     # identity, without capability to change policy or acquire execution privilege.
     controller = json.loads(Path('/worker.json').read_text())['network']['controller']
-    library = ctypes.CDLL(None, use_errno=True)
-    last = int(Path('/proc/sys/kernel/cap_last_cap').read_text())
-    if not 0 <= last <= 63:
-        raise ValueError('Unexpected kernel capability range')
-    for capability in range(last + 1):
-        if library.prctl(24, capability, 0, 0, 0) != 0:
-            raise OSError(ctypes.get_errno(), 'Cannot clear peer bounding capabilities')
-    if library.prctl(47, 4, 0, 0, 0) != 0 or library.prctl(38, 1, 0, 0, 0) != 0:
-        raise OSError(ctypes.get_errno(), 'Cannot clear peer execution privilege')
-    os.setgroups([]); os.setgid(controller['gid']); os.setuid(controller['uid'])
-    print('listeners-ready', flush=True)
-    while True:
-        readable, _, _ = select.select(listeners, [], [], 1)
-        for listener in readable:
-            connection, _ = listener.accept()
-            with connection:
-                connection.settimeout(0.2)
-                connection.sendall(b'owned-network-endpoint\n')
+    os.execv('/usr/bin/setpriv', ['/usr/bin/setpriv', f'--reuid={controller["uid"]}',
+        f'--regid={controller["gid"]}', '--clear-groups', '--bounding-set=-all',
+        '--inh-caps=-all', '--ambient-caps=-all', '--no-new-privs',
+        '/usr/bin/python3', '/network_peer.py', '--serve',
+        ','.join(str(listener.fileno()) for listener in listeners)])
 
 
 if __name__ == '__main__':
