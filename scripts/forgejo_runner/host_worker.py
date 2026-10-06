@@ -254,7 +254,9 @@ def observe_worker_boundary(target, observed, unit):
 
 def observe_job_boundary(target, observed, unit):
     required = {'one_job', 'job_runtime'}
+    if isinstance(observed, dict) and 'job_public_access' in observed:
+        required.add('job_public_access')
     if not isinstance(observed, dict) or any(observed.get(key) is not True for key in required):
         raise ValueError('Native job lacks required workload outcomes')
     result = observe_worker_boundary(target, {k: v for k, v in observed.items() if k not in required}, unit)
-    return {**result, 'one_job': True, 'job_runtime': True}
+    return {**result, **{name: True for name in required}}

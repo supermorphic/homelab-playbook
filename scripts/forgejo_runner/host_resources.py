@@ -227,7 +227,7 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                     worker_reader=None, after_stop=None, assets=None,
                     asset_validator=None, asset_receiver=None):
     """Fixed trusted experiments share the same image ownership and disposal path."""
-    if stage not in ('resources-only', 'worker-only', 'job-only', 'network-only', 'egress-only'):
+    if stage not in ('resources-only', 'worker-only', 'job-only', 'network-only', 'egress-only', 'native-only'):
         raise ValueError('Unknown host experiment')
     worker = stage != 'resources-only'
     if assets:
@@ -295,11 +295,11 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
         owned_files = dict(extra_files or {})
         if worker:
             tools += ('setcap', 'getcap', 'catatonit')
-        if stage in ('network-only', 'egress-only'):
+        if stage in ('network-only', 'egress-only', 'native-only'):
             tools += ('ip', 'nft', 'nsenter', 'ss', 'unshare')
             configuration = json.loads(owned_files['worker.json'])
             configuration['network']['host_network_inode'] = os.stat('/proc/self/ns/net').st_ino
-            if stage == 'egress-only':
+            if stage in ('egress-only', 'native-only'):
                 tools += ('slirp4netns', 'getent')
                 public = observe_configuration()
                 configuration['network']['egress'] = public
@@ -393,7 +393,7 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                 resources.record_file(path, allow_link=True)
             else:
                 path.write_text(content)
-                path.chmod(0o600 if stage == 'egress-only' and relative == 'work/network-ready' else 0o444)
+                path.chmod(0o600 if stage in ('egress-only', 'native-only') and relative == 'work/network-ready' else 0o444)
                 resources.record_file(path)
         image = root / 'worker.ext4'
         with image.open('xb'):
@@ -468,12 +468,12 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                 'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID CAP_SETPCAP',
                 'AmbientCapabilities=CAP_SYS_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID',
                 'Environment=HOME=/work TMPDIR=/work']
-        if stage in ('network-only', 'egress-only'):
+        if stage in ('network-only', 'egress-only', 'native-only'):
             # Only fixed trusted setup receives NET_ADMIN. The worker handoff
             # retains the existing mapping-helper bounds and clears active caps.
             properties = [setting + ' CAP_NET_ADMIN' if setting.startswith((
                 'CapabilityBoundingSet=', 'AmbientCapabilities=')) else setting for setting in properties]
-        if stage == 'egress-only':
+        if stage in ('egress-only', 'native-only'):
             # Only trusted synthetic peer setup binds HTTPS inside its private
             # namespace. Both peer and worker handoffs remove this capability.
             properties = [setting + ' CAP_NET_BIND_SERVICE' if setting.startswith((
@@ -492,7 +492,7 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
         command(argv)
         unit.claim()
         save_receipt()
-        if stage == 'egress-only':
+        if stage in ('egress-only', 'native-only'):
             current = unit.observe()
             if current.get('InvocationID') != unit.invocation:
                 raise ValueError('Worker identity changed before public transport startup')
@@ -508,7 +508,7 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                 if report['diagnostic']:
                     raise HostCommandError(report['diagnostic'])
                 if report['observations'] is not None:
-                    if stage == 'egress-only':
+                    if stage in ('egress-only', 'native-only'):
                         return observe_public_boundary(target, report['observations'], current,
                                                        gateway, worker_observer)
                     return worker_observer(target, report['observations'], current)

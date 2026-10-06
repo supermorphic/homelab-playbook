@@ -1,4 +1,4 @@
-"""Offline real-job coordinator; all inputs and synthetic secrets stay in the worker."""
+"""Real-job coordinator; all inputs and synthetic secrets stay in the worker."""
 
 import json
 import os
@@ -79,10 +79,11 @@ def save_job_diagnostic(run_id, directory, output):
         stream.write('\n'.join(records)[-4096:])
 
 
-def run_probe():
+def run_probe(*, observed=None):
     import offline_probe
     from scripts.forgejo_runner.registration_probe import run_registration, run_one_job
-    observed = offline_probe.main()
+    if observed is None:
+        observed = offline_probe.main()
     configuration = json.loads(Path('/job.json').read_text())
     worker = json.loads(Path('/worker.json').read_text())['worker']
     endpoint = f'/run/user/{worker["uid"]}/podman.sock'
@@ -101,10 +102,21 @@ def run_probe():
     candidate['probe_image'] = 'localhost/native-job:fixture'
     application, repository, token = run_registration(experiment, directory)
     workspace = Path('/work/job-workspace'); workspace.mkdir(mode=0o700)
+    public_probe = observed.get('public_https') is True
+    if public_probe:
+        import shutil
+        from scripts.forgejo_runner.host_egress import FORGEJO_HOST
+        certificates = workspace / 'public-ca.pem'
+        shutil.copyfile('/etc/ssl/certs/ca-certificates.crt', certificates)
+        source = Path('/egress_probe.py').read_text()
+        function = source[source.index('def public_connections():'):source.index('\ndef main():')]
+        function = function.replace("'/work/share/public-ca.pem'", repr(str(certificates)))
+        (workspace / 'public-probe.py').write_text('import json,socket,ssl,urllib.request\nFORGEJO_HOST='
+            + repr(FORGEJO_HOST) + '\n' + function + '\npublic_connections()\n')
     try:
         run_one_job(experiment, directory, application, repository, token,
                     {'socket': endpoint, 'offline': True, 'network': 'host',
-                     'forgejo_url': application.url, 'workspace': workspace}, candidate,
+                     'forgejo_url': application.url, 'workspace': workspace, 'public_probe': public_probe}, candidate,
                     runtime_probe=True)
     except BaseException:
         from scripts.forgejo_runner.fixture import ROOT
@@ -116,4 +128,4 @@ def run_probe():
         raise
     # Leave all creators, siblings and network helpers present for the host's
     # independent process/cgroup/namespace observation and whole-unit disposal.
-    return {**observed, 'one_job': True, 'job_runtime': True}
+    return {**observed, 'one_job': True, 'job_runtime': True, **({'job_public_access': True} if public_probe else {})}

@@ -17,6 +17,20 @@ class DispatchTests(unittest.TestCase):
         self.assertIn('disposable', result.stderr)
         self.assertNotIn('Traceback', result.stderr)
 
+    def test_combined_native_probe_requires_explicit_disposable_target(self):
+        result = self.run_cli('host-fixture', '--native-probe-only')
+        self.assertEqual(1, result.returncode)
+        self.assertIn('disposable', result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
+
+    def test_combined_native_probe_cannot_mix_host_experiments(self):
+        for option in ('--preflight-only', '--resource-probe-only', '--worker-probe-only',
+                       '--job-probe-only', '--network-probe-only', '--egress-probe-only'):
+            with self.subTest(option=option):
+                result = self.run_cli('host-fixture', '--native-probe-only', option)
+                self.assertEqual(2, result.returncode)
+                self.assertNotIn('Traceback', result.stderr)
+
     def run_cli(self, *arguments):
         environment = os.environ.copy()
         environment["PATH"] = str(ROOT / ".tmp/nonexistent-runner-tools")
