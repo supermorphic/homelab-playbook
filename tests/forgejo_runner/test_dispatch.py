@@ -81,6 +81,24 @@ class DispatchTests(unittest.TestCase):
         self.assertIn('disposable', result.stderr)
         self.assertNotIn('Traceback', result.stderr)
 
+    def test_network_probe_requires_explicit_target(self):
+        result = self.run_cli('host-fixture', '--network-probe-only')
+        self.assertEqual(1, result.returncode)
+        self.assertIn('disposable', result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
+
+    def test_network_probe_rejects_other_experiments(self):
+        for args in [('unit', '--network-probe-only'),
+                     ('host-fixture', '--network-probe-only', '--preflight-only'),
+                     ('host-fixture', '--network-probe-only', '--worker-probe-only'),
+                     ('host-fixture', '--network-probe-only', '--resource-probe-only'),
+                     ('host-fixture', '--network-probe-only', '--job-probe-only'),
+                     ('host-fixture', '--network-probe-only', '--fixture', 'images.json')]:
+            with self.subTest(args=args):
+                result = self.run_cli(*args)
+                self.assertEqual(2, result.returncode)
+                self.assertNotIn('Traceback', result.stderr)
+
     def test_native_job_probe_cannot_mix_experiments(self):
         for args in [('compatibility', '--job-probe-only'),
                      ('host-fixture', '--job-probe-only', '--worker-probe-only'),
