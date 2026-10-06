@@ -89,17 +89,18 @@ def reconcile(mapping,source,destination,store,write_budget):
                 if target and observed is None: raise MirrorError('ownership_conflict')
                 target=observed
                 if target is None:
+                    destination.preflight(mapping)
                     store.begin_create(projection.key)
                     try:
-                        locator=destination.create(projection,parent); result.writes+=1
+                        result.writes+=1
+                        locator=destination.create(projection,parent)
                     except APIError as error:
                         store.finish_create(projection.key,error.outcome,None)
                         raise
-                    value=destination.read(locator)
-                    marker_key=parse_marker(value.get('description' if kind in ('label','milestone') else 'body',''),kind)
-                    if marker_key!=projection.key: raise MirrorError('ownership_conflict')
+                    created=discover_owned(mapping,destination.inventory(mapping)).get(projection.key)
+                    if created is None or created.locator!=locator: raise MirrorError('ownership_conflict')
                     store.finish_create(projection.key,'created',locator)
-                    target=DestinationObject(projection.key,locator,value)
+                    target=created
                 else: target=DestinationObject(target.key,target.locator,destination.read(target.locator))
                 try: verify_projection(projection,target.fields)
                 except MirrorError:
@@ -108,7 +109,9 @@ def reconcile(mapping,source,destination,store,write_budget):
                         destination.preflight(mapping)
                         current=discover_owned(mapping,destination.inventory(mapping)).get(projection.key)
                         if current is None: raise MirrorError('ownership_conflict')
-                        destination.update(current,projection); result.writes+=1
+                        destination.preflight(mapping)
+                        result.writes+=1
+                        destination.update(current,projection)
                         locator='/labels/'+quote(projection.fields['name'],safe='') if kind=='label' else target.locator
                         target=DestinationObject(projection.key,locator,destination.read(locator))
                         verify_projection(projection,target.fields)
@@ -116,8 +119,11 @@ def reconcile(mapping,source,destination,store,write_budget):
                 owned[projection.key]=target
             except (MirrorError,KeyError,TypeError,ValueError) as error:
                 result.errors.append(str(error) if isinstance(error,MirrorError) else 'invalid_source_or_response')
-                if isinstance(error,APIError) and error.retry_at: store.defer(error.retry_at)
-        if store.load()['pending']: result.errors.append('create_outcome_unresolved')
+                if isinstance(error,APIError) and error.retry_at: store.defer(error.retry_at,error.retry_key)
+                if isinstance(error,MirrorError) and str(error)=='run_timeout': return result
+        if any(intent['key']['instance']==mapping.instance and intent['key']['repository_id']==mapping.source_id for intent in store.load()['pending'].values()): result.errors.append('create_outcome_unresolved')
         if not result.errors and not result.backlog: result.converged_at=time.time()
-    except MirrorError as error: result.errors.append(str(error))
+    except MirrorError as error:
+        result.errors.append(str(error))
+        if isinstance(error,APIError) and error.retry_at: store.defer(error.retry_at,error.retry_key)
     return result

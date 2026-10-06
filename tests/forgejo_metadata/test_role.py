@@ -38,3 +38,14 @@ class RoleTests(unittest.TestCase):
     def test_duplicate_enrollment(self):
         values=self.settings(); values['forgejo_metadata_mappings']*=2
         self.assertNotEqual(0,self.evaluate(values))
+    def test_existing_identity_and_conflicting_allocations(self):
+        values=self.settings(); name=values['forgejo_metadata_account']
+        values['ansible_facts']={'getent_passwd':{name:['x','2105','2105','','/nonexistent','/usr/sbin/nologin']},'getent_group':{name:['x','2105','']}}
+        self.assertEqual(0,self.evaluate(values,'identity-check.yml'))
+        for conflict in ('mismatch','uid','gid','members'):
+            changed=copy.deepcopy(values)
+            if conflict=='mismatch': changed['ansible_facts']['getent_passwd'][name][1]='2200'
+            elif conflict=='uid': changed['ansible_facts']['getent_passwd']['other']=['x','2105','3000','','/nonexistent','/usr/sbin/nologin']
+            elif conflict=='gid': changed['ansible_facts']['getent_group']['other']=['x','2105','']
+            else: changed['ansible_facts']['getent_group'][name][2]='other'
+            self.assertNotEqual(0,self.evaluate(changed,'identity-check.yml'))

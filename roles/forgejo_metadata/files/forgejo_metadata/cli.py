@@ -40,30 +40,34 @@ def clients(mapping):
     return SourceAPI(mapping,credential(mapping.source_credential)), DestinationAPI(mapping,credential(mapping.destination_credential))
 
 
-def apply(mappings,store,root,budget):
+def apply(mappings,store,root,budget,deadline_at):
     store.require_initialized()
-    if store.load().get('retry_at',0)>time.time(): raise MirrorError('rate_limited')
     try: previous=read_private(root/'status.json')
     except (OSError,ValueError,MirrorError): previous={}
+    if not isinstance(previous,dict) or previous.get('fingerprint')!=store.fingerprint or not isinstance(previous.get('mappings'),list): previous={}
     old={row['source']:row for row in previous.get('mappings',[]) if isinstance(row,dict) and 'source' in row}
-    status={'attempted_at':time.time(),'mappings':[]}; success=True
-    remaining=budget
+    status={'fingerprint':store.fingerprint,'attempted_at':time.time(),'mappings':[]}; success=True
+    remaining=budget; timed_out=False
     for mapping in mappings:
         identity=f'{mapping.instance}:{mapping.source_id}'
         last=old.get(identity,{}).get('last_converged')
         try:
-            if store.load().get('retry_at',0)>time.time(): raise MirrorError('rate_limited')
+            if timed_out or time.monotonic()>=deadline_at: raise MirrorError('run_timeout')
+            if store.deferred(mapping): raise MirrorError('rate_limited')
             source,destination=clients(mapping)
             result=reconcile(mapping,source,destination,store,remaining)
             remaining-=result.writes
+            timed_out='run_timeout' in result.errors
             errors=dict(Counter(result.errors)); backlog=result.backlog
             writes=result.writes; last=result.converged_at or last
             success=success and bool(result.converged_at)
-        except MirrorError as error:
-            errors={str(error):1}; backlog=0; writes=0; success=False
+        except (MirrorError,KeyError,TypeError,ValueError,AttributeError) as error:
+            errors={str(error) if isinstance(error,MirrorError) else 'invalid_source_or_response':1}; backlog=0; writes=0; success=False
+            timed_out=timed_out or 'run_timeout' in errors
         status['mappings'].append({'source':identity,'last_attempted':time.time(),
             'last_converged':last,'writes':writes,'backlog':backlog,'errors':errors})
     status['unresolved_intents']=len(store.load()['pending'])
+    success=success and not status['unresolved_intents']
     atomic_json(root/'status.json',status)
     print('converged' if success else 'convergence_incomplete')
     return 0 if success else 1
@@ -104,15 +108,21 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config',required=True)
     sub=parser.add_subparsers(dest='mode',required=True)
+    sub.add_parser('plan',help='Print public enrollment and its confirmation fingerprint without changing state.')
     sub.add_parser('apply',help='Reconcile enrolled destination metadata (writes).')
     sub.add_parser('check',help='Observe initialization and convergence status without repairs.')
     attended=sub.add_parser('control',help='Execute a root-owned, attended request.')
-    attended.add_argument('--request',required=True)
+    attended.add_argument('--request',required=True,help='Root-owned JSON: operation, fingerprint, decision_ref, confirmation=operation:fingerprint. Bootstrap and resolve require previous_writers_stopped=true and outcomes_resolved=true; resolve adds the exact SourceKey as key.')
     args=parser.parse_args(argv)
     previous_handler=None
     try:
         with open(args.config) as stream: document=json.load(stream)
         mappings=load_config(document); fingerprint=enrollment_fingerprint(mappings)
+        if args.mode=='plan':
+            print(json.dumps({'fingerprint':fingerprint,'mappings':[{'source':f'{m.instance}:{m.source_id}',
+                'source_origin':m.source_origin,'source_repo':m.source_repo,'destination_origin':m.destination_origin,
+                'destination_repo':m.destination_repo,'destination_id':m.destination_id,'visibility':m.visibility,'actor_id':m.actor_id} for m in mappings]},sort_keys=True))
+            return 0
         root=Path(document['state_root']); info=root.lstat()
         if not root.is_absolute() or not stat.S_ISDIR(info.st_mode) or info.st_uid!=os.geteuid() or info.st_mode & 0o077:
             raise MirrorError('unsafe_state_directory')
@@ -122,20 +132,23 @@ def main(argv=None):
         if args.mode=='check':
             store.require_initialized(); status=read_private(root/'status.json')
             freshness=document.get('freshness_seconds',3600)
-            if not positive(freshness) or not isinstance(status,dict): raise MirrorError('invalid_status')
+            if not positive(freshness) or not isinstance(status,dict) or status.get('fingerprint')!=fingerprint: raise MirrorError('invalid_status')
             rows=status.get('mappings',[])
-            if (len(rows)!=len(mappings) or status.get('unresolved_intents') or store.load()['pending']
+            if (not isinstance(rows,list) or any(not isinstance(row,dict) for row in rows)
+                or {row.get('source') for row in rows}!={f'{m.instance}:{m.source_id}' for m in mappings}
+                or len(rows)!=len(mappings) or status.get('unresolved_intents') or store.load()['pending']
                 or any(not row.get('last_converged') or time.time()-row['last_converged']>freshness or row.get('errors') or row.get('backlog') for row in rows)):
                 raise MirrorError('convergence_pending')
             print('converged'); return 0
         def deadline(signum,frame): raise MirrorError('run_timeout')
+        deadline_at=time.monotonic()+timeout
         previous_handler=signal.signal(signal.SIGALRM,deadline); signal.alarm(timeout)
         with operation_lock(root/'operation.lock'):
             if args.mode=='control':
                 request=trusted_request(args.request)
                 if not isinstance(request,dict): raise MirrorError('invalid_control_request')
                 if not control(request,mappings,store,fingerprint): return 0
-            return apply(mappings,store,root,budget)
+            return apply(mappings,store,root,budget,deadline_at)
     except MirrorError as error: print(str(error)); return 1
     except (OSError,ValueError,KeyError,TypeError): print('invalid_runtime_input_or_response'); return 1
     finally:

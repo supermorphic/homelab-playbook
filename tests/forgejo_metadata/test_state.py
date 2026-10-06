@@ -53,3 +53,15 @@ class StateTests(unittest.TestCase):
             with self.assertRaises(MirrorError):
                 with self.module.operation_lock(path): pass
         with self.module.operation_lock(path): pass
+    def test_invalid_nested_intent_is_not_valid_initialization(self):
+        from forgejo_metadata.state import atomic_json
+        self.store.bootstrap('initial','test'); value=self.store.load(); value['pending']={'fixture:7:issue:99':{'key':{},'started':1}}
+        atomic_json(self.store.path,value)
+        with self.assertRaises(MirrorError): self.store.require_initialized()
+    def test_reenrollment_and_damaged_initialization_preserve_valid_intents(self):
+        self.store.bootstrap('initial','test'); self.store.begin_create(self.key)
+        other=self.module.StateStore(self.path,'new-fingerprint'); other.bootstrap('recover','new-enrollment')
+        self.assertEqual(1,len(other.load()['pending']))
+        value=other.load(); value['initialization']={}; self.module.atomic_json(self.path,value)
+        other.bootstrap('recover','damaged-initialization')
+        self.assertEqual(1,len(other.load()['pending']))

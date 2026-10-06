@@ -74,3 +74,39 @@ class CLITests(unittest.TestCase):
         request=self.request('bootstrap-recover')
         with patch.object(self.module,'trusted_request',return_value=json.loads(request.read_text())): self.assertEqual(0,self.run_cli('control','--request',str(request)))
         self.assertEqual(1,len(store.load()['pending']))
+    def test_plan_reports_bound_enrollment_without_state_or_network(self):
+        before=list(self.root.iterdir())
+        self.assertEqual(0,self.run_cli('plan'))
+        value=json.loads(self.output.getvalue()); self.assertEqual('example/recovery',value['mappings'][0]['destination_repo'])
+        self.assertEqual(enrollment_fingerprint(load_config(CONFIG)),value['fingerprint'])
+        self.assertEqual(before,list(self.root.iterdir())); self.assertEqual([],self.destination.writes)
+    def test_rate_limit_survives_restart_and_other_credentials_progress(self):
+        from forgejo_metadata.api import APIError
+        from forgejo_metadata.state import StateStore
+        document=json.loads(self.config.read_text()); other=copy.deepcopy(document['mappings'][0])
+        other.update(instance='other',source_id=8,destination_id=10,source_credential='other_source',destination_credential='other_destination')
+        document['mappings'].append(other); self.config.write_text(json.dumps(document))
+        store=StateStore(self.root/'state.json',enrollment_fingerprint(load_config(document))); store.bootstrap('initial','fixture-only')
+        independent=FakeDestination(); calls=[]
+        def denied(mapping):
+            calls.append(mapping.instance); raise APIError('http_429','not_created',self.module.time.time()+60,'destination')
+        self.destination.preflight=denied
+        def clients(mapping): return self.source,self.destination if mapping.instance=='fixture' else independent
+        with contextlib.redirect_stdout(self.output),patch.object(self.module,'clients',side_effect=clients):
+            self.assertEqual(1,self.module.main(['--config',str(self.config),'apply']))
+            self.assertTrue(independent.writes)
+            self.assertEqual(1,self.module.main(['--config',str(self.config),'apply']))
+        self.assertEqual(['fixture'],calls)
+    def test_reenrollment_cannot_reuse_old_convergence(self):
+        from forgejo_metadata.state import StateStore
+        request=self.request('bootstrap-initial')
+        with patch.object(self.module,'trusted_request',return_value=json.loads(request.read_text())): self.run_cli('control','--request',str(request))
+        self.assertEqual(0,self.run_cli('apply'))
+        document=json.loads(self.config.read_text()); document['mappings'][0]['destination_id']=10
+        self.config.write_text(json.dumps(document))
+        StateStore(self.root/'state.json',enrollment_fingerprint(load_config(document))).bootstrap('recover','new-enrollment')
+        self.assertEqual(1,self.run_cli('check'))
+        self.destination=FakeDestination(); self.destination.failure='http_422'
+        self.assertEqual(1,self.run_cli('apply'))
+        status=json.loads((self.root/'status.json').read_text())
+        self.assertIsNone(status['mappings'][0]['last_converged'])

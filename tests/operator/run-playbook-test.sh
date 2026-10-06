@@ -167,7 +167,7 @@ for forgejo_action in provision verify; do
   done
 done
 
-for metadata_action in provision verify bootstrap resolve apply; do
+for metadata_action in provision verify plan bootstrap resolve apply; do
   : >"$uv_log"
   assert_status 0 env PATH="$fake_bin:$PATH" FAKE_UV_LOG="$uv_log" \
     "$repo_root/scripts/playbook.sh" forgejo-metadata "$metadata_action" production --limit fixture-host --check
@@ -202,7 +202,7 @@ for unsafe_args in \
     'semaphore provision' 'semaphore verify' \
     'forgejo provision' 'forgejo verify' \
     'forgejo-metadata provision' 'forgejo-metadata verify' 'forgejo-metadata bootstrap' \
-    'forgejo-metadata resolve' 'forgejo-metadata apply'; do
+    'forgejo-metadata resolve' 'forgejo-metadata apply' 'forgejo-metadata plan'; do
     read -r -a guarded_argv <<<"$guarded_selector"
     assert_status 2 env \
     PATH="$fake_bin:$PATH" \

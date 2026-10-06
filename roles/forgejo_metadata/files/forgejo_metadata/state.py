@@ -3,15 +3,24 @@ from contextlib import contextmanager
 from dataclasses import asdict
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import stat
 import tempfile
 import time
-from .model import MirrorError
+from .model import MirrorError, SourceKey, positive
 
 def key_string(key):
     return f'{key.instance}:{key.repository_id}:{key.kind}:{key.object_id}'
+
+def valid_intent(key,intent):
+    if not isinstance(key,str) or not isinstance(intent,dict) or set(intent)!={'key','started'}: return False
+    try: identity=SourceKey(**intent['key'])
+    except (TypeError,KeyError): return False
+    return (identity.kind in ('issue','comment','label','milestone') and isinstance(identity.instance,str)
+        and positive(identity.repository_id) and positive(identity.object_id) and key==key_string(identity)
+        and type(intent['started']) in (int,float) and math.isfinite(intent['started']) and intent['started']>0)
 
 def read_private(path):
     fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
@@ -54,16 +63,25 @@ def operation_lock(path):
 
 class StateStore:
     def __init__(self,path:Path,fingerprint:str): self.path=Path(path); self.fingerprint=fingerprint
-    def load(self):
+    def load(self,allow_other_fingerprint=False):
         try: value=read_private(self.path)
         except (OSError,ValueError): raise MirrorError('state_uninitialized_or_invalid') from None
-        if (not isinstance(value,dict) or value.get('version')!=1 or value.get('fingerprint')!=self.fingerprint
+        if (not isinstance(value,dict) or type(value.get('version')) is not int or value.get('version')!=1
+            or not isinstance(value.get('fingerprint'),str)
+            or not allow_other_fingerprint and value.get('fingerprint')!=self.fingerprint
             or not isinstance(value.get('pending'),dict) or not isinstance(value.get('initialization'),dict)
-            or not value['initialization'].get('decision_ref')):
+            or not isinstance(value['initialization'].get('decision_ref'),str)
+            or not value['initialization']['decision_ref'].strip()
+            or value['initialization'].get('mode') not in ('initial','recover')
+            or type(value['initialization'].get('at')) not in (int,float)
+            or not math.isfinite(value['initialization']['at']) or value['initialization']['at']<=0):
             raise MirrorError('state_uninitialized_or_invalid')
-        for key,intent in value['pending'].items():
-            if not isinstance(key,str) or not isinstance(intent,dict) or set(intent)!={'key','started'}:
-                raise MirrorError('state_uninitialized_or_invalid')
+        if any(not valid_intent(key,intent) for key,intent in value['pending'].items()):
+            raise MirrorError('state_uninitialized_or_invalid')
+        retries=value.get('retry_deadlines',{})
+        if (not isinstance(retries,dict) or any(not isinstance(k,str) or type(v) not in (int,float)
+                or not math.isfinite(v) or v<0 for k,v in retries.items())):
+            raise MirrorError('state_uninitialized_or_invalid')
         return value
     def require_initialized(self): self.load()
     def bootstrap(self,mode,decision_ref):
@@ -72,10 +90,10 @@ class StateStore:
         if self.path.is_symlink(): raise MirrorError('unsafe_state_file')
         exists=self.path.exists()
         if exists and mode=='initial': raise MirrorError('already_initialized')
-        pending={}; retry_at=0
+        pending={}; retries={}
         if exists:
             try:
-                old=self.load(); pending=old['pending']; retry_at=old.get('retry_at',0)
+                old=self.load(allow_other_fingerprint=True); pending=old['pending']; retries=old.get('retry_deadlines',{})
             except MirrorError:
                 # Preserve the bytes before explicitly attended recovery replaces them.
                 archive=self.path.with_name(self.path.name+f'.recovery-{time.time_ns()}')
@@ -83,11 +101,17 @@ class StateStore:
                 with os.fdopen(fd,'rb') as original:
                     data=original.read(1024*1024+1)
                 if len(data)>1024*1024: raise MirrorError('state_recovery_limit')
+                # Corrupt initialization must not discard otherwise valid uncertainty evidence.
+                try:
+                    surviving=json.loads(data)
+                    if isinstance(surviving,dict) and isinstance(surviving.get('pending'),dict):
+                        pending={key:intent for key,intent in surviving['pending'].items() if valid_intent(key,intent)}
+                except (ValueError,UnicodeDecodeError): pass
                 with open(archive,'xb') as output:
                     os.chmod(archive,0o600); output.write(data); output.flush(); os.fsync(output.fileno())
         atomic_json(self.path,{'version':1,'fingerprint':self.fingerprint,
             'initialization':{'mode':mode,'decision_ref':decision_ref,'at':time.time()},
-            'pending':pending,'retry_at':retry_at})
+            'pending':pending,'retry_deadlines':retries})
     def begin_create(self,key):
         document=self.load(); identity=key_string(key)
         if identity in document['pending']: raise MirrorError('create_outcome_unresolved')
@@ -105,5 +129,9 @@ class StateStore:
         document['pending'].pop(key_string(key))
         document['last_resolution']={'key':asdict(key),'decision_ref':decision_ref,'at':time.time()}
         atomic_json(self.path,document)
-    def defer(self,deadline):
-        document=self.load(); document['retry_at']=max(document.get('retry_at',0),deadline); atomic_json(self.path,document)
+    def defer(self,deadline,key='*'):
+        document=self.load(); retries=document.setdefault('retry_deadlines',{})
+        retries[key]=max(retries.get(key,0),deadline); atomic_json(self.path,document)
+    def deferred(self,mapping):
+        retries=self.load().get('retry_deadlines',{})
+        return max(retries.get(key,0) for key in ('*',mapping.source_credential,mapping.destination_credential))>time.time()

@@ -2,6 +2,9 @@
 - name: Repeat metadata target and declaration checks
   ansible.builtin.import_tasks: preflight.yml
 
+- name: Verify current installed metadata target definitions
+  ansible.builtin.import_tasks: verify-definitions.yml
+
 - name: Require explicit attended metadata operation
   ansible.builtin.assert:
     that:

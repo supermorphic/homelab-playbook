@@ -60,12 +60,16 @@ def positive(value):
     return type(value) is int and 0 < value < 2**63
 
 def load_config(document: dict) -> list[MappingConfig]:
-    if not isinstance(document, dict) or document.get('version') != 1 or not isinstance(document.get('mappings'), list):
+    if not isinstance(document, dict) or type(document.get('version')) is not int or document.get('version') != 1 or not isinstance(document.get('mappings'), list):
         raise MirrorError('invalid_configuration')
     mappings=[]; destinations=set(); sources=set()
     for row in document['mappings']:
         try: mapping=MappingConfig(**row)
         except (TypeError, ValueError): raise MirrorError('invalid_mapping') from None
+        if not all(isinstance(getattr(mapping,name),str) for name in
+            ('instance','source_origin','destination_origin','source_repo','destination_repo',
+             'source_credential','destination_credential','ca_file')): raise MirrorError('invalid_mapping')
+        if mapping.source_credential==mapping.destination_credential: raise MirrorError('credentials_must_be_separate')
         if not re.fullmatch(r'[a-z0-9_-]{1,16}', mapping.instance): raise MirrorError('invalid_instance')
         for origin in (mapping.source_origin, mapping.destination_origin):
             parsed=urlsplit(origin)

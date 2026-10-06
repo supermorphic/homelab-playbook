@@ -13,18 +13,21 @@
     mode: "{{ item.mode }}"
   loop:
     - {path: '{{ forgejo_metadata_helper_root }}', group: root, mode: '0755'}
+    - {path: '{{ forgejo_metadata_helper_root }}/forgejo_metadata', group: root, mode: '0755'}
     - {path: '{{ forgejo_metadata_config_root }}', group: root, mode: '0755'}
     - {path: '{{ forgejo_metadata_config_root }}/credentials', group: root, mode: '0700'}
     - {path: /run/forgejo-metadata, group: '{{ forgejo_metadata_account }}', mode: '0750'}
 
 - name: Install metadata runtime package
   ansible.builtin.copy:
-    src: forgejo_metadata
-    dest: "{{ forgejo_metadata_helper_root }}/"
+    src: "{{ item }}"
+    dest: "{{ forgejo_metadata_helper_root }}/forgejo_metadata/{{ item | basename }}"
     owner: root
     group: root
     mode: '0644'
-    directory_mode: '0755'
+  loop: "{{ query('fileglob', role_path + '/files/forgejo_metadata/*.py') }}"
+  loop_control:
+    label: "{{ item | basename }}"
 
 - name: Install fixed attended submission helper
   ansible.builtin.copy:

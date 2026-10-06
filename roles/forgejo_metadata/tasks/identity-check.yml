@@ -1,0 +1,33 @@
+---
+- name: Reject identity conflicts
+  ansible.builtin.assert:
+    that:
+      - >-
+        ansible_facts.getent_passwd[forgejo_metadata_account] | default(none) == none
+        or (ansible_facts.getent_passwd[forgejo_metadata_account][1] | int == forgejo_metadata_uid
+            and ansible_facts.getent_passwd[forgejo_metadata_account][2] | int == forgejo_metadata_gid)
+      - >-
+        ansible_facts.getent_group[forgejo_metadata_account] | default(none) == none
+        or ansible_facts.getent_group[forgejo_metadata_account][1] | int == forgejo_metadata_gid
+      - >-
+        ansible_facts.getent_group[forgejo_metadata_account] | default(none) == none
+        or ansible_facts.getent_group[forgejo_metadata_account][2] in ['', forgejo_metadata_account]
+    fail_msg: Existing metadata identity differs; review migration before provisioning
+
+- name: Reject another account using the declared UID
+  ansible.builtin.assert:
+    that:
+      - item.key == forgejo_metadata_account or item.value[1] | int != forgejo_metadata_uid
+    fail_msg: Declared metadata UID is already allocated
+  loop: "{{ ansible_facts.getent_passwd | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Reject another group using the declared GID
+  ansible.builtin.assert:
+    that:
+      - item.key == forgejo_metadata_account or item.value[1] | int != forgejo_metadata_gid
+    fail_msg: Declared metadata GID is already allocated
+  loop: "{{ ansible_facts.getent_group | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"

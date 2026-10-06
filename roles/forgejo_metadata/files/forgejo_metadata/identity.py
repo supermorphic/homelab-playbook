@@ -24,7 +24,7 @@ def render_projection(mapping, kind: str, source: dict) -> Projection:
         name='fj-'+source['name'][:50-len(suffix)-3]+suffix
         identity=marker(key)
         if len(identity)>100: raise MirrorError('projection_limit')
-        text=source.get('description') or ''
+        text=' '.join((source.get('description') or '').splitlines())
         description=identity+ ('\n'+text[:99-len(identity)] if text and len(identity)<99 else '')
         fields={'name':name,'color':source['color'].lstrip('#').lower(),'description':description}
     else:

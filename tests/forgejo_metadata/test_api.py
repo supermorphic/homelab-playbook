@@ -58,3 +58,36 @@ class APITests(unittest.TestCase):
     def test_malformed_final_page_does_not_return_partial_inventory(self):
         client=self.client([(200,[{'id':1}],{'Link':'<https://api.github.com/repos/example/recovery/issues?page=2>; rel="next"'}),(500,{}, {})])
         with self.assertRaises(MirrorError): client.pages('/issues')
+    def test_private_source_ca_does_not_replace_destination_system_trust(self):
+        from dataclasses import replace
+        from unittest.mock import patch,MagicMock
+        mapping=replace(self.mapping,ca_file='/etc/fixture-source-ca.pem')
+        source_context=MagicMock(); destination_context=MagicMock()
+        with patch.object(self.api.ssl,'create_default_context',side_effect=[source_context,destination_context]) as contexts:
+            self.api.SourceAPI(mapping,'synthetic-token',transport=lambda *args:None)
+            self.api.DestinationAPI(mapping,'synthetic-token',transport=lambda *args:None)
+        self.assertEqual([(),()], [call.args for call in contexts.call_args_list])
+        self.assertEqual([{},{}], [call.kwargs for call in contexts.call_args_list])
+        source_context.load_verify_locations.assert_called_once_with(cafile='/etc/fixture-source-ca.pem')
+        destination_context.load_verify_locations.assert_not_called()
+    def test_label_components_with_slash_and_dots_use_only_label_endpoints(self):
+        from forgejo_metadata.identity import render_projection
+        from forgejo_metadata.model import DestinationObject
+        from urllib.parse import quote
+        for name in ('area/ui','release..next','../issues/comments/1','unicode/🍃'):
+            self.calls=[]
+            projection=render_projection(self.mapping,'label',{'id':42,'name':name,'color':'abcdef','description':'Defect'})
+            locator='/labels/'+quote(projection.fields['name'],safe='')
+            target=DestinationObject(projection.key,locator,dict(projection.fields))
+            client=self.client([(200,dict(projection.fields),{})])
+            client.update(target,projection)
+            self.assertEqual('PATCH',self.calls[0][0])
+            self.assertTrue(self.calls[0][1].startswith('https://api.github.com/repos/example/recovery/labels/'))
+            self.assertEqual(1,len(self.calls))
+    def test_source_exact_full_last_page_stops_at_complete_links(self):
+        next_url='https://forgejo.example.test/api/v1/repos/example/project/labels?limit=50&page=2'
+        previous='https://forgejo.example.test/api/v1/repos/example/project/labels?limit=50&page=1'
+        client=self.client([(200,[{'id':i} for i in range(1,51)],{'Link':f'<{next_url}>; rel="next"'}),
+            (200,[{'id':i} for i in range(51,101)],{'Link':f'<{previous}>; rel="prev"'})],True)
+        rows=client.pages('/labels?limit=50')
+        self.assertEqual(list(range(1,101)),[row['id'] for row in rows]); self.assertEqual(2,len(self.calls))

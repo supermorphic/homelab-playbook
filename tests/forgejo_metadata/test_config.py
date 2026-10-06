@@ -25,3 +25,8 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(before, self.model.enrollment_fingerprint(self.model.load_config(doc)))
         doc['mappings'][0]['destination_id']=10
         self.assertNotEqual(before, self.model.enrollment_fingerprint(self.model.load_config(doc)))
+    def test_wrong_types_and_boolean_version_are_rejected(self):
+        for field,value in [('instance',None),('source_origin',123),('source_repo',[]),('source_credential',False)]:
+            document=copy.deepcopy(CONFIG); document['mappings'][0][field]=value
+            with self.assertRaises(self.model.MirrorError): self.model.load_config(document)
+        with self.assertRaises(self.model.MirrorError): self.model.load_config(dict(CONFIG,version=True))

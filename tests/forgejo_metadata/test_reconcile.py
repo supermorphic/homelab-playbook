@@ -66,3 +66,52 @@ class ReconciliationTests(unittest.TestCase):
         self.destination.data.issues.append({'id':98,'pull_request':{},'user':{'id':11},'body':'junk'})
         self.assertEqual([],self.run_mirror().errors)
         self.assertEqual(2,len(self.destination.data.issues))
+    def test_rejected_requests_consume_the_write_budget(self):
+        from forgejo_metadata.api import APIError
+        calls=[]
+        def reject(projection,parent=None):
+            calls.append(projection.key); raise APIError('http_422','not_created')
+        self.destination.create=reject
+        result=self.module.reconcile(self.mapping,self.source,self.destination,self.store,1)
+        self.assertEqual(1,len(calls)); self.assertEqual(1,result.writes)
+    def test_created_marker_with_wrong_actor_retains_uncertain_intent(self):
+        original=self.destination.create
+        def create(projection,parent=None):
+            locator=original(projection,parent)
+            if projection.key.kind=='issue': self.destination.rows[locator]['user']={'id':999}
+            return locator
+        self.destination.create=create
+        result=self.run_mirror()
+        self.assertIn('ownership_conflict',result.errors)
+        self.assertTrue(self.store.load()['pending'])
+    def test_runtime_deadline_stops_remaining_objects(self):
+        calls=[]
+        def timeout(projection,parent=None):
+            calls.append(projection.key); raise MirrorError('run_timeout')
+        self.destination.create=timeout
+        result=self.run_mirror()
+        self.assertEqual(1,len(calls)); self.assertIn('run_timeout',result.errors)
+    def test_eligibility_changed_during_create_discovery_prevents_post(self):
+        eligible=[True]; original=self.destination.inventory; count=[0]
+        def scan(mapping):
+            count[0]+=1
+            if count[0]==2: eligible[0]=False
+            return original(mapping)
+        def preflight(mapping):
+            if not eligible[0]: raise MirrorError('destination_enrollment')
+        self.destination.inventory=scan; self.destination.preflight=preflight
+        result=self.run_mirror()
+        self.assertIn('destination_enrollment',result.errors); self.assertEqual([],self.destination.writes)
+        self.assertEqual({},self.store.load()['pending'])
+    def test_eligibility_changed_during_update_discovery_prevents_patch(self):
+        self.run_mirror(); self.destination.writes=[]; self.source.data.labels[0]['color']='000000'
+        eligible=[True]; original=self.destination.inventory; count=[0]
+        def scan(mapping):
+            count[0]+=1
+            if count[0]==3: eligible[0]=False
+            return original(mapping)
+        def preflight(mapping):
+            if not eligible[0]: raise MirrorError('destination_enrollment')
+        self.destination.inventory=scan; self.destination.preflight=preflight
+        result=self.run_mirror()
+        self.assertIn('destination_enrollment',result.errors); self.assertEqual([],self.destination.writes)
