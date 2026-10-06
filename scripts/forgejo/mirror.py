@@ -39,11 +39,11 @@ def cron_instant(value, tzif):
         tzinfo=ZoneInfo.from_file(io.BytesIO(tzif)))
 
 
-def rows(application):
+def rows(application, *, timeout=120):
     return json.loads(application.run.command([application.run.podman, 'exec',
         application.db, 'psql', '-X', '-U', 'forgejo', '-d', 'forgejo',
         '--tuples-only', '--no-align', '--set', 'ON_ERROR_STOP=1',
-        '--command', mirror_status.QUERY]).stdout)
+        '--command', mirror_status.QUERY], timeout=timeout).stdout)
 
 
 def cron(application):
@@ -64,6 +64,26 @@ def failure_category(message):
     return 'unclassified native failure'
 
 
+def wait_for_attempts(application, before, *, timeout=30):
+    now = datetime.now(timezone.utc).timestamp()
+    eligible = {row['id']: row['last_attempt'] for row in before
+                if row['last_attempt'] + row['interval_seconds'] <= now}
+    if not eligible:
+        # Preserve the ineligible-scan observation window; no attempt is expected.
+        time.sleep(2)
+        return
+    deadline = time.monotonic() + timeout
+    while (remaining := deadline - time.monotonic()) > 0:
+        current = {row['id']: row['last_attempt']
+                   for row in rows(application, timeout=min(10, remaining))}
+        # Native last_update is persisted after success or failure completes.
+        if all(current.get(identifier, 0) > previous
+               for identifier, previous in eligible.items()):
+            return
+        time.sleep(min(0.5, max(0, deadline - time.monotonic())))
+    raise RuntimeError('native mirror completion deadline exceeded')
+
+
 def scan(run, application, zone_file):
     """Exercise the shipped native schedule at its next real local 02:00."""
     before = rows(application)
@@ -81,8 +101,7 @@ def scan(run, application, zone_file):
     deadline = time.monotonic() + delay + 30
     while time.monotonic() < deadline:
         if cron(application)['exec_times'] > 0:
-            # Cron enqueues work; wait for the native queue to finish separately.
-            time.sleep(2)
+            wait_for_attempts(application, before)
             return
         time.sleep(0.5)
     raise RuntimeError('native 02:00 mirror scan deadline exceeded')

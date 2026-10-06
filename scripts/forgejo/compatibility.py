@@ -62,7 +62,8 @@ class Application:
             "--volume", f"{self.database_volume}:/var/lib/postgresql/data",
             self.pins["forgejo_postgres_image"],
         ])
-        run.wait([run.podman, "exec", self.db, "pg_isready", "-U", "postgres"])
+        # The initialization server accepts Unix sockets before the final server starts.
+        run.wait([run.podman, "exec", self.db, "pg_isready", "-h", "127.0.0.1", "-U", "postgres"])
         self.sql(database_sql(self.db_password))
         self.ini = self.configuration()
         run.private_file(self.config, "app.ini", self.ini)
