@@ -137,21 +137,22 @@ class HostEgressTests(unittest.TestCase):
             with self.subTest(changed=changed), self.assertRaises(ValueError):
                 self.egress.validate_gateway({**expected, **changed}, *arguments)
 
-    def test_gateway_disables_automatic_forwarding_and_pins_namespace_authority(self):
-        builder = getattr(self.egress, 'pasta_arguments', None)
-        self.assertTrue(callable(builder), 'Trusted gateway command is missing')
+    def test_gateway_accepts_only_a_preopened_tap_without_namespace_authority(self):
+        builder = getattr(self.egress, 'transport_arguments', None)
+        self.assertTrue(callable(builder), 'Preopened transport handoff is missing')
         configuration = {'forgejo_addresses': ['10.57.1.20'],
-                         'host_addresses': ['10.57.1.4'], 'dns_address': '127.0.0.53'}
-        command = builder(configuration, {'uid': 22002, 'gid': 22002}, 19)
-        for option in ('-t', '-u', '-T', '-U'):
-            self.assertEqual('none', command[command.index(option) + 1])
-        for option in ('--no-map-gw', '--no-splice', '--foreground'):
+                         'host_addresses': ['10.57.1.4'], 'dns_address': '10.57.1.53'}
+        command = builder(configuration, 9)
+        self.assertEqual('/usr/bin/slirp4netns', command[0])
+        self.assertEqual('9', command[-1])
+        for option in ('--netns-type=tapfd', '--disable-host-loopback', '--disable-dns', '--enable-seccomp'):
             self.assertIn(option, command)
-        self.assertEqual('/work/gateway.netns', command[command.index('--netns') + 1])
-        self.assertEqual('22002:22002', command[command.index('--runas') + 1])
-        self.assertEqual('127.0.0.53', command[command.index('--dns-host') + 1])
+        self.assertNotIn('--configure', command)
+        for descriptor in (0, 1, 2, True, -1):
+            with self.subTest(descriptor=descriptor), self.assertRaises(ValueError):
+                builder(configuration, descriptor)
 
-    def test_namespace_mount_refuses_the_host_namespace_before_mutation(self):
+    def test_tap_setup_refuses_the_host_namespace_before_mutation(self):
         from types import SimpleNamespace
         try:
             launcher = importlib.import_module('scripts.forgejo_runner.gateway_launch')
@@ -161,4 +162,4 @@ class HostEgressTests(unittest.TestCase):
              patch.object(launcher.os, 'stat', return_value=SimpleNamespace(st_ino=123)), \
              patch.object(launcher.os, 'open', side_effect=AssertionError('Mutation began')), \
              self.assertRaises(ValueError):
-            launcher.prepare_namespace(19)
+            launcher.prepare_tap(19, 20)

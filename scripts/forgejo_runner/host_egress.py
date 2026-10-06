@@ -9,8 +9,6 @@ import stat
 import time
 
 FORGEJO_HOST = 'forgejo.infra.supermorphic.com'
-DNS_FORWARD4 = '10.57.1.3'
-DNS_FORWARD6 = 'fd57:1::3'
 EGRESS_DENIED = (('10.57.0.2', 443), ('fd57::2', 443),
                  ('192.0.2.20', 443), ('2001:db8:57::20', 443))
 NONPUBLIC4 = ('0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8',
@@ -47,7 +45,7 @@ def validate_configuration(configuration):
                     for value in map(address, values)):
                 raise ValueError
         resolver = address(configuration['dns_address'])
-        if resolver.is_multicast or resolver.is_unspecified or resolver.is_link_local:
+        if resolver.is_multicast or resolver.is_unspecified or resolver.is_link_local or resolver.is_loopback:
             raise ValueError
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError('Invalid trusted public-egress configuration') from error
@@ -83,22 +81,16 @@ def validate_gateway(record, controller, outer, expected):
 
 
 def dns_forward(configuration):
-    return DNS_FORWARD4 if address(configuration['dns_address']).version == 4 else DNS_FORWARD6
+    return configuration['dns_address']
 
 
-def pasta_arguments(configuration, controller, network_descriptor):
+def transport_arguments(configuration, tap_descriptor):
     validate_configuration(configuration)
-    if type(network_descriptor) is not int or network_descriptor < 3:
-        raise ValueError('A pinned worker network descriptor is required')
-    return ['/usr/bin/pasta', '--foreground', '--quiet', '--runas',
-            str(controller['uid']) + ':' + str(controller['gid']),
-            '--netns', '/work/gateway.netns',
-            '--config-net', '-I', 'uplink0',
-            '-a', '10.57.1.2', '-n', '24', '-g', '10.57.1.1',
-            '-a', 'fd57:1::2', '-g', 'fd57:1::1',
-            '--dns-host', configuration['dns_address'], '--dns-forward', dns_forward(configuration),
-            '--dns', dns_forward(configuration), '--search', 'none',
-            '--no-map-gw', '--no-splice', '-t', 'none', '-u', 'none', '-T', 'none', '-U', 'none']
+    if type(tap_descriptor) is not int or tap_descriptor < 3:
+        raise ValueError('A preopened private TAP descriptor is required')
+    return ['/usr/bin/slirp4netns', '--netns-type=tapfd', '--cidr=10.57.1.0/24',
+            '--enable-ipv6', '--disable-host-loopback', '--disable-dns',
+            '--enable-seccomp', str(tap_descriptor)]
 
 
 def public_policy(configuration):
@@ -200,7 +192,7 @@ def gateway_records(target, unit, expected, argv):
             if process is not None:
                 os.close(process)
     if len(records) != 1:
-        raise ValueError('Exactly one owned unprivileged Pasta gateway is required')
+        raise ValueError('Exactly one owned unprivileged TAP transport is required')
     return records
 
 
@@ -246,7 +238,8 @@ def start_gateway(target, unit, configuration, state):
         cgroup = os.open('/sys/fs/cgroup' + unit['ControlGroup'] + '/cgroup.procs',
                          os.O_WRONLY | os.O_NOFOLLOW)
         descriptors['cgroup'] = cgroup
-        host_net = os.stat('/proc/self/ns/net').st_ino
+        descriptors['host'] = os.open('/proc/self/ns/net', os.O_RDONLY)
+        host_net = os.fstat(descriptors['host']).st_ino
         if os.fstat(descriptors['net']).st_ino == host_net:
             raise ValueError('Gateway target network is not private')
         expected = {'net': host_net, 'pidns': os.fstat(descriptors['pid']).st_ino,
@@ -254,12 +247,12 @@ def start_gateway(target, unit, configuration, state):
                     'root_device': os.fstat(descriptors['root']).st_dev,
                     'root_inode': os.fstat(descriptors['root']).st_ino}
         wait_network_ready(descriptors['root'])
-        argv = pasta_arguments(configuration, target['controller'], descriptors['net'])
+        argv = transport_arguments(configuration, 9)
         state.update(expected=expected, argv=argv, stderr=gateway_error_stream(descriptors['root']))
         command = ['/usr/bin/nsenter', '--mount=/proc/self/fd/' + str(descriptors['mnt']),
                    '--pid=/proc/self/fd/' + str(descriptors['pid']),
                    '--root=/proc/self/fd/' + str(descriptors['root']), '--wdns=/work', '--',
-                   '/usr/bin/python3', '/gateway-launch.py', str(descriptors['net']),
+                   '/usr/bin/python3', '/gateway-launch.py', str(descriptors['net']), str(descriptors['host']),
                    json.dumps(configuration), str(target['controller']['uid']) + ':' + str(target['controller']['gid'])]
         def attach():
             os.write(cgroup, str(os.getpid()).encode())

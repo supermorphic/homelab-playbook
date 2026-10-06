@@ -300,7 +300,7 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
             configuration = json.loads(owned_files['worker.json'])
             configuration['network']['host_network_inode'] = os.stat('/proc/self/ns/net').st_ino
             if stage == 'egress-only':
-                tools += ('pasta', 'getent')
+                tools += ('slirp4netns', 'getent')
                 public = observe_configuration()
                 configuration['network']['egress'] = public
                 owned_files['etc/resolv.conf'] = 'nameserver ' + dns_forward(public) + '\noptions timeout:2 attempts:1\n'
