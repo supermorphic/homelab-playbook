@@ -75,6 +75,22 @@ class DispatchTests(unittest.TestCase):
                 self.assertEqual(2, result.returncode)
                 self.assertNotIn('Traceback', result.stderr)
 
+    def test_native_job_probe_requires_both_private_descriptors(self):
+        result = self.run_cli('host-fixture', '--job-probe-only')
+        self.assertEqual(1, result.returncode)
+        self.assertIn('disposable', result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
+
+    def test_native_job_probe_cannot_mix_experiments(self):
+        for args in [('compatibility', '--job-probe-only'),
+                     ('host-fixture', '--job-probe-only', '--worker-probe-only'),
+                     ('host-fixture', '--job-probe-only', '--preflight-only'),
+                     ('host-fixture', '--job-probe-only', '--resource-probe-only')]:
+            with self.subTest(args=args):
+                result = self.run_cli(*args)
+                self.assertEqual(2, result.returncode)
+                self.assertNotIn('Traceback', result.stderr)
+
     def test_host_fixture_requires_an_explicit_disposable_target(self):
         result = self.run_cli("host-fixture")
         self.assertEqual(1, result.returncode)

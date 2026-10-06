@@ -158,10 +158,10 @@ HTTPServer(('0.0.0.0', 8080), Handler).serve_forever()
                 raise RuntimeError('Published loopback sibling did not become reachable')
             time.sleep(0.1)
     # Keep siblings and network helpers alive for independent host observation.
-    print(json.dumps({'rootless_api': True, 'sibling_containers': True, 'mapped_bind': True,
-                      'private_loopback': True, 'published_loopback': True,
-                      'user_manager': True, 'bounded_storage': True}), flush=True)
+    return {'rootless_api': True, 'sibling_containers': True, 'mapped_bind': True,
+            'private_loopback': True, 'published_loopback': True,
+            'user_manager': True, 'bounded_storage': True}
 
 
 if __name__ == '__main__':
-    main()
+    print(json.dumps(main()), flush=True)

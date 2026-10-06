@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import stat
 
 
@@ -19,6 +20,23 @@ def validate_worker_budget(target, capacity=None):
                 or capacity['memory_total'] < limits['memory_bytes'] * 4
                 or capacity['disk_available'] < limits['disk_bytes'] + 2 * 1024**3):
             raise ValueError('Insufficient host reserve; no setup was performed')
+
+
+def validate_job_budget(target, capacity=None):
+    limits = target['limits']
+    ranges = {'memory_bytes': (1024**3, 2 * 1024**3),
+              'disk_bytes': (8 * 1024**3, 16 * 1024**3),
+              'pids': (256, 512), 'cpu_percent': (25, 50), 'job_seconds': (300, 900)}
+    if any(type(limits[key]) is not int or not low <= limits[key] <= high
+           for key, (low, high) in ranges.items()):
+        raise ValueError('Native job exceeds its bounded experiment budgets')
+    if capacity is not None:
+        # Reserve 4GiB for existing services; include the at-most-2GiB asset
+        # staging copy as well as the finite worker image in the disk reserve.
+        if (capacity['memory_available'] < limits['memory_bytes'] + 4 * 1024**3
+                or capacity['memory_total'] < limits['memory_bytes'] + 4 * 1024**3
+                or capacity['disk_available'] < limits['disk_bytes'] + 4 * 1024**3):
+            raise ValueError('Insufficient native job reserve; no setup was performed')
 
 
 def worker_cleanup_errors(target, proc=Path('/proc')):
@@ -59,16 +77,21 @@ def validate_process_boundary(target, records, outer, host_net, host_userns, hos
         raise ValueError('Worker and subordinate container observations are required')
 
 
-def worker_files(target, launcher):
+def worker_files(target, launcher, *, oci_assets=()):
     """Private image NSS records authorize only the declared unused ID ranges."""
     worker = target['worker']
     user, uid, gid = worker['user'], worker['uid'], worker['gid']
-    return {
+    if (len(oci_assets) > 4 or len(set(oci_assets)) != len(oci_assets)
+            or any(re.fullmatch(r'image-[0-3]\.oci', name) is None for name in oci_assets)):
+        raise ValueError('Invalid declared OCI asset paths')
+    files = {
         'worker-launch.py': launcher,
         'worker.json': json.dumps({'worker': worker, 'limits': target['limits']}),
         'etc/passwd': f'root:x:0:0:root:/root:/usr/sbin/nologin\n{user}:x:{uid}:{gid}:fixture:/work:/usr/sbin/nologin\n',
         'etc/group': f'root:x:0:\n{user}:x:{gid}:\n',
         'etc/nsswitch.conf': 'passwd: files\ngroup: files\nshadow: files\nhosts: files\n',
+        'etc/hosts': '127.0.0.1 localhost\n::1 localhost\n',
+        'etc/resolv.conf': '# Offline fixture: no external resolver.\n',
         'etc/subuid': f'{user}:{worker["subuid_start"]}:{worker["subid_count"]}\n',
         'etc/subgid': f'{user}:{worker["subgid_start"]}:{worker["subid_count"]}\n',
         'etc/machine-id': '11111111111111111111111111111111\n',
@@ -77,7 +100,7 @@ def worker_files(target, launcher):
         # bounded maximum, preventing ordinary Podman startup.
         'etc/systemd/user.conf': '[Manager]\nDefaultTasksMax=infinity\n',
         'etc/containers/storage.conf': f'[storage]\ndriver="vfs"\ngraphroot="/work/graph"\nrunroot="/run/user/{uid}/storage"\n',
-        'etc/containers/containers.conf': '[engine]\ncgroup_manager="systemd"\nevents_logger="file"\n',
+        'etc/containers/containers.conf': '[engine]\ncgroup_manager="systemd"\nevents_logger="file"\nimage_copy_tmp_dir="/work/image-tmp"\n',
         'etc/containers/policy.json': '{"default":[{"type":"reject"}],"transports":'
             '{"tarball":{"": [{"type":"insecureAcceptAnything"}]}}}\n',
         'etc/systemd/user/worker-probe.service':
@@ -88,7 +111,17 @@ def worker_files(target, launcher):
         'etc/systemd/user/default.target.wants/worker-probe.service': ('link', '../worker-probe.service'),
         # Ensure the runtime directory exists in the bounded image.
         'work/run/.fixture': 'synthetic runtime allocation\n',
+        'work/image-tmp/.fixture': 'synthetic image copy allocation\n',
+        # OCI archive format detection uses this standard prefix independently
+        # of engine copy settings. It resolves only to the finite private image.
+        'var/tmp': ('link', '../work/image-tmp'),
     }
+    if oci_assets:
+        policy = json.loads(files['etc/containers/policy.json'])
+        policy['transports']['oci-archive'] = {
+            '/work/input/' + name: [{'type': 'insecureAcceptAnything'}] for name in oci_assets}
+        files['etc/containers/policy.json'] = json.dumps(policy)
+    return files
 
 
 def validate_runtime_mount(target, source, runtime, work_device, filesystem):
@@ -142,7 +175,9 @@ def read_worker_result(target, unit, proc=Path('/proc')):
         work = os.open('work', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
         descriptors.append(work)
         contents = {}
-        for name, limit in (('worker-result.json', 16384), ('probe-error.log', 4096), ('api-error.log', 4096)):
+        for name, limit in (('worker-result.json', 16384), ('probe-error.log', 4096),
+                            ('api-error.log', 4096), ('native-error.log', 4096),
+                            ('native-job-error.log', 4096)):
             try:
                 descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=work)
             except FileNotFoundError:
@@ -164,7 +199,8 @@ def read_worker_result(target, unit, proc=Path('/proc')):
             validate_runtime_storage(target, root, work)
         diagnostic = contents['probe-error.log']
         if diagnostic:
-            diagnostic = (diagnostic + '\n' + contents['api-error.log'])[:4096]
+            diagnostic = (contents['native-job-error.log'] + '\n' + contents['native-error.log']
+                          + '\n' + contents['api-error.log'] + '\n' + diagnostic)[:4096]
         return {'observations': observation, 'diagnostic': diagnostic}
     except FileNotFoundError:
         return empty
@@ -214,3 +250,11 @@ def observe_worker_boundary(target, observed, unit):
     validate_process_boundary(target, records, outer, os.stat('/proc/self/ns/net').st_ino,
                               os.stat('/proc/self/ns/user').st_ino, os.stat('/proc/self/ns/pid').st_ino)
     return {**observed, 'outer_limits': True, 'process_boundary': True}
+
+
+def observe_job_boundary(target, observed, unit):
+    required = {'one_job', 'job_runtime'}
+    if not isinstance(observed, dict) or any(observed.get(key) is not True for key in required):
+        raise ValueError('Native job lacks required workload outcomes')
+    result = observe_worker_boundary(target, {k: v for k, v in observed.items() if k not in required}, unit)
+    return {**result, 'one_job': True, 'job_runtime': True}

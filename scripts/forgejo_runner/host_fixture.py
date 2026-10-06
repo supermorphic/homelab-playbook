@@ -4,8 +4,12 @@ import base64
 import hashlib
 import ipaddress
 import json
+import os
 from pathlib import Path
 import re
+import shlex
+import shutil
+import stat
 import struct
 import subprocess
 import tempfile
@@ -149,7 +153,7 @@ def inspect_target(target: dict) -> dict:
     return validate_observation(target, ssh_observation(target, payload))
 
 
-def ssh_observation(target: dict, payload: str, *, timeout=30) -> dict:
+def ssh_observation(target: dict, payload: str, *, timeout=30, input_files=None) -> dict:
     """Pinned noninteractive transport with bounded, sanitized response handling."""
     validate_target(target)
     with tempfile.TemporaryDirectory(prefix="forgejo-runner-host-") as directory:
@@ -166,10 +170,45 @@ def ssh_observation(target: dict, payload: str, *, timeout=30) -> dict:
             "ForwardAgent=no", "ForwardX11=no", "Tunnel=no", "HostKeyAlgorithms=ssh-ed25519",
         ):
             argv.extend(("-o", option))
-        argv.extend((target["ssh_alias"], "sudo -n -- /usr/bin/python3 -"))
         try:
-            result = subprocess.run(argv, input=payload, text=True, capture_output=True,
-                                    timeout=timeout, check=False)
+            if input_files:
+                source = payload.encode()
+                if len(source) > 2 * 1024**2 or len(input_files) > 16:
+                    raise ValueError('Offline fixture source or input count exceeds its bound')
+                loader = ('import sys; n=int(sys.stdin.buffer.readline(32)); '
+                          'assert 0<n<=2097152; '
+                          'exec(compile(sys.stdin.buffer.read(n),"<fixture>","exec"))')
+                argv.extend((target['ssh_alias'], 'sudo -n -- /usr/bin/python3 -c ' + shlex.quote(loader)))
+                with tempfile.TemporaryFile() as stream:
+                    stream.write(str(len(source)).encode() + b'\n' + source)
+                    total = 0
+                    for path in input_files:
+                        path = Path(path).absolute()
+                        if not path.resolve(strict=True).is_relative_to((ROOT / '.tmp').resolve()) or path.is_symlink():
+                            raise ValueError('Offline fixture inputs must be regular local files under .tmp')
+                        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+                        with os.fdopen(fd, 'rb') as asset:
+                            metadata = os.fstat(asset.fileno())
+                            total += metadata.st_size
+                            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                                    or metadata.st_size <= 0 or total > 2 * 1024**3):
+                                raise ValueError('Offline fixture inputs exceed their bound')
+                            remaining = metadata.st_size
+                            while remaining:
+                                chunk = asset.read(min(remaining, 1024 * 1024))
+                                if not chunk:
+                                    raise ValueError('Offline fixture input changed during transfer')
+                                stream.write(chunk)
+                                remaining -= len(chunk)
+                            if asset.read(1):
+                                raise ValueError('Offline fixture input grew during transfer')
+                    stream.seek(0)
+                    result = subprocess.run(argv, stdin=stream, text=True, capture_output=True,
+                                            timeout=timeout, check=False)
+            else:
+                argv.extend((target['ssh_alias'], 'sudo -n -- /usr/bin/python3 -'))
+                result = subprocess.run(argv, input=payload, text=True, capture_output=True,
+                                        timeout=timeout, check=False)
         except (OSError, subprocess.TimeoutExpired) as error:
             raise RuntimeError("Disposable fixture SSH observation failed") from error
     if result.returncode:
@@ -238,8 +277,65 @@ def inspect_workers(target: dict) -> dict:
     return outcome
 
 
+def inspect_native_jobs(target: dict, images: Path) -> dict:
+    from scripts.forgejo_runner.host_worker import validate_job_budget
+    from scripts.forgejo_runner.native_assets import prepare
+    validate_target(target)
+    validate_job_budget(target)
+    # Observe the target before preparing assets, and repeat the full host
+    # preflight and reserve check immediately before remote allocation.
+    payload = "__file__ = '/fixture/scripts/forgejo_runner/host_fixture.py'\n"
+    for name in ('host_fixture.py', 'host_probe.py', 'host_resources.py', 'host_worker.py'):
+        payload += 'exec(' + repr((ROOT / 'scripts/forgejo_runner' / name).read_text()) + ')\n'
+    preflight = payload + 't=' + repr(target) + '\n'
+    preflight += 'o=validate_observation(t,observe(t),allow_new_fixture=True)\n'
+    preflight += "validate_job_budget(t,host_capacity(Path(t['state_root']).parent if Path(t['state_root']).parent.exists() else Path(t['state_root']).parent.parent))\n"
+    preflight += "print(json.dumps({'architecture':o['architecture']}))\n"
+    architecture = ssh_observation(target, preflight)['architecture']
+    scratch = ROOT / '.tmp/forgejo-runner'; scratch.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='native-assets-', dir=scratch) as directory:
+        assets, configuration = prepare(Path(directory), images, architecture)
+        from scripts.forgejo_runner.host_worker import worker_files
+        extra = worker_files(target, (ROOT / 'scripts/forgejo_runner/worker_launch.py').read_text(),
+                             oci_assets=[image['asset'] for image in configuration['images']])
+        extra['offline_probe.py'] = (ROOT / 'scripts/forgejo_runner/worker_probe.py').read_text()
+        extra['job.json'] = json.dumps(configuration)
+        probe = '''import contextlib, json, pathlib, sys, tarfile
+for name, destination in (('source.tar', '/work/source'), ('vendor.tar', '/work/vendor')):
+    pathlib.Path(destination).mkdir(mode=0o700)
+    with tarfile.open('/work/input/' + name) as archive:
+        archive.extractall(destination, filter='data')
+sys.path[:0] = ['/work/source', '/work/vendor', '/']
+from scripts.forgejo_runner.native_job import run_probe
+with pathlib.Path('/work/job-progress.log').open('w', buffering=1) as progress, contextlib.redirect_stdout(progress):
+    result = run_probe()
+print(json.dumps(result), flush=True)
+'''
+        payload += 'exec(' + repr((ROOT / 'scripts/forgejo_runner/host_inputs.py').read_text()) + ')\n'
+        payload += 'print(json.dumps(run_image_probe(' + repr(target) + ', observe, validate_observation, ' + repr(probe)
+        payload += ", stage='job-only', budget_validator=validate_job_budget, extra_files=" + repr(extra)
+        payload += ', assets=' + repr(assets) + ', asset_validator=validate_assets, asset_receiver=receive_asset'
+        payload += ', worker_observer=observe_job_boundary, worker_reader=read_worker_result, after_stop=worker_cleanup_errors)))\n'
+        outcome = ssh_observation(target, payload, timeout=target['limits']['job_seconds'] + 600,
+                                  input_files=[Path(directory) / Path(name).name for name in assets])
+    required = {'rootless_api', 'sibling_containers', 'mapped_bind', 'private_loopback',
+                'published_loopback', 'user_manager', 'bounded_storage', 'outer_limits',
+                'process_boundary', 'one_job', 'job_runtime'}
+    if (not isinstance(outcome, dict) or outcome.get('acceptance') != 'job-only'
+            or type(outcome.get('exit_code')) is not int or outcome['exit_code'] not in (0, 1, 130)
+            or not isinstance(outcome.get('cleanup_errors'), list)):
+        raise ValueError('Invalid native job experiment outcome')
+    if outcome['exit_code'] == 0:
+        result = outcome.get('observations', {})
+        if (outcome['cleanup_errors'] or outcome.get('primary_error') is not None
+                or set(result) != required or any(result[key] is not True for key in required)):
+            raise ValueError('Native job experiment lacks required evidence')
+    return {**outcome, 'architecture': architecture, 'source_tree': configuration['source_tree']}
+
+
 def run(images: Path | None, target: Path | None, *, preflight_only: bool = False,
-        resource_probe_only: bool = False, worker_probe_only: bool = False) -> int:
+        resource_probe_only: bool = False, worker_probe_only: bool = False,
+        job_probe_only: bool = False) -> int:
     """Separate observational prerequisites from the unfinished containment gate."""
     if target is None:
         raise ValueError("An explicit disposable Debian host fixture descriptor is required")
@@ -253,6 +349,20 @@ def run(images: Path | None, target: Path | None, *, preflight_only: bool = Fals
     except (OSError, ValueError) as error:
         raise ValueError("Cannot load disposable host descriptor") from error
     validate_target(descriptor)
+    if job_probe_only:
+        if preflight_only or resource_probe_only or worker_probe_only:
+            raise ValueError('Job probe cannot be combined with other experiments')
+        if images is None or not images.resolve().is_relative_to((ROOT / '.tmp').resolve()):
+            raise ValueError('Native job requires a local reviewed image descriptor under .tmp')
+        result = inspect_native_jobs(descriptor, images)
+        with tempfile.NamedTemporaryFile(mode='w', prefix='host-job-outcome-', suffix='.json',
+                                         dir=target.parent, delete=False) as evidence:
+            json.dump(result, evidence, indent=2); evidence.write('\n')
+        print(f'Host job outcome saved to {evidence.name}')
+        if result['exit_code']:
+            raise RuntimeError('Native job probe failed; inspect saved outcome and any retained allocation')
+        print('Offline native job passed and owned state removed; full runner acceptance is still pending')
+        return 0
     if worker_probe_only:
         if preflight_only or images or resource_probe_only:
             raise ValueError('Worker probe cannot be combined with other experiments')

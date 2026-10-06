@@ -3,6 +3,8 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import subprocess
+from unittest.mock import Mock
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 import tempfile
@@ -56,6 +58,42 @@ MODULE = ROOT / "scripts/forgejo_runner/registration_probe.py"
 
 
 class RegistrationProbeTests(unittest.TestCase):
+    def test_offline_runner_uses_loaded_image_and_never_pulls_missing_image(self):
+        from scripts.forgejo_runner.registration_probe import require_runner_image
+        for code in (0, 1, 125):
+            run = Mock(podman='podman')
+            run.command.return_value = subprocess.CompletedProcess([], code, '', '')
+            if code:
+                with self.assertRaises(RuntimeError):
+                    require_runner_image(run, 'localhost/native:fixture', offline=True)
+            else:
+                require_runner_image(run, 'localhost/native:fixture', offline=True)
+            run.command.assert_called_once_with(['podman', 'image', 'exists', 'localhost/native:fixture'], check=False)
+
+    def test_job_bind_source_is_admitted_by_the_exact_runner_volume_policy(self):
+        import shlex
+        import fnmatch
+        from scripts.forgejo_runner.registration_probe import mount_job_workspace
+        for remap in (False, True):
+            config = {'container': {'options': '--security-opt label=disable'}}
+            workspace = Path('/work/job-workspace')
+            mount_job_workspace(config, workspace, remap=remap)
+            arguments = shlex.split(config['container']['options'])
+            binding = arguments[arguments.index('--volume') + 1].split(':')
+            self.assertEqual(str(workspace), binding[0])
+            self.assertEqual(binding[0], binding[1])
+            self.assertEqual(['U'] if remap else [], binding[2:])
+            policy = config['container']['valid_volumes']
+            self.assertTrue(any(fnmatch.fnmatchcase(binding[0], pattern) for pattern in policy))
+            for unrelated in ('/etc', '/work/registration', '/work/job-workspace-other'):
+                self.assertFalse(any(fnmatch.fnmatchcase(unrelated, pattern) for pattern in policy))
+
+    def test_online_runner_still_pulls_the_reviewed_image(self):
+        from scripts.forgejo_runner.registration_probe import require_runner_image
+        run = Mock(podman='podman')
+        require_runner_image(run, 'example.invalid/runner@sha256:' + 'a' * 64)
+        run.command.assert_called_once_with(['podman', 'pull', 'example.invalid/runner@sha256:' + 'a' * 64], timeout=300)
+
     def reconciliation(self):
         from scripts.forgejo_runner import registration_probe
         self.assertTrue(hasattr(registration_probe, 'retire_uncertain_registration'),
@@ -133,6 +171,7 @@ class RegistrationProbeTests(unittest.TestCase):
             parsed = configparser.ConfigParser(interpolation=None, allow_unnamed_section=True)
             parsed.read_string(rendered)
             self.assertTrue(parsed.getboolean("actions", "ENABLED"))
+            self.assertEqual("none", parsed.get("actions", "LOG_COMPRESSION"))
             self.assertEqual("Forgejo", parsed[configparser.UNNAMED_SECTION]["APP_NAME"])
             self.assertEqual('http://runner-forgejo-test-fixture123-source-app:3000/',
                              parsed['server']['ROOT_URL'])

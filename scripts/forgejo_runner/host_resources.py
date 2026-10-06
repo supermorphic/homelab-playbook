@@ -6,6 +6,7 @@ import stat
 import json
 import shutil
 import subprocess
+import sys
 import time
 
 
@@ -223,11 +224,16 @@ def run_resource_probe(target, observe, validate, probe_source):
 
 def run_image_probe(target, observe, validate, probe_source, *, stage='resources-only',
                     budget_validator=validate_probe_budget, extra_files=None, worker_observer=None,
-                    worker_reader=None, after_stop=None):
+                    worker_reader=None, after_stop=None, assets=None,
+                    asset_validator=None, asset_receiver=None):
     """Fixed trusted experiments share the same image ownership and disposal path."""
-    if stage not in ('resources-only', 'worker-only'):
+    if stage not in ('resources-only', 'worker-only', 'job-only'):
         raise ValueError('Unknown host experiment')
-    worker = stage == 'worker-only'
+    worker = stage != 'resources-only'
+    if assets:
+        if asset_validator is None or asset_receiver is None:
+            raise ValueError('Offline asset validation and receiver are required')
+        asset_validator(assets, min(2 * 1024**3, target['limits']['disk_bytes'] // 2))
     resources = Resources()
     root = Path(target['state_root'])
     unit = OwnedUnit(('forgejo-worker-' if worker else 'forgejo-resource-')
@@ -328,7 +334,7 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
         probe.write_text(probe_source)
         probe.chmod(0o444)
         resources.record_file(probe)
-        for relative, content in (extra_files or {}).items():
+        for relative, content in {**(extra_files or {}), **(assets or {})}.items():
             if relative.startswith('/') or '..' in Path(relative).parts:
                 raise ValueError('Invalid trusted experiment file')
             path = staging / relative
@@ -343,6 +349,10 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                     os.chown(parent, target['worker']['uid'], target['worker']['gid'])
                     parent.chmod(0o700)
                 resources.record_file(parent)
+            if relative in (assets or {}):
+                asset_receiver(sys.stdin.buffer, path, content)
+                resources.record_file(path)
+                continue
             if isinstance(content, tuple):
                 kind, destination = content
                 if kind != 'link' or not (path.parent / destination).resolve(strict=True).is_relative_to(staging.resolve()):
