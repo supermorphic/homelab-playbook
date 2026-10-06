@@ -180,6 +180,11 @@ class HostWorkerTests(unittest.TestCase):
                 self.worker.read_worker_result(target, unit, root / 'proc')
             self.assertEqual('private unrelated sentinel', outside.read_text())
             result.unlink()
+            (image / 'work/probe-error.log').write_text('stack trace: ' + 'x' * 4096)
+            (image / 'work/native-job-error.log').write_text('Error: exact workflow cause')
+            diagnostic = self.worker.read_worker_result(target, unit, root / 'proc')['diagnostic']
+            self.assertIn('Error: exact workflow cause', diagnostic)
+            self.assertLessEqual(len(diagnostic), 4096)
             (process / 'cgroup').write_text('0::/system.slice/owned.service\n')
             self.assertIsNone(self.worker.read_worker_result(target, unit, root / 'proc')['observations'],
                               'Initial manager startup is not completed acceptance')
@@ -206,12 +211,39 @@ class HostWorkerTests(unittest.TestCase):
         self.assertEqual([{'type': 'reject'}], policy['default'])
         self.assertEqual({'tarball': {'': [{'type': 'insecureAcceptAnything'}]}}, policy['transports'])
 
+    def test_native_policy_accepts_only_declared_local_oci_asset_paths(self):
+        files = self.worker.worker_files(self.target(), 'trusted launcher', oci_assets=['image-0.oci', 'image-1.oci'])
+        policy = json.loads(files['etc/containers/policy.json'])
+        self.assertEqual([{'type': 'reject'}], policy['default'])
+        self.assertEqual({'/work/input/image-0.oci', '/work/input/image-1.oci'},
+                         set(policy['transports']['oci-archive']))
+        self.assertNotIn('docker', policy['transports'])
+        for assets in (['../outside.oci'], ['image-0.oci'] * 2, ['image-0.oci'] * 5):
+            with self.subTest(assets=assets), self.assertRaises(ValueError):
+                self.worker.worker_files(self.target(), 'trusted launcher', oci_assets=assets)
+
     def test_private_runtime_storage_uses_standard_uid_path(self):
         import tomllib
         files = self.worker.worker_files(self.target(), 'trusted launcher')
         storage = tomllib.loads(files['etc/containers/storage.conf'])['storage']
         self.assertEqual('/run/user/2202/storage', storage['runroot'])
         self.assertEqual('/work/graph', storage['graphroot'])
+
+    def test_offline_fixture_has_private_network_files_without_external_resolvers(self):
+        files = self.worker.worker_files(self.target(), 'trusted launcher')
+        self.assertEqual(['127.0.0.1 localhost', '::1 localhost'], files.get('etc/hosts', '').splitlines())
+        self.assertIn('etc/resolv.conf', files)
+        self.assertFalse(any(line.strip().startswith('nameserver')
+                             for line in files['etc/resolv.conf'].splitlines()))
+
+    def test_image_copy_temporary_storage_stays_in_the_bounded_work_filesystem(self):
+        import tomllib
+        files = self.worker.worker_files(self.target(), 'trusted launcher')
+        engine = tomllib.loads(files['etc/containers/containers.conf'])['engine']
+        self.assertEqual('/work/image-tmp', engine.get('image_copy_tmp_dir'))
+        self.assertIn('work/image-tmp/.fixture', files)
+        self.assertEqual(('link', '../work/image-tmp'), files.get('var/tmp'),
+                         'OCI format detection also uses the standard /var/tmp prefix')
 
     def test_runtime_maps_require_the_declared_subordinate_ranges(self):
         from scripts.forgejo_runner import worker_probe

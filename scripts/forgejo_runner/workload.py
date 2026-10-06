@@ -65,6 +65,65 @@ def require_success(rows: list[dict], commit: str) -> None:
         raise RuntimeError('Workload did not succeed at its exact workflow commit')
 
 
+def runtime_workflow(label: str, workspace: Path) -> str:
+    """One allowlisted job exercises real remote API operations and loopback HTTP."""
+    import yaml
+    probe = '''import json, os, pathlib, subprocess, time
+from http.client import HTTPConnection
+def command(*args):
+    result = subprocess.run(['podman', '--remote', *args], capture_output=True,
+                            text=True, check=False, timeout=60)
+    if result.returncode:
+        raise RuntimeError('Job API operation failed: ' + result.stderr[-1024:])
+    return result.stdout
+info = json.loads(command('info', '--format=json'))
+assert info['host']['security']['rootless'] is True
+assert info['host']['cgroupVersion'] == 'v2'
+workspace = pathlib.Path(os.environ['TMPDIR'])
+build = workspace / 'build'; build.mkdir()
+(build / 'Containerfile').write_text('FROM localhost/worker-synthetic:fixture\\nUSER 1:1\\n')
+command('build', '--pull=never', '--tag', 'localhost/job-sibling:fixture', str(build))
+share = workspace / 'share'; share.mkdir(); share.chmod(0o777)
+server = "from http.server import BaseHTTPRequestHandler,HTTPServer; import pathlib; pathlib.Path('/work/share/sentinel').write_text('actual-job-sibling'); Handler=type('Handler',(BaseHTTPRequestHandler,),{'do_GET':lambda s:(s.send_response(200),s.end_headers(),s.wfile.write(b'actual-job-loopback')),'log_message':lambda *a:None}); HTTPServer(('0.0.0.0',8080),Handler).serve_forever()"
+identity = command('run', '-d', '--name=actual-job-sibling', '--security-opt=no-new-privileges',
+                   '--publish=127.0.0.1::8080', '-v', '/usr:/usr:ro,nosuid,nodev',
+                   '-v', str(share) + ':/work/share:U', 'localhost/job-sibling:fixture',
+                   '/usr/bin/python3', '-c', server).strip()
+inspection = json.loads(command('inspect', identity))[0]
+bindings = inspection['NetworkSettings']['Ports']
+assert set(bindings) == {'8080/tcp'} and len(bindings['8080/tcp']) == 1
+binding = bindings['8080/tcp'][0]
+assert binding['HostIp'] == '127.0.0.1' and 1024 <= int(binding['HostPort']) <= 65535
+deadline = time.monotonic() + 15
+while True:
+    connection = HTTPConnection('127.0.0.1', int(binding['HostPort']), timeout=2)
+    try:
+        connection.request('GET', '/health')
+        response = connection.getresponse()
+        assert response.status == 200 and response.read(64) == b'actual-job-loopback'
+        break
+    except OSError:
+        if time.monotonic() >= deadline: raise
+        time.sleep(0.1)
+    finally:
+        connection.close()
+assert command('exec', identity, '/usr/bin/cat', '/work/share/sentinel').strip() == 'actual-job-sibling'
+command('cp', identity + ':/work/share/sentinel', str(workspace / 'copied'))
+assert (workspace / 'copied').read_text() == 'actual-job-sibling'
+assert (share / 'sentinel').read_text() == 'actual-job-sibling'
+command('rm', '--force', identity)
+assert subprocess.run(['podman', '--remote', 'container', 'exists', identity]).returncode == 1
+print('actual-job-runtime-passed')
+'''
+    script = "set -eu\npython3 - <<'PY'\n" + probe + 'PY\n'
+    return yaml.safe_dump({'name': 'native runtime probe', 'on': ['push'], 'jobs': {
+        'first': {'runs-on': label, 'steps': [{'env': {
+            'CONTAINER_HOST': 'unix:///var/run/docker.sock', 'TMPDIR': str(workspace),
+        }, 'run': script}]},
+        'second': {'runs-on': label, 'steps': [{'run': 'echo unexpected-second-job'}]},
+    }}, sort_keys=False)
+
+
 def workflow(label: str, application, repository: dict, workspace: Path, selector: str) -> str:
     import yaml
     clone = f"http://{application.app}:3000/{application.user}/{repository['name']}.git"

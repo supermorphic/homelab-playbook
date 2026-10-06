@@ -7,6 +7,7 @@ import urllib.error
 import urllib.request
 import base64
 import time
+import shlex
 
 import yaml
 
@@ -19,6 +20,8 @@ class ActionsApplication(Application):
         parser.optionxform = str
         parser.read_string(super().configuration())
         parser["actions"]["ENABLED"] = "true"
+        # Disposable fixtures retain readable failure logs without an additional decoder.
+        parser["actions"]["LOG_COMPRESSION"] = "none"
         parser['server']['ROOT_URL'] = f"http://{self.run.name(self.suffix + '-app')}:3000/"
         output = io.StringIO()
         parser.write(output)
@@ -115,12 +118,30 @@ class ControllerFailureInjected(RuntimeError):
     pass
 
 
+def require_runner_image(experiment, image, *, offline=False):
+    if offline:
+        if experiment.command([experiment.podman, 'image', 'exists', image], check=False).returncode != 0:
+            raise RuntimeError('Verified offline runner image is absent or cannot be inspected')
+    else:
+        experiment.command([experiment.podman, 'pull', image], timeout=300)
+
+
+def mount_job_workspace(config, workspace, *, remap=False):
+    source = str(workspace)
+    binding = source + ':' + source + (':U' if remap else '')
+    config['container']['options'] += ' --volume ' + shlex.quote(binding)
+    # Runner 13 filters config-provided binds as well as workflow-provided ones.
+    config['container']['valid_volumes'] = [source]
+
+
 def run_one_job(experiment, directory, application, repository, token, runtime, candidate,
-                *, controller_failure=False, workload=None):
+                *, controller_failure=False, workload=None, runtime_probe=False):
+    if runtime_probe and (controller_failure or workload):
+        raise ValueError('Runtime probe cannot combine job experiments')
     image = candidate["runner_image"]
     if image is None:
         raise ValueError("Compatibility requires an immutable runner image")
-    experiment.command([experiment.podman, "pull", image], timeout=300)
+    require_runner_image(experiment, image, offline=runtime.get('offline', False))
     label = experiment.name("label")
     path = f"/repos/{application.user}/{repository['name']}"
     registration = token_request(application.url, path + "/actions/runners", token,
@@ -135,11 +156,19 @@ def run_one_job(experiment, directory, application, repository, token, runtime, 
               "server": {"connections": {"fixture": {
                   "url": f"http://{application.app}:3000", "uuid": registration["uuid"],
                   "token": registration["token"]}}}}
+    if runtime.get('offline'):
+        config['container']['force_pull'] = False
+        config['container']['network'] = runtime['network']
+        config['server']['connections']['fixture']['url'] = runtime['forgejo_url']
+    if runtime_probe:
+        config['runner']['timeout'] = '5m'
+        config['container']['options'] += ' --security-opt label=disable'
+        mount_job_workspace(config, runtime['workspace'])
     if workload:
         config["runner"]["timeout"] = "120m"
         config["container"]["force_pull"] = False
         config["container"]["options"] += " --security-opt label=disable"
-        config["container"]["options"] += " --volume " + str(workload["workspace"]) + ":" + str(workload["workspace"]) + ":U"
+        mount_job_workspace(config, workload['workspace'], remap=True)
     experiment.private_file(directory, "runner.yml", yaml.safe_dump(config))
     workflow = ("name: single-job admission\non: [push]\njobs:\n"
                 f"  first:\n    runs-on: {label}\n    steps:\n      - run: echo independent-first-job\n"
@@ -147,6 +176,9 @@ def run_one_job(experiment, directory, application, repository, token, runtime, 
     if workload:
         from scripts.forgejo_runner.workload import workflow as workload_workflow
         workflow = workload_workflow(label, application, repository, workload["workspace"], workload["selector"])
+    if runtime_probe:
+        from scripts.forgejo_runner.workload import runtime_workflow
+        workflow = runtime_workflow(label, runtime['workspace'])
     if controller_failure:
         workflow = workflow.replace("echo independent-first-job", "sleep 90")
     created = application.request(path + "/contents/.forgejo/workflows/probe.yml", method="POST",
@@ -163,7 +195,7 @@ def run_one_job(experiment, directory, application, repository, token, runtime, 
     data = directory / "runner-data"
     data.mkdir(mode=0o700)
     runner = experiment.create_controller("one-job", [
-        "--network", application.network,
+        "--network", runtime.get('network', application.network),
         "--userns=keep-id:uid=1000,gid=1000", "--user", "1000:1000",
         "--security-opt", "label=disable",
         "--volume", f"{runtime['socket']}:{runtime['socket']}",
@@ -180,7 +212,7 @@ def run_one_job(experiment, directory, application, repository, token, runtime, 
                 raise ControllerFailureInjected("Synthetic controller failure was injected")
             time.sleep(1)
         raise RuntimeError("Fault probe did not observe the job container")
-    waited = experiment.command([experiment.podman, "wait", runner], timeout=7500 if workload else 120)
+    waited = experiment.command([experiment.podman, "wait", runner], timeout=7500 if workload else 360 if runtime_probe else 120)
     from scripts.forgejo_runner.fixture import ROOT
     evidence = ROOT / ".tmp/forgejo-runner"
     evidence.mkdir(parents=True, exist_ok=True)
