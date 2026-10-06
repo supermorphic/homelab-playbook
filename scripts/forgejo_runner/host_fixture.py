@@ -277,6 +277,46 @@ def inspect_workers(target: dict) -> dict:
     return outcome
 
 
+def inspect_network(target: dict) -> dict:
+    """Controlled peer links never join or change the production host network."""
+    from scripts.forgejo_runner.host_network import validate_network_target, validate_network_budget
+    from scripts.forgejo_runner.host_worker import worker_files
+    validate_target(target)
+    validate_network_target(target)
+    validate_network_budget(target)
+    extra = worker_files(target, (ROOT / 'scripts/forgejo_runner/worker_launch.py').read_text())
+    configuration = json.loads(extra['worker.json'])
+    configuration['network'] = {'controller': target['controller']}
+    extra['worker.json'] = json.dumps(configuration)
+    for name in ('host_network.py', 'network_setup.py', 'network_peer.py'):
+        extra[name] = (ROOT / 'scripts/forgejo_runner' / name).read_text()
+    extra['offline_probe.py'] = (ROOT / 'scripts/forgejo_runner/worker_probe.py').read_text()
+    payload = "__file__ = '/fixture/scripts/forgejo_runner/host_fixture.py'\n"
+    for name in ('host_fixture.py', 'host_probe.py', 'host_resources.py', 'host_worker.py', 'host_network.py'):
+        payload += 'exec(' + repr((ROOT / 'scripts/forgejo_runner' / name).read_text()) + ')\n'
+    probe = (ROOT / 'scripts/forgejo_runner/network_probe.py').read_text()
+    payload += 'print(json.dumps(run_image_probe(' + repr(target) + ', observe, validate_observation, '
+    payload += repr(probe) + ", stage='network-only', budget_validator=validate_network_budget, extra_files=" + repr(extra)
+    payload += ', worker_observer=lambda t,o,u: observe_network_boundary(t,o,u,observe_worker_boundary)'
+    payload += ', worker_reader=read_worker_result, after_stop=lambda t: worker_cleanup_errors(t)'
+    payload += "+worker_cleanup_errors({**t,'worker':t['controller']}))))\n"
+    outcome = ssh_observation(target, payload, timeout=300)
+    if (not isinstance(outcome, dict) or outcome.get('acceptance') != 'network-only'
+            or type(outcome.get('exit_code')) is not int or outcome['exit_code'] not in (0, 1, 130)
+            or not isinstance(outcome.get('cleanup_errors'), list)):
+        raise ValueError('Invalid controlled network experiment outcome')
+    if outcome['exit_code'] == 0:
+        required = {'rootless_api', 'sibling_containers', 'mapped_bind', 'private_loopback',
+                    'published_loopback', 'user_manager', 'bounded_storage', 'outer_limits', 'process_boundary',
+                    'allowed_ipv4', 'allowed_ipv6', 'denied_ipv4', 'denied_ipv6', 'policy_immutable',
+                    'alternate_network_modes', 'kernel_policy', 'controlled_peer'}
+        observations = outcome.get('observations', {})
+        if (outcome['cleanup_errors'] or outcome.get('primary_error') is not None
+                or set(observations) != required or any(observations[key] is not True for key in required)):
+            raise ValueError('Controlled network experiment lacks required evidence')
+    return outcome
+
+
 def inspect_native_jobs(target: dict, images: Path) -> dict:
     from scripts.forgejo_runner.host_worker import validate_job_budget
     from scripts.forgejo_runner.native_assets import prepare
@@ -335,7 +375,7 @@ print(json.dumps(result), flush=True)
 
 def run(images: Path | None, target: Path | None, *, preflight_only: bool = False,
         resource_probe_only: bool = False, worker_probe_only: bool = False,
-        job_probe_only: bool = False) -> int:
+        job_probe_only: bool = False, network_probe_only: bool = False) -> int:
     """Separate observational prerequisites from the unfinished containment gate."""
     if target is None:
         raise ValueError("An explicit disposable Debian host fixture descriptor is required")
@@ -349,6 +389,25 @@ def run(images: Path | None, target: Path | None, *, preflight_only: bool = Fals
     except (OSError, ValueError) as error:
         raise ValueError("Cannot load disposable host descriptor") from error
     validate_target(descriptor)
+    if network_probe_only:
+        if preflight_only or resource_probe_only or worker_probe_only or job_probe_only or images:
+            raise ValueError('Network probe cannot be combined with other experiments')
+        if subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip():
+            raise ValueError('Network acceptance requires a clean committed source candidate')
+        source_tree = subprocess.check_output(['git', 'write-tree'], cwd=ROOT, text=True).strip()
+        result = inspect_network(descriptor)
+        if (source_tree != subprocess.check_output(['git', 'write-tree'], cwd=ROOT, text=True).strip()
+                or subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip()):
+            raise RuntimeError('Network probe source changed; acceptance evidence is invalid')
+        result['source_tree'] = source_tree
+        with tempfile.NamedTemporaryFile(mode='w', prefix='host-network-outcome-', suffix='.json',
+                                         dir=target.parent, delete=False) as evidence:
+            json.dump(result, evidence, indent=2); evidence.write('\n')
+        print(f'Host network outcome saved to {evidence.name}')
+        if result['exit_code']:
+            raise RuntimeError('Controlled network probe failed; inspect saved outcome and any retained allocation')
+        print('Controlled network policy passed and owned state removed; full runner acceptance remains pending')
+        return 0
     if job_probe_only:
         if preflight_only or resource_probe_only or worker_probe_only:
             raise ValueError('Job probe cannot be combined with other experiments')

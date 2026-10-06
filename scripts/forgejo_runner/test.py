@@ -24,6 +24,8 @@ def main(argv: list[str] | None = None) -> int:
                         help='Offline temporary rootless worker test; no runner registration')
     parser.add_argument('--job-probe-only', action='store_true',
                         help='Offline real-job test in the temporary bounded NUC4 worker')
+    parser.add_argument('--network-probe-only', action='store_true',
+                        help='Controlled IPv4/IPv6 policy test in a temporary bounded worker')
     parser.add_argument("--workload", choices=("forgejo/default", "system_maintenance/default",
                         "system_maintenance/baseline", "semaphore/default", "reverse_proxy/default"),
                         help="Run a staged repository Molecule candidate in a real Forgejo job")
@@ -32,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--workflow-contracts', action='store_true',
                         help='Exercise synthetic workflow outputs, artifacts and negative gates')
     args = parser.parse_args(argv)
-    if (args.host_fixture or args.preflight_only or args.resource_probe_only or args.worker_probe_only or args.job_probe_only) and args.mode != "host-fixture":
+    if (args.host_fixture or args.preflight_only or args.resource_probe_only or args.worker_probe_only or args.job_probe_only or args.network_probe_only) and args.mode != "host-fixture":
         parser.error("host options require host-fixture mode")
     if args.resource_probe_only and (args.preflight_only or args.fixture):
         parser.error('resource probe cannot be combined with preflight or image fixtures')
@@ -40,6 +42,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error('worker probe cannot be combined with other host experiments')
     if args.job_probe_only and (args.resource_probe_only or args.preflight_only or args.worker_probe_only):
         parser.error('job probe cannot be combined with other host experiments')
+    if args.network_probe_only and (args.resource_probe_only or args.preflight_only or args.worker_probe_only or args.job_probe_only or args.fixture):
+        parser.error('network probe cannot be combined with other host experiments or image fixtures')
     if args.workload and (args.mode != "compatibility" or args.controller_failure):
         parser.error("workloads require compatibility mode without controller failure")
     if args.controller_failure and args.mode != "compatibility":
@@ -56,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.mode == "host-fixture":
             from scripts.forgejo_runner.host_fixture import run
+            if args.network_probe_only:
+                return run(args.fixture, args.host_fixture, network_probe_only=True)
             if args.job_probe_only:
                 return run(args.fixture, args.host_fixture, job_probe_only=True)
             if args.worker_probe_only:

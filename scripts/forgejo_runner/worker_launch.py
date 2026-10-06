@@ -23,6 +23,10 @@ def main():
     for helper in ('newuidmap', 'newgidmap'):
         subprocess.run(['/usr/bin/mount', '-o', 'remount,bind,ro,suid,nodev', '/usr/bin/' + helper],
                        check=True, timeout=10)
+    if 'network' in configuration:
+        from network_setup import configure
+        # Keep the child handle until exec; the whole owned unit disposes of it.
+        _peer = configure(configuration['network'])
     Path('/run/systemd/system').mkdir(parents=True, exist_ok=True)
     # Stock network-helper confinement permits the standard per-user runtime
     # prefix. Its writable contents still belong to the bounded private image.

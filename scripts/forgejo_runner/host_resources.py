@@ -227,7 +227,7 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                     worker_reader=None, after_stop=None, assets=None,
                     asset_validator=None, asset_receiver=None):
     """Fixed trusted experiments share the same image ownership and disposal path."""
-    if stage not in ('resources-only', 'worker-only', 'job-only'):
+    if stage not in ('resources-only', 'worker-only', 'job-only', 'network-only'):
         raise ValueError('Unknown host experiment')
     worker = stage != 'resources-only'
     if assets:
@@ -279,8 +279,14 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
         destination = root.parent if root.parent.exists() else root.parent.parent
         budget_validator(target, host_capacity(destination))
         tools = ('fallocate', 'mkfs.ext4', 'systemd-run', 'setpriv')
+        owned_files = dict(extra_files or {})
         if worker:
             tools += ('setcap', 'getcap', 'catatonit')
+        if stage == 'network-only':
+            tools += ('ip', 'nft', 'nsenter', 'ss', 'unshare')
+            configuration = json.loads(owned_files['worker.json'])
+            configuration['network']['host_network_inode'] = os.stat('/proc/self/ns/net').st_ino
+            owned_files['worker.json'] = json.dumps(configuration)
         for tool in tools:
             if shutil.which(tool) is None:
                 raise ValueError('A resource probe prerequisite is missing')
@@ -334,7 +340,7 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
         probe.write_text(probe_source)
         probe.chmod(0o444)
         resources.record_file(probe)
-        for relative, content in {**(extra_files or {}), **(assets or {})}.items():
+        for relative, content in {**owned_files, **(assets or {})}.items():
             if relative.startswith('/') or '..' in Path(relative).parts:
                 raise ValueError('Invalid trusted experiment file')
             path = staging / relative
@@ -436,6 +442,11 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                 'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID CAP_SETPCAP',
                 'AmbientCapabilities=CAP_SYS_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID',
                 'Environment=HOME=/work TMPDIR=/work']
+        if stage == 'network-only':
+            # Only fixed trusted setup receives NET_ADMIN. The worker handoff
+            # retains the existing mapping-helper bounds and clears active caps.
+            properties = [setting + ' CAP_NET_ADMIN' if setting.startswith((
+                'CapabilityBoundingSet=', 'AmbientCapabilities=')) else setting for setting in properties]
         for setting in properties:
             argv.append('--property=' + setting)
         if worker:
