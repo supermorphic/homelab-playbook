@@ -235,8 +235,14 @@ def start_gateway(target, unit, configuration, state):
         for name in ('net', 'mnt', 'pid'):
             descriptors[name] = os.open('ns/' + name, os.O_RDONLY, dir_fd=process)
         descriptors['root'] = os.open('root', os.O_RDONLY | os.O_DIRECTORY, dir_fd=process)
-        cgroup = os.open('/sys/fs/cgroup' + unit['ControlGroup'] + '/cgroup.procs',
-                         os.O_WRONLY | os.O_NOFOLLOW)
+        # A process in the ancestor would prevent cgroup v2 controller
+        # delegation to sibling containers (the no-internal-process rule).
+        transport = Path('/sys/fs/cgroup' + unit['ControlGroup']) / 'public-transport'
+        transport.mkdir(mode=0o700)
+        metadata = transport.lstat()
+        if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != 0:
+            raise ValueError('Public transport cgroup is not owned by trusted setup')
+        cgroup = os.open(str(transport / 'cgroup.procs'), os.O_WRONLY | os.O_NOFOLLOW)
         descriptors['cgroup'] = cgroup
         descriptors['host'] = os.open('/proc/self/ns/net', os.O_RDONLY)
         host_net = os.fstat(descriptors['host']).st_ino
