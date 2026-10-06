@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import stat
 import time
 
 FORGEJO_HOST = 'forgejo.infra.supermorphic.com'
@@ -209,6 +210,29 @@ def gateway_error_stream(root_descriptor):
     return os.fdopen(descriptor, 'r+b', buffering=0)
 
 
+def wait_network_ready(root_descriptor, *, timeout=15):
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            descriptor = os.open('work/network-ready', os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root_descriptor)
+            with os.fdopen(descriptor) as stream:
+                metadata = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                        or metadata.st_uid != os.geteuid() or metadata.st_mode & 0o022):
+                    raise ValueError('Trusted network marker ownership changed')
+                value = stream.read(64)
+            if value == 'controlled-network-ready\n':
+                return True
+            if value:
+                raise ValueError('Unexpected trusted network readiness marker')
+        except FileNotFoundError:
+            pass
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError('Trusted network startup exceeded its bound')
+        time.sleep(min(0.1, remaining))
+
+
 def start_gateway(target, unit, configuration, state):
     """Pin owned kernel objects; join their storage/PID boundary before transport."""
     if not unit['ControlGroup'].startswith('/system.slice/forgejo-worker-'):
@@ -229,19 +253,7 @@ def start_gateway(target, unit, configuration, state):
                     'mnt': os.fstat(descriptors['mnt']).st_ino,
                     'root_device': os.fstat(descriptors['root']).st_dev,
                     'root_inode': os.fstat(descriptors['root']).st_ino}
-        deadline = time.monotonic() + 15
-        while True:
-            try:
-                ready = os.open('work/network-ready', os.O_RDONLY | os.O_NOFOLLOW,
-                                dir_fd=descriptors['root'])
-                with os.fdopen(ready) as stream:
-                    if stream.read(64) != 'controlled-network-ready\n':
-                        raise ValueError('Unexpected trusted network readiness marker')
-                break
-            except FileNotFoundError:
-                if time.monotonic() >= deadline:
-                    raise ValueError('Trusted network startup exceeded its bound')
-                time.sleep(0.1)
+        wait_network_ready(descriptors['root'])
         argv = pasta_arguments(configuration, target['controller'], descriptors['net'])
         state.update(expected=expected, argv=argv, stderr=gateway_error_stream(descriptors['root']))
         command = ['/usr/bin/nsenter', '--mount=/proc/self/fd/' + str(descriptors['mnt']),

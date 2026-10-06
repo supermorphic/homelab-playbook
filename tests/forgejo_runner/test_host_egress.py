@@ -5,12 +5,43 @@ import unittest
 import os
 from pathlib import Path
 import tempfile
+import threading
 from unittest.mock import patch
 
 from test_host_network import network_target
 
 
 class HostEgressTests(unittest.TestCase):
+    def test_readiness_waits_for_a_precreated_owned_marker_and_has_a_deadline(self):
+        wait = getattr(self.egress, 'wait_network_ready', None)
+        self.assertTrue(callable(wait), 'The empty marker is not a readiness failure')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'work').mkdir()
+            marker = root / 'work/network-ready'
+            marker.write_text(''); marker.chmod(0o600)
+            descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            timer = threading.Timer(0.05, lambda: marker.write_text('controlled-network-ready\n'))
+            try:
+                timer.start()
+                self.assertTrue(wait(descriptor, timeout=1))
+                timer.join(timeout=1)
+                marker.write_text('')
+                with self.assertRaises(ValueError):
+                    wait(descriptor, timeout=0.02)
+                marker.write_text('unrelated readiness')
+                with self.assertRaises(ValueError):
+                    wait(descriptor, timeout=1)
+                marker.unlink()
+                outside = root / 'unrelated-marker'
+                outside.write_text('controlled-network-ready\n')
+                marker.symlink_to(outside)
+                with self.assertRaises(OSError):
+                    wait(descriptor, timeout=1)
+            finally:
+                timer.join(timeout=1)
+                os.close(descriptor)
+
     def test_gateway_diagnostics_remain_in_the_pinned_image(self):
         creator = getattr(self.egress, 'gateway_error_stream', None)
         self.assertTrue(callable(creator), 'Size-bounded gateway diagnostics are missing')
