@@ -1,10 +1,10 @@
 """Deterministic source attribution and durable destination markers."""
 import re
 from .model import MirrorError, SourceKey, Projection, positive
-PATTERN=r'forgejo-mirror:v1:([a-z0-9_-]{1,16}):([0-9]+):(issue|comment|label|milestone):([0-9]+)'
+PATTERN=r'forgejo-mirror:v=1;src=([a-z0-9_-]{1,16});repo=([0-9]+);kind=(issue|comment|label|milestone);id=([0-9]+)'
 
 def marker(key):
-    return f'forgejo-mirror:v1:{key.instance}:{key.repository_id}:{key.kind}:{key.object_id}'
+    return f'forgejo-mirror:v=1;src={key.instance};repo={key.repository_id};kind={key.kind};id={key.object_id}'
 
 def parse_marker(text: str, kind: str) -> SourceKey | None:
     if not isinstance(text,str): return None

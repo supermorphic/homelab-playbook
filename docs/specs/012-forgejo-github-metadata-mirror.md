@@ -31,9 +31,10 @@ Alternatives considered:
 - Adopting Gitea Mirror adds a web application, database, and Git replication.
   Its documented GitHub destination supports code replication, while issue
   metadata requires a GitHub source. It does not provide the requested operation.
-- Forgesync demonstrates attribution and durable marker discovery, but imports
-  mirror-side collaboration into Forgejo. Its authority direction conflicts with
-  this service. Review its patterns without copying implementation or licenses.
+- Forgesync demonstrates attribution and durable marker discovery and synchronizes
+  collaboration in both directions. Its writes back into Forgejo conflict with
+  this service's read-only source. Review its patterns without copying implementation
+  or licenses.
 - Event forwarding needs ingress and reliable event delivery. Periodic comparison
   directly repairs missed runs and edits with fewer operating dependencies.
 
@@ -86,8 +87,13 @@ display information, not mapping keys. Preserve the instance key across host
 rebuilds. A restored source with changed object identities requires reviewed
 re-enrollment rather than guessing correspondence.
 
-Append a versioned machine-readable marker to the generated issue/comment body
-and milestone description. A generated footer identifies the source repository,
+Append a versioned machine-readable marker with fixed-order `key=value` fields
+to the generated issue/comment body and milestone description. Keep a separate
+service namespace: Forgesync identifies repositories by host and path and issues
+by their displayed number, so its markers are not interchangeable with these
+stable API identities. The runtime defines the exact encoding; keep it compact
+enough to preserve complete label identities within GitHub's description limit.
+A generated footer identifies the source repository,
 original issue number, author and creation time where available, and source URL.
 Do not impersonate users or imply that GitHub timestamps are original timestamps.
 Parse only the canonical terminal marker, outside source text, so marker-like
