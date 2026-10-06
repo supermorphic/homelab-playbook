@@ -71,7 +71,7 @@ def policy_source():
   ct state established,related accept
   oifname "lo" ip daddr 127.0.0.0/8 accept
   oifname "lo" ip6 daddr ::1 accept
-  meta l4proto ipv6-icmp icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } accept
+  meta l4proto 58 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert } accept
   ip daddr 192.0.2.20 tcp dport 8100 accept
   ip6 daddr 2001:db8:57::20 tcp dport 8100 accept
   ip daddr 10.57.0.2 tcp dport 8100 counter name denied4 drop
