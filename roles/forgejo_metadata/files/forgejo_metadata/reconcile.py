@@ -46,6 +46,12 @@ def discover_owned(mapping,inventory):
             owned[key]=DestinationObject(key,locator,fields)
     return owned
 
+def comment_parent(mapping,owned,parent_id,target):
+    parent=owned.get(SourceKey(mapping.instance,mapping.source_id,'issue',parent_id))
+    if parent is None or target and target.fields.get('_parent_id')!=parent.fields['id']:
+        raise MirrorError('ownership_conflict')
+    return parent
+
 def reconcile(mapping,source,destination,store,write_budget):
     result=RunResult()
     try:
@@ -88,6 +94,7 @@ def reconcile(mapping,source,destination,store,write_budget):
                 observed=fresh.get(projection.key)
                 if target and observed is None: raise MirrorError('ownership_conflict')
                 target=observed
+                if kind=='comment': parent=comment_parent(mapping,fresh,parent_id,target)
                 if target is None:
                     destination.preflight(mapping)
                     store.begin_create(projection.key)
@@ -97,8 +104,10 @@ def reconcile(mapping,source,destination,store,write_budget):
                     except APIError as error:
                         store.finish_create(projection.key,error.outcome,None)
                         raise
-                    created=discover_owned(mapping,destination.inventory(mapping)).get(projection.key)
+                    fresh=discover_owned(mapping,destination.inventory(mapping))
+                    created=fresh.get(projection.key)
                     if created is None or created.locator!=locator: raise MirrorError('ownership_conflict')
+                    if kind=='comment': parent=comment_parent(mapping,fresh,parent_id,created)
                     store.finish_create(projection.key,'created',locator)
                     target=created
                 else: target=DestinationObject(target.key,target.locator,destination.read(target.locator))
@@ -107,12 +116,14 @@ def reconcile(mapping,source,destination,store,write_budget):
                     if result.writes>=write_budget: result.backlog+=1
                     else:
                         destination.preflight(mapping)
-                        current=discover_owned(mapping,destination.inventory(mapping)).get(projection.key)
+                        fresh=discover_owned(mapping,destination.inventory(mapping))
+                        current=fresh.get(projection.key)
                         if current is None: raise MirrorError('ownership_conflict')
+                        if kind=='comment': parent=comment_parent(mapping,fresh,parent_id,current)
                         destination.preflight(mapping)
                         result.writes+=1
                         destination.update(current,projection)
-                        locator='/labels/'+quote(projection.fields['name'],safe='') if kind=='label' else target.locator
+                        locator='/labels/'+quote(projection.fields['name'],safe='') if kind=='label' else current.locator
                         target=DestinationObject(projection.key,locator,destination.read(locator))
                         verify_projection(projection,target.fields)
                 if kind=='comment': target.fields['_parent_id']=parent.fields['id']

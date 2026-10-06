@@ -115,3 +115,64 @@ class ReconciliationTests(unittest.TestCase):
         self.destination.inventory=scan; self.destination.preflight=preflight
         result=self.run_mirror()
         self.assertIn('destination_enrollment',result.errors); self.assertEqual([],self.destination.writes)
+
+    def test_changed_parent_identity_during_discovery_prevents_comment_post(self):
+        self.run_mirror(); self.destination.writes=[]
+        self.destination.data.comments[103]=[]
+        del self.destination.rows['/issues/comments/104']
+        original=self.destination.inventory; scans=[0]
+        def scan(mapping):
+            scans[0]+=1
+            if scans[0]==2:
+                issue=self.destination.data.issues[0]
+                issue['body']=issue['body'].replace('kind=issue;id=23', 'kind=issue;id=99')
+            return original(mapping)
+        self.destination.inventory=scan
+        result=self.run_mirror()
+        self.assertIn('ownership_conflict',result.errors)
+        self.assertEqual([],self.destination.writes)
+        self.assertEqual({},self.store.load()['pending'])
+        self.assertIsNone(result.converged_at)
+
+    def test_replaced_comment_is_checked_against_fresh_parent_before_patch(self):
+        for replace_at in (2,3):
+            with self.subTest(replace_at=replace_at):
+                self.source=FakeSource(); self.destination=FakeDestination()
+                self.run_mirror(); self.destination.writes=[]
+                self.source.data.comments[23][0]['body']='Edited source comment'
+                original=self.destination.inventory; scans=[0]
+                def scan(mapping):
+                    scans[0]+=1
+                    if scans[0]==replace_at:
+                        comment=self.destination.data.comments[103].pop()
+                        del self.destination.rows['/issues/comments/104']
+                        replacement=dict(comment,id=999)
+                        self.destination.data.issues.append({'id':900,'number':900,'body':'Human issue','user':{'id':77}})
+                        self.destination.data.comments[900]=[replacement]
+                        self.destination.rows['/issues/comments/999']=replacement
+                    return original(mapping)
+                self.destination.inventory=scan
+                result=self.run_mirror()
+                self.assertIn('ownership_conflict',result.errors)
+                self.assertEqual([],self.destination.writes)
+                self.assertIsNone(result.converged_at)
+
+    def test_valid_comment_replacement_is_read_back_at_its_current_locator(self):
+        self.run_mirror(); self.destination.writes=[]
+        self.source.data.comments[23][0]['body']='Edited source comment'
+        original=self.destination.inventory; scans=[0]
+        def scan(mapping):
+            scans[0]+=1
+            if scans[0]==3:
+                comment=self.destination.data.comments[103].pop()
+                del self.destination.rows['/issues/comments/104']
+                replacement=dict(comment,id=999)
+                self.destination.data.comments[103]=[replacement]
+                self.destination.rows['/issues/comments/999']=replacement
+            return original(mapping)
+        self.destination.inventory=scan
+        result=self.run_mirror()
+        self.assertEqual([],result.errors)
+        self.assertEqual([('PATCH','/issues/comments/999')],self.destination.writes)
+        self.assertIn('Edited source comment',self.destination.rows['/issues/comments/999']['body'])
+        self.assertIsNotNone(result.converged_at)
