@@ -1,0 +1,20 @@
+---
+forgejo_metadata_uid: 2105
+forgejo_metadata_gid: 2105
+forgejo_metadata_timer_enabled: false
+forgejo_metadata_tokens:
+  source: synthetic-fixture-token
+  destination: synthetic-fixture-token
+forgejo_metadata_mappings:
+  - instance: fixture
+    source_origin: https://127.0.0.1:18443
+    source_repo: example/project
+    source_id: 7
+    destination_origin: https://127.0.0.1:18444
+    destination_repo: example/recovery
+    destination_id: 9
+    visibility: public
+    actor_id: 11
+    source_credential: source
+    destination_credential: destination
+    ca_file: /etc/forgejo-metadata-fixture/ca.pem

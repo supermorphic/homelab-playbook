@@ -1,0 +1,16 @@
+---
+- name: Verify effective metadata runtime and recovery
+  hosts: forgejo_metadata
+  gather_facts: true
+  become: true
+  vars_files: [vars/main.yml]
+  tasks:
+    - name: Exercise installed system units against disposable TLS APIs
+      ansible.builtin.command:
+        argv: [/usr/bin/python3, /usr/local/libexec/forgejo-metadata-probe.py]
+      changed_when: false
+
+    - name: Verify healthy metadata state without repair
+      ansible.builtin.import_role:
+        name: forgejo_metadata
+        tasks_from: verify.yml

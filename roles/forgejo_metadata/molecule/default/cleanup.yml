@@ -1,0 +1,16 @@
+---
+- name: Stop only the owned metadata fixtures
+  hosts: forgejo_metadata
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Check whether preparation installed the fixture unit
+      ansible.builtin.stat:
+        path: /etc/systemd/system/forgejo-metadata-fixture.service
+      register: forgejo_metadata_fixture_unit
+
+    - name: Stop fixture API service
+      ansible.builtin.systemd_service:
+        name: forgejo-metadata-fixture.service
+        state: stopped
+      when: forgejo_metadata_fixture_unit.stat.exists
