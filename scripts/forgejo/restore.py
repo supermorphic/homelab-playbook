@@ -278,7 +278,7 @@ def restore_local(experiment, path, options, expected, *, ownership=None):
         'POSTGRES_USER=postgres\nPOSTGRES_DB=postgres\nPOSTGRES_PASSWORD=' + secrets.token_urlsafe(32) + '\n')
     volume = experiment.create('volume', 'restore-database', [])
     database = experiment.create('container', 'restore-postgres', database_arguments(environment, volume, pins['postgres_image']))
-    experiment.wait([experiment.podman, 'exec', database, 'pg_isready', '-U', 'postgres'])
+    experiment.wait([experiment.podman, 'exec', database, 'pg_isready', '-h', '127.0.0.1', '-U', 'postgres'])
     password = service.safe_read(options.settings_dir / 'database-password', private=True, owner=os.geteuid()).decode()
     escaped = password.replace("'", "''")
     experiment.command([experiment.podman, 'exec', '-i', database, 'psql', '-X', '-U', 'postgres', '--set', 'ON_ERROR_STOP=1'],
