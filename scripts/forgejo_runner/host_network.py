@@ -83,7 +83,7 @@ def policy_source():
 '''
 
 
-def validate_policy_observation(policy):
+def validate_policy_observation(policy, minimum_denials=6):
     try:
         entries = policy['nftables']
         chains = [item['chain'] for item in entries if 'chain' in item]
@@ -95,7 +95,7 @@ def validate_policy_observation(policy):
         if len(counters) != 2 or {item['name'] for item in counters} != {'denied4', 'denied6'}:
             raise ValueError
         if any(item['family'] != 'inet' or item['table'] != 'forgejo_fixture'
-               or type(item['packets']) is not int or item['packets'] < 6 for item in counters):
+               or type(item['packets']) is not int or item['packets'] < minimum_denials for item in counters):
             raise ValueError
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError('Kernel policy and dual-stack denial counters are incomplete') from error
@@ -139,7 +139,7 @@ def namespace_command(process, argv):
         os.close(descriptor)
 
 
-def observe_network_boundary(target, observed, unit, observe_worker):
+def observe_network_boundary(target, observed, unit, observe_worker, *, excluded_pids=(), additional_denied=()):
     required = {'allowed_ipv4', 'allowed_ipv6', 'denied_ipv4', 'denied_ipv6',
                 'policy_immutable', 'alternate_network_modes'}
     if not isinstance(observed, dict) or any(observed.get(name) is not True for name in required):
@@ -154,10 +154,11 @@ def observe_network_boundary(target, observed, unit, observe_worker):
         if worker_net == host_net:
             raise ValueError('Policy namespace is not private')
         validate_policy_observation(json.loads(namespace_command(process,
-            ['/usr/sbin/nft', '--json', 'list', 'table', 'inet', 'forgejo_fixture'])))
+            ['/usr/sbin/nft', '--json', 'list', 'table', 'inet', 'forgejo_fixture'])),
+            minimum_denials=12 if additional_denied else 6)
         peers = []
         for path in Path('/proc').iterdir():
-            if not path.name.isdigit():
+            if not path.name.isdigit() or int(path.name) in excluded_pids:
                 continue
             try:
                 status = dict(line.split(':', 1) for line in (path / 'status').read_text().splitlines() if ':' in line)
@@ -177,7 +178,7 @@ def observe_network_boundary(target, observed, unit, observe_worker):
         try:
             if os.stat('ns/net', dir_fd=peer).st_ino != peers[0]['net']:
                 raise ValueError('Peer identity changed')
-            if not set(ALLOWED + DENIED) <= listening_endpoints(namespace_command(peer, ['/usr/bin/ss', '-H', '-ltn'])):
+            if not set(ALLOWED + DENIED + tuple(additional_denied)) <= listening_endpoints(namespace_command(peer, ['/usr/bin/ss', '-H', '-ltn'])):
                 raise ValueError('Controlled allowed and denied listeners are not independently alive')
         finally:
             os.close(peer)

@@ -11,6 +11,12 @@ SCRIPT = ROOT / "scripts/forgejo_runner/test.py"
 
 
 class DispatchTests(unittest.TestCase):
+    def test_public_egress_requires_explicit_disposable_target(self):
+        result = self.run_cli('host-fixture', '--egress-probe-only')
+        self.assertEqual(1, result.returncode)
+        self.assertIn('disposable', result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
+
     def run_cli(self, *arguments):
         environment = os.environ.copy()
         environment["PATH"] = str(ROOT / ".tmp/nonexistent-runner-tools")
