@@ -1,0 +1,68 @@
+import copy
+import importlib
+from pathlib import Path
+import tempfile
+import unittest
+from support import CONFIG, FakeSource, FakeDestination
+from forgejo_metadata.model import load_config, MirrorError
+from forgejo_metadata.state import StateStore
+
+class ReconciliationTests(unittest.TestCase):
+    def setUp(self):
+        try: self.module=importlib.import_module('forgejo_metadata.reconcile')
+        except ModuleNotFoundError: self.fail('metadata reconciliation is missing')
+        temp=tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        self.store=StateStore(Path(temp.name)/'state.json','fixture'); self.store.bootstrap('initial','test')
+        self.mapping=load_config(CONFIG)[0]; self.source=FakeSource(); self.destination=FakeDestination()
+    def run_mirror(self,budget=30):
+        return self.module.reconcile(self.mapping,self.source,self.destination,self.store,budget)
+    def test_historical_backfill_closure_assignments_and_repeat_noop(self):
+        result=self.run_mirror(); self.assertEqual([],result.errors)
+        issue=self.destination.data.issues[0]
+        self.assertEqual('closed',issue['state']); self.assertEqual(['fj-bug-42'],issue['labels'])
+        self.assertEqual(102,issue['milestone']); self.assertEqual(1,len(self.destination.data.comments[103]))
+        self.assertIn('Original text',issue['body']); self.assertIn('Original comment',self.destination.data.comments[103][0]['body'])
+        self.destination.writes=[]; self.assertEqual(0,self.run_mirror().writes)
+        self.assertEqual([],self.destination.writes)
+    def test_edits_and_cleared_assignments_preserve_missing_objects(self):
+        self.run_mirror(); original_count=self.destination.count
+        issue=self.source.data.issues[0]; issue.update(title='Changed',state='open',labels=[],milestone=None)
+        self.source.data.comments[23][0]['body']='Edited comment'
+        self.source.data.labels[0]['name']='renamed'
+        result=self.run_mirror(); self.assertEqual([],result.errors)
+        observed=self.destination.data.issues[0]
+        self.assertEqual(('Changed','open',[],None),(observed['title'],observed['state'],observed['labels'],observed['milestone']))
+        self.assertIn('Edited comment',self.destination.data.comments[103][0]['body'])
+        self.assertEqual(original_count,self.destination.count)
+        self.source.data.issues=[]; self.source.data.comments={}
+        self.assertEqual([],self.run_mirror().errors); self.assertEqual(1,len(self.destination.data.issues))
+    def test_ignored_fields_fail_convergence_without_duplicate_creation(self):
+        self.destination.drop='milestone'; result=self.run_mirror()
+        self.assertIn('readback_mismatch',result.errors); self.assertIsNone(result.converged_at)
+        self.assertEqual(1,len(self.destination.data.issues)); self.run_mirror()
+        self.assertEqual(1,len(self.destination.data.issues)); self.assertEqual({},self.store.load()['pending'])
+    def test_lost_response_recovers_by_marker_and_definite_rejection_retries(self):
+        self.destination.lost=True; result=self.run_mirror(); self.assertTrue(result.errors)
+        self.assertTrue(self.store.load()['pending']); self.run_mirror()
+        self.assertEqual(1,len(self.destination.data.labels)); self.assertEqual({},self.store.load()['pending'])
+        self.source.data.issues.append(dict(self.source.data.issues[0],id=25,number=6))
+        self.destination.failure='http_422'; self.run_mirror(); self.assertEqual({},self.store.load()['pending'])
+        self.destination.failure=None; self.run_mirror(); self.assertEqual(2,len(self.destination.data.issues))
+    def test_budget_makes_progress_and_unmarked_human_history_survives(self):
+        self.destination.data.issues.append({'id':90,'number':90,'body':'Human history','user':{'id':99}})
+        for _ in range(8): self.run_mirror(1)
+        self.assertEqual(2,len(self.destination.data.issues)); self.assertEqual('Human history',self.destination.data.issues[0]['body'])
+        self.assertEqual(0,self.run_mirror(1).writes)
+    def test_duplicate_markers_actor_changes_and_missing_marker_stop_mapping(self):
+        self.run_mirror(); row=self.destination.data.issues[0]
+        self.destination.data.issues.append(copy.deepcopy(row))
+        self.assertIn('ownership_conflict',self.run_mirror().errors)
+        self.destination.data.issues.pop(); row['user']['id']=77
+        self.assertIn('ownership_conflict',self.run_mirror().errors)
+        row['user']['id']=11; row['body']='Removed marker'
+        self.assertIn('ownership_conflict',self.run_mirror().errors)
+    def test_pr_with_marker_like_body_is_excluded(self):
+        self.source.data.issues.append({'id':99,'number':99,'pull_request':{}})
+        self.destination.data.issues.append({'id':98,'pull_request':{},'user':{'id':11},'body':'junk'})
+        self.assertEqual([],self.run_mirror().errors)
+        self.assertEqual(2,len(self.destination.data.issues))
