@@ -59,6 +59,10 @@ run = "uv run --frozen --no-sync python scripts/semaphore/test.py"
 description = "Test Forgejo runtime and recovery with disposable fixtures"
 run = "uv run --frozen --no-sync python scripts/forgejo/test.py"
 
+[tasks."test:forgejo-metadata"]
+description = "Test metadata reconciliation with disposable fixtures"
+run = "uv run --frozen --no-sync python scripts/forgejo_metadata/test.py"
+
 [tasks."test:forgejo-runner"]
 description = "Test runner compatibility with disposable rootless fixtures"
 run = "uv run --frozen --no-sync python scripts/forgejo_runner/test.py"
