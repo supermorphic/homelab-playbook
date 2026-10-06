@@ -305,6 +305,9 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                 configuration['network']['egress'] = public
                 owned_files['etc/resolv.conf'] = 'nameserver ' + dns_forward(public) + '\noptions timeout:2 attempts:1\n'
                 owned_files['etc/nsswitch.conf'] = owned_files['etc/nsswitch.conf'].replace('hosts: files\n', 'hosts: files dns\n')
+                # Trusted root has no DAC override. Pre-create its own file;
+                # it need not gain directory-write authority over worker home.
+                owned_files['work/network-ready'] = ''
                 certificates = Path('/etc/ssl/certs/ca-certificates.crt')
                 if certificates.stat().st_size > 2 * 1024**2:
                     raise ValueError('Public trust bundle exceeds its bound')
@@ -390,7 +393,7 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                 resources.record_file(path, allow_link=True)
             else:
                 path.write_text(content)
-                path.chmod(0o444)
+                path.chmod(0o600 if stage == 'egress-only' and relative == 'work/network-ready' else 0o444)
                 resources.record_file(path)
         image = root / 'worker.ext4'
         with image.open('xb'):
