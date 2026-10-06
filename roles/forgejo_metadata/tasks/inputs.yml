@@ -1,0 +1,57 @@
+---
+- name: Validate metadata mirror identity and fixed boundaries
+  ansible.builtin.assert:
+    that:
+      - forgejo_metadata_account == 'svc-forgejo-metadata'
+      - forgejo_metadata_uid is integer and forgejo_metadata_uid > 0
+      - forgejo_metadata_gid is integer and forgejo_metadata_gid > 0
+      - forgejo_metadata_state_root == '/var/lib/forgejo-metadata'
+      - forgejo_metadata_helper_root == '/usr/local/libexec/forgejo-metadata'
+      - forgejo_metadata_config_root == '/etc/forgejo-metadata'
+      - forgejo_metadata_mappings is sequence and forgejo_metadata_mappings is not string
+      - forgejo_metadata_tokens is mapping
+      - forgejo_metadata_timer_enabled is boolean
+      - not forgejo_metadata_timer_enabled or forgejo_metadata_mappings | length > 0
+      - forgejo_metadata_write_budget is integer and 1 <= forgejo_metadata_write_budget <= 1000
+      - forgejo_metadata_timeout_seconds is integer and 1 <= forgejo_metadata_timeout_seconds <= 1800
+      - forgejo_metadata_freshness_seconds is integer and forgejo_metadata_freshness_seconds > 0
+    fail_msg: Declare a dedicated identity, fixed paths and bounded mirror configuration
+
+- name: Validate public metadata enrollment
+  ansible.builtin.assert:
+    that:
+      - item.instance is match('^[a-z0-9_-]{1,16}$')
+      - item.source_origin is match('^https://[A-Za-z0-9.-]+(:[0-9]+)?$')
+      - item.destination_origin is match('^https://[A-Za-z0-9.-]+(:[0-9]+)?$')
+      - item.source_repo is match('^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$')
+      - item.destination_repo is match('^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$')
+      - item.source_id is integer and item.source_id > 0
+      - item.destination_id is integer and item.destination_id > 0
+      - item.actor_id is integer and item.actor_id > 0
+      - item.visibility in ['public', 'private']
+      - item.source_credential is match('^[A-Za-z0-9_-]{1,64}$')
+      - item.destination_credential is match('^[A-Za-z0-9_-]{1,64}$')
+      - item.source_credential != item.destination_credential
+      - item.ca_file | default('') == '' or item.ca_file is match('^/etc/[^\s]+$')
+      - >-
+        forgejo_metadata_mappings | selectattr('instance', 'equalto', item.instance)
+        | selectattr('source_id', 'equalto', item.source_id) | list | length == 1
+      - >-
+        forgejo_metadata_mappings | selectattr('destination_origin', 'equalto', item.destination_origin)
+        | selectattr('destination_id', 'equalto', item.destination_id) | list | length == 1
+    fail_msg: Metadata enrollment needs exact repository identities and separate credential references
+  loop: "{{ forgejo_metadata_mappings }}"
+  loop_control:
+    label: "{{ item.instance | default('invalid') }}"
+
+- name: Require protected separate token inputs
+  ansible.builtin.assert:
+    that:
+      - forgejo_metadata_tokens[item] | default('') is string
+      - forgejo_metadata_tokens[item] | default('') | length > 0
+      - forgejo_metadata_tokens[item] is match('^[^\s]+$')
+    fail_msg: Each enrolled credential needs a separately protected token
+  loop: >-
+    {{ (forgejo_metadata_mappings | map(attribute='source_credential') | list
+        + forgejo_metadata_mappings | map(attribute='destination_credential') | list) | unique }}
+  no_log: true

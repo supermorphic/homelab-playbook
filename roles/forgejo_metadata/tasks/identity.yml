@@ -1,0 +1,27 @@
+---
+- name: Create private metadata group
+  ansible.builtin.group:
+    name: "{{ forgejo_metadata_account }}"
+    gid: "{{ forgejo_metadata_gid }}"
+    system: true
+
+- name: Create locked non-login metadata account
+  ansible.builtin.user:
+    name: "{{ forgejo_metadata_account }}"
+    uid: "{{ forgejo_metadata_uid }}"
+    group: "{{ forgejo_metadata_account }}"
+    groups: ''
+    append: false
+    shell: /usr/sbin/nologin
+    home: /nonexistent
+    create_home: false
+    password_lock: true
+    system: true
+
+- name: Create private persistent metadata state
+  ansible.builtin.file:
+    path: "{{ forgejo_metadata_state_root }}"
+    state: directory
+    owner: "{{ forgejo_metadata_account }}"
+    group: "{{ forgejo_metadata_account }}"
+    mode: '0700'

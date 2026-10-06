@@ -1,0 +1,22 @@
+---
+- name: Validate metadata host and declaration
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Observe metadata initialization and convergence without repair
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/runuser
+      - -u
+      - "{{ forgejo_metadata_account }}"
+      - --
+      - /usr/bin/python3
+      - -B
+      - -m
+      - forgejo_metadata
+      - --config
+      - "{{ forgejo_metadata_config_root }}/config.json"
+      - check
+    chdir: "{{ forgejo_metadata_helper_root }}"
+  register: forgejo_metadata_check
+  changed_when: false
+  failed_when: forgejo_metadata_check.rc != 0

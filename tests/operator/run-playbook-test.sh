@@ -167,6 +167,20 @@ for forgejo_action in provision verify; do
   done
 done
 
+for metadata_action in provision verify bootstrap resolve apply; do
+  : >"$uv_log"
+  assert_status 0 env PATH="$fake_bin:$PATH" FAKE_UV_LOG="$uv_log" \
+    "$repo_root/scripts/playbook.sh" forgejo-metadata "$metadata_action" production --limit fixture-host --check
+  rg -q '^ansible-config$' "$uv_log" || fail 'metadata action omitted credential guards'
+  rg -q '^fixture-host$' "$uv_log" || fail 'metadata gateway lost host selection'
+  for unsupported_inventory in staging frozen/k3s; do
+    : >"$uv_log"
+    assert_status 2 env PATH="$fake_bin:$PATH" FAKE_UV_LOG="$uv_log" \
+      "$repo_root/scripts/playbook.sh" forgejo-metadata "$metadata_action" "$unsupported_inventory"
+    [[ ! -s "$uv_log" ]] || fail 'unsupported metadata inventory invoked uv'
+  done
+done
+
 for unsafe_args in \
   '-k' \
   '--ask-pass' \
@@ -186,7 +200,9 @@ for unsafe_args in \
     'tls provision' 'tls renew' 'tls verify' \
     'reverse-proxy provision' 'reverse-proxy verify' \
     'semaphore provision' 'semaphore verify' \
-    'forgejo provision' 'forgejo verify'; do
+    'forgejo provision' 'forgejo verify' \
+    'forgejo-metadata provision' 'forgejo-metadata verify' 'forgejo-metadata bootstrap' \
+    'forgejo-metadata resolve' 'forgejo-metadata apply'; do
     read -r -a guarded_argv <<<"$guarded_selector"
     assert_status 2 env \
     PATH="$fake_bin:$PATH" \

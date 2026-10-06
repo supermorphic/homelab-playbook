@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodically reconcile Forgejo issue metadata
+
+[Timer]
+OnCalendar=*-*-* *:00/15:00
+Persistent=true
+RandomizedDelaySec=30
+Unit=forgejo-metadata.service
+
+[Install]
+WantedBy=timers.target

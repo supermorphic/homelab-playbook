@@ -1,0 +1,38 @@
+---
+- name: Verify Forgejo metadata mirror without repair
+  hosts: forgejo_metadata
+  serial: 1
+  any_errors_fatal: true
+  gather_facts: false
+  become: false
+  vars:
+    forgejo_metadata_allowed_operations: ['manual-apply']
+  pre_tasks:
+    - name: Reject password-based Forgejo credentials
+      ansible.builtin.assert:
+        that:
+          - ansible_password is not defined
+          - ansible_ssh_pass is not defined
+          - ansible_ssh_password is not defined
+          - ansible_become_password is not defined
+          - ansible_become_pass is not defined
+        fail_msg: >-
+          Forgejo operations require key-only SSH and passwordless sudo for
+          the ansible account
+      no_log: true
+
+    - name: Prove fresh administrative connection prerequisites
+      ansible.builtin.import_role:
+        name: os_bootstrap
+        tasks_from: connection-preflight.yml
+
+    - name: Gather privileged host facts
+      ansible.builtin.setup:
+      become: true
+
+  tasks:
+    - name: Observe and verify Forgejo metadata mirror
+      ansible.builtin.import_role:
+        name: forgejo_metadata
+        tasks_from: operate.yml
+      become: true

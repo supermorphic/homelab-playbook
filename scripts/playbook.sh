@@ -45,7 +45,7 @@ playbook_path="$playbook_dir/$action.yml"
 [[ -f "$playbook_path" ]] || error "unknown action for $playbook: $action"
 
 if [[ $# -eq 2 ]]; then
-  if [[ "$playbook" == 'tls' || "$playbook" == 'forgejo' ]]; then
+  if [[ "$playbook" == 'tls' || ( "$playbook" == 'forgejo' || "$playbook" == 'forgejo-metadata' ) ]]; then
     printf '%s\n' 'Available inventories:' 'production'
     exit 0
   fi
@@ -66,7 +66,7 @@ esac
 if [[ "$playbook" == 'tls' && "$inventory" != 'production' ]]; then
   error "TLS currently supports production only; staging experiments require a separate isolated workflow"
 fi
-if [[ "$playbook" == 'forgejo' && "$inventory" != 'production' ]]; then
+if [[ ( "$playbook" == 'forgejo' || "$playbook" == 'forgejo-metadata' ) && "$inventory" != 'production' ]]; then
   error "Forgejo currently supports production only; staging needs separate activation"
 fi
 inventory_path="$repo_root/inventory/$inventory"
@@ -77,7 +77,7 @@ shift 3
 guarded_host_action=false
 if [[ ( "$playbook" == 'os' && "$action" != 'inspect' ) || \
       "$playbook" == 'podman' || "$playbook" == 'tls' || "$playbook" == 'reverse-proxy' || \
-      "$playbook" == 'semaphore' || "$playbook" == 'forgejo' ]]; then
+      "$playbook" == 'semaphore' || ( "$playbook" == 'forgejo' || "$playbook" == 'forgejo-metadata' ) ]]; then
   guarded_host_action=true
   for argument in "$@"; do
     case "$argument" in
