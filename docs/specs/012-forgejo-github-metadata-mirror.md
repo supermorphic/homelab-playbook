@@ -2,7 +2,7 @@
 
 Issue: [#75](https://forgejo.infra.supermorphic.com/supermorphic/homelab-playbook/issues/75)
 
-Status: proposed design; operator review required before implementation.
+Status: design revised after review; implementation planning authorized.
 
 ## Purpose and authority
 
@@ -56,9 +56,13 @@ objects are separate operator actions.
 Use a non-admin Forgejo identity with selected-repository `read:issue` and
 `read:repository` token scopes. Use a separate GitHub automation identity with a
 fine-grained token restricted to destination repositories, Issues write permission,
-and repository metadata access. Do not request Contents write, Actions, repository
-administration, or any source mutation permission. Verify the exact endpoint
-permissions during separately authorized live acceptance.
+and repository metadata access. The automation account must also have repository
+Write access: GitHub can silently omit issue labels and milestones when the account
+lacks the required repository access, even if the token permits issue operations.
+Keep the token limited to Issues and metadata; account membership does not justify
+requesting Contents write, Actions, repository administration, or source mutation
+permission. Check effective account access during enrollment and each run, and
+prove label and milestone behavior during separately authorized live acceptance.
 
 The operator enrolls durable tokens in a service-owned sibling SOPS inventory file
 through [Specification 005](005-sops-age-secrets.md). Ansible handles secret tasks
@@ -135,6 +139,12 @@ name, color, and the bounded description. Explicitly clear removed issue labels,
 milestone assignments, and milestone due dates where supported by the API.
 Compare normalized supported fields before writing. Repeated converged runs make
 no effective writes. Unrelated GitHub fields do not cause perpetual updates.
+Read back every created or updated object and compare all supported fields with
+the intended source projection, including labels, milestone assignment and cleared
+values. A successful HTTP response or matching marker alone is insufficient.
+Report silently ignored or mismatched fields as failed reconciliation; do not
+advance last-converged evidence. That evidence describes the source data observed
+by the run, not an atomic snapshot across both services.
 
 Do not delete any destination object because it disappears from the source.
 Retain formerly mirrored issues, comments, labels, and milestones. Removing a
@@ -159,9 +169,21 @@ operation, sanitized error class, counts, and timestamps instead.
 
 Markers must be part of the original create request, not added by a later patch.
 Before each create, rediscover destination ownership and atomically record a small
-pending-create intent on disk. The intent contains identity and operation metadata,
-not credentials or issue content. Flush it before sending the request. Clear it
-only after read-back finds exactly one matching object.
+pending-create intent in the durable service state document. The intent contains
+identity and operation metadata, not credentials or issue content. Flush the file
+and its directory before sending the request. Retire the intent when discovery
+finds exactly one correctly owned object; read-back of all supported fields must
+still pass before reporting convergence. A field mismatch becomes repair work for
+that existing object, never another create.
+
+Distinguish confirmed non-creation from an unknown outcome. A validated API
+rejection that guarantees no object was created, or a transport failure proven
+to occur before sending the request, retires the intent as rejected. A later run
+may retry after correcting the cause and respecting any retry deadline. Persist
+that transition atomically; a crash before persistence remains conservative.
+Do not classify all non-success responses as definite rejection. Timeout, lost
+response, malformed success response, ambiguous server error, and an interrupted
+request retain the unresolved intent. Offline tests must cover both paths.
 
 After a crash or uncertain HTTP outcome, rediscover the marker. An existing shadow
 completes the intent and normal reconciliation continues without another create.
@@ -169,14 +191,33 @@ An unresolved intent blocks another POST for that identity. Do not blindly retry
 creation after a timeout or ambiguous server error. Other independent work may
 continue; report the unresolved operation as failure.
 
-This file is a safety journal, not an authoritative mapping database. A fresh
-installation reconstructs all ordinary mappings from API markers. Preserve pending
-intents during recovery when any previous create outcome was unresolved. If that
-journal is lost, suspend automatic creation until the previous process is stopped
-and an operator has checked destination outcomes. REST creation cannot promise
-exactly-once delivery when both the response and local uncertainty evidence are
-lost. Resolve an absent shadow only after confirming no prior request can still
-complete; record that decision before permitting another create.
+The state document contains both initialization evidence and pending intents, so
+loss of the file also removes permission to mutate destinations. Bind initialization
+to the enrolled source/destination identities and destination actor. Missing,
+corrupt, incompatible, or mismatched state permits read-only discovery but blocks
+all destination writes. Provisioning and timer invocations never initialize it
+implicitly. An empty pending list in an otherwise valid initialized document is
+distinct from a missing document.
+
+An attended bootstrap explicitly selects initial enrollment or recovery. Initial
+enrollment requires operator confirmation that no earlier writer or unresolved
+create exists for those mappings. Recovery requires stopping previous writers,
+preserving any available state, and rediscovering destination markers. Preserve
+unresolved intents when state survives. If state is lost, require an explicit
+operator decision that earlier create outcomes have been resolved before writing
+new initialization evidence. Confirmation binds the exact mappings and operation;
+it is not authorization. Record the selected mode and decision reference without
+secrets or issue content. Changes to the bound enrollment identities invalidate
+initialization until reviewed re-enrollment; ordinary provisioning must preserve
+existing state.
+
+This document is a safety journal, not an authoritative mapping database. A fresh
+installation reconstructs ordinary mappings from API markers after attended
+initialization. REST creation cannot promise exactly-once delivery when both the
+response and local uncertainty evidence are lost. Resolve an absent shadow only
+after confirming no prior request can still complete; record that decision before
+permitting another create. Discovery of an existing shadow can resolve an intent
+automatically; clearing an unresolved absent shadow requires an attended decision.
 
 The same principle applies when a marker is removed or ownership becomes ambiguous:
 stop and repair the identified object through an explicitly authorized operation.
@@ -215,8 +256,9 @@ source availability, and the preserved source-instance key. Reinstall through th
 canonical playbook path after separately authorizing the target. Stop the timer
 before investigating ownership or pending-create failures. Preserve its safety
 journal, inspect the identified GitHub object, resolve uncertain outcomes, and
-restart only after an authorized repair. No separate mapping database restore is
-needed for normal marker discovery.
+restart only after an authorized repair. Missing state requires the attended
+recovery bootstrap; copying configuration or rerunning provision cannot enable
+writes. No separate mapping database restore is needed for normal marker discovery.
 
 ## Acceptance and delivery gates
 
@@ -235,6 +277,11 @@ identities and credentials. An independent expected-data oracle must demonstrate
 - Unchanged runs make no writes; a clean restart rediscovers all existing shadows.
 - Accepted creates followed by lost responses or interruption recover by marker;
   unknown outcomes block duplicate POSTs until resolved.
+- Confirmed non-creation can retry after repair; ambiguous errors retain intents.
+- Missing, corrupt or identity-mismatched state prevents writes until attended
+  initialization; provisioning preserves existing initialization and intents.
+- Successful responses with dropped labels, milestones or other supported fields
+  fail read-back and do not advance last-converged evidence.
 - Missing source objects retain their recovery shadows; incomplete pagination,
   duplicate markers, permission failures and visibility drift fail safely.
 - Rate limits, destination outage, time budgets and backlog remain observable.
