@@ -1,6 +1,7 @@
 """Real offline rootless sibling operations inside the temporary worker image."""
 
 import json
+from http.client import HTTPConnection
 import os
 from pathlib import Path
 import socket
@@ -34,9 +35,46 @@ def validate_mappings(mappings, worker):
             raise ValueError('Worker subordinate mappings are incomplete: ' + json.dumps(mappings))
 
 
+def published_port(bindings):
+    try:
+        if set(bindings) != {'8080/tcp'} or len(bindings['8080/tcp']) != 1:
+            raise ValueError
+        binding = bindings['8080/tcp'][0]
+        value = binding['HostPort']
+        if (binding['HostIp'] != '127.0.0.1' or not isinstance(value, str)
+                or not value.isascii() or not value.isdigit() or not 1024 <= int(value) <= 65535):
+            raise ValueError
+        return int(value)
+    except (TypeError, KeyError, ValueError) as error:
+        raise ValueError('Published HTTP port is missing, ambiguous or outside loopback') from error
+
+
+def validate_namespace_credentials(status, last_cap):
+    mask = (1 << (last_cap + 1)) - 1
+    if (list(map(int, status['Uid'].split())) != [0] * 4
+            or list(map(int, status['Gid'].split())) != [0] * 4
+            or any(int(status[key], 16) != mask for key in ('CapEff', 'CapPrm', 'CapBnd'))):
+        raise ValueError('Mapped runtime namespace capabilities were filtered: ' + json.dumps(status))
+
+
+def check_published_http(bindings):
+    port = published_port(bindings)
+    connection = HTTPConnection('127.0.0.1', port, timeout=2)
+    try:
+        connection.request('GET', '/health')
+        response = connection.getresponse()
+        body = response.read(1025)
+        if (response.status != 200 or len(body) > 1024
+                or json.loads(body) != {'fixture': 'published-loopback'}):
+            raise ValueError('Published sibling HTTP response did not match the owned fixture')
+    finally:
+        connection.close()
+
+
 def main():
     config = json.loads(Path('/worker.json').read_text())
     worker = config['worker']
+    runtime = Path(f'/run/user/{worker["uid"]}')
     status = dict(line.split(':', 1) for line in Path('/proc/self/status').read_text().splitlines() if ':' in line)
     validate_credentials(status, worker['uid'], worker['gid'])
     filesystem = os.statvfs('/work')
@@ -44,19 +82,22 @@ def main():
         raise ValueError('Worker writable storage is unbounded')
     execute(['systemd-run', '--user', '--quiet', '--unit=podman-api', '--property=Delegate=yes',
              '--property=StandardOutput=null', '--property=StandardError=file:/work/api-error.log',
-             '/usr/bin/podman', 'system', 'service', '--time=0', 'unix:/work/run/podman.sock'])
-    endpoint = Path('/work/run/podman.sock')
+             '/usr/bin/podman', 'system', 'service', '--time=0', 'unix:' + str(runtime / 'podman.sock')])
+    endpoint = runtime / 'podman.sock'
     deadline = time.monotonic() + 15
     while not endpoint.exists():
         if time.monotonic() >= deadline:
             raise RuntimeError('Worker Podman API did not become available')
         time.sleep(0.1)
-    client = ['/usr/bin/podman', '--remote', '--url=unix:/work/run/podman.sock']
+    client = ['/usr/bin/podman', '--remote', '--url=unix:' + str(endpoint)]
     info = json.loads(execute(client + ['info', '--format=json']))
     validate_mappings(info['host'].get('idMappings', {}), worker)
     if (info['host']['security']['rootless'] is not True or info['host']['cgroupVersion'] != 'v2'
             or info['host']['cgroupManager'] != 'systemd'):
         raise ValueError('Worker server lacks rootless delegated cgroups')
+    namespace_status = json.loads(execute(['/usr/bin/podman', 'unshare', '/usr/bin/python3', '-c',
+        "import json,pathlib; s=dict(line.split(':',1) for line in pathlib.Path('/proc/self/status').read_text().splitlines() if ':' in line); print(json.dumps({k:s[k] for k in ('Uid','Gid','CapEff','CapPrm','CapBnd')}))"]))
+    validate_namespace_credentials(namespace_status, int(Path('/proc/sys/kernel/cap_last_cap').read_text()))
     # Generated scratch image only. It executes stock read-only /usr binaries;
     # no registry, credential, production image or application volume is used.
     archive = Path('/work/rootfs.tar')
@@ -93,12 +134,33 @@ def main():
         raise ValueError('Sibling copy failed')
     second = execute(client + common + ['--network=none', '--name=worker-sibling-two',
                      'localhost/worker-synthetic:fixture', '/usr/bin/python3', '-c', 'import time; time.sleep(90)']).strip()
-    inspect = json.loads(execute(client + ['inspect', first, second]))
-    if len(inspect) != 2 or any(item['State']['Running'] is not True for item in inspect):
+    http_server = """from http.server import BaseHTTPRequestHandler, HTTPServer
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200); self.end_headers()
+        self.wfile.write(b'{"fixture":"published-loopback"}')
+    def log_message(self, *args):
+        pass
+HTTPServer(('0.0.0.0', 8080), Handler).serve_forever()
+"""
+    third = execute(client + common + ['--publish=127.0.0.1::8080', '--name=worker-published-http',
+                    'localhost/worker-synthetic:fixture', '/usr/bin/python3', '-c', http_server]).strip()
+    inspect = json.loads(execute(client + ['inspect', first, second, third]))
+    if len(inspect) != 3 or any(item['State']['Running'] is not True for item in inspect):
         raise ValueError('Sibling runtime failed')
-    # Keep both siblings alive for the independent host ancestry observation.
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            check_published_http(inspect[2]['NetworkSettings']['Ports'])
+            break
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Published loopback sibling did not become reachable')
+            time.sleep(0.1)
+    # Keep siblings and network helpers alive for independent host observation.
     print(json.dumps({'rootless_api': True, 'sibling_containers': True, 'mapped_bind': True,
-                      'private_loopback': True, 'user_manager': True, 'bounded_storage': True}), flush=True)
+                      'private_loopback': True, 'published_loopback': True,
+                      'user_manager': True, 'bounded_storage': True}), flush=True)
 
 
 if __name__ == '__main__':

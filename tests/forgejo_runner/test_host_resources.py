@@ -304,6 +304,9 @@ class HostResourceTests(unittest.TestCase):
                         self.assertEqual('no', properties['NoNewPrivileges'])
                         self.assertEqual('yes', properties['PrivatePIDs'])
                         self.assertEqual('default', properties['ProtectProc'])
+                        self.assertEqual('yes', properties['PrivateDevices'])
+                        self.assertEqual('/dev/net/tun', properties.get('BindPaths'))
+                        self.assertEqual('/dev/net/tun rw', properties.get('DeviceAllow'))
                         for helper in ('newuidmap', 'newgidmap'):
                             copy = Path(properties['RootImage']).parent / helper
                             self.assertTrue(copy.is_file(), 'Worker receives only an owned helper copy')

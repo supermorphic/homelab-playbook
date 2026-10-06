@@ -24,6 +24,11 @@ def main():
         subprocess.run(['/usr/bin/mount', '-o', 'remount,bind,ro,suid,nodev', '/usr/bin/' + helper],
                        check=True, timeout=10)
     Path('/run/systemd/system').mkdir(parents=True, exist_ok=True)
+    # Stock network-helper confinement permits the standard per-user runtime
+    # prefix. Its writable contents still belong to the bounded private image.
+    runtime = f'/run/user/{worker["uid"]}'
+    Path(runtime).mkdir(mode=0o700, parents=True, exist_ok=True)
+    subprocess.run(['/usr/bin/mount', '--bind', '/work/run', runtime], check=True, timeout=10)
     root = Path('/sys/fs/cgroup')
     # Delegate child creation and migration only. Outer resource control files
     # remain root-owned and inaccessible to the execution UID.
@@ -31,6 +36,8 @@ def main():
         os.chown(path, worker['uid'], worker['gid'])
     os.environ['USER'] = worker['user']
     os.environ['LOGNAME'] = worker['user']
+    os.environ['XDG_RUNTIME_DIR'] = runtime
+    os.environ['DBUS_SESSION_BUS_ADDRESS'] = 'unix:path=' + runtime + '/bus'
     os.execv('/usr/bin/setpriv', ['/usr/bin/setpriv', f'--reuid={worker["uid"]}',
         f'--regid={worker["gid"]}', '--clear-groups', '--bounding-set=-all,+setuid,+setgid',
         '--inh-caps=-all', '--ambient-caps=-all', '/usr/bin/catatonit', '--',
