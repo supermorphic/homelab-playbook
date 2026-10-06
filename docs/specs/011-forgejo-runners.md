@@ -27,15 +27,6 @@ isolation, resource limits, networking and cleanup work; the required Molecule
 and container-runtime capabilities pass on the selected runtime; and updates,
 credential rotation, retirement and recovery have supported operator procedures.
 
-Consumer workflow migration, provider adapters, CI parity and required merge
-checks belong to [homelab-playbook#58](https://forgejo.infra.supermorphic.com/supermorphic/homelab-playbook/issues/58),
-[homelab-talos#292](https://forgejo.infra.supermorphic.com/supermorphic/homelab-talos/issues/292)
-and [career-ops#208](https://forgejo.infra.supermorphic.com/supermorphic/career-ops/issues/208).
-They consume the platform after runner acceptance through their own issue-backed
-worktrees and repository policies. Their workflow migration is not a prerequisite
-for completing issue57. The earlier combined delivery criterion was superseded
-by the operator's ownership clarification on 2026-10-06.
-
 Deployment workers, Kubernetes access, application credentials, autoscaling,
 VM infrastructure and registry hosting are outside this delivery. Future trusted
 deployment jobs require separate workers and authority. PR labels, branches and
