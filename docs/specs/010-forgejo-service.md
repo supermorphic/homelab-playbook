@@ -42,6 +42,10 @@ Follow-up ownership:
   off-cluster notification delivery. Backup and mirror operations remain
   independent of notification availability.
 
+Issue metadata reconstruction on GitHub is owned by
+[Specification 012](012-forgejo-github-metadata-mirror.md). Native Git mirroring
+and full Forgejo backups remain the recovery boundaries described here.
+
 ## Runtime and database decision
 
 Use the maintained upstream rootless Forgejo image and a dedicated PostgreSQL 17

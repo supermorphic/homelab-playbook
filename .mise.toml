@@ -114,4 +114,6 @@ mise run test:semaphore -- controller
 mise run test:molecule -- forgejo/default
 mise run test:forgejo -- compatibility
 mise run test:forgejo -- fixture
+mise run test:molecule -- forgejo_metadata/default
+mise run test:forgejo-metadata -- fixture
 '''

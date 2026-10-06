@@ -2,7 +2,7 @@
 
 Issue: [#75](https://forgejo.infra.supermorphic.com/supermorphic/homelab-playbook/issues/75)
 
-Status: design revised after review; implementation planning authorized.
+Status: implementation prepared; production enrollment and live acceptance remain separate operator actions.
 
 ## Purpose and authority
 
@@ -67,7 +67,7 @@ prove label and milestone behavior during separately authorized live acceptance.
 The operator enrolls durable tokens in a service-owned sibling SOPS inventory file
 through [Specification 005](005-sops-age-secrets.md). Ansible handles secret tasks
 with `no_log` and installs root-only credential files. systemd `LoadCredential`
-delivers read-only runtime copies to the service. Secret values never appear in
+delivers read-only runtime copies to the service. Live secret values never appear in
 arguments, environment definitions, unit text, output, status files, or test data.
 The runtime never obtains a SOPS identity or uses the operator Git credential helper.
 
@@ -121,7 +121,8 @@ repository identities, destination actor and visibility before any writes.
 Build complete paginated inventories of source issues, labels, and milestones,
 and destination shadows. Read all states, including closed issues and milestones.
 Never treat an incomplete page sequence or an API error as an empty collection.
-Bound response sizes, page counts, execution time, and per-run write work; reaching
+Bound response sizes, page counts, execution time, and per-run mutation requests,
+including rejected requests; reaching
 a discovery limit is failure, not a partial inventory accepted as complete.
 
 Request Forgejo issues with `type=issues` and additionally reject records carrying
@@ -237,15 +238,17 @@ exit status. The single oneshot unit plus a nonblocking filesystem lock prevents
 overlap with manual invocation. Use filesystem protection, no new privileges,
 private temporary storage, and bounded memory/tasks. Network access remains
 necessary for the two HTTPS APIs; do not claim account separation alone restricts
-egress. Publish sanitized per-mapping status atomically, including last attempted
+egress. Persist retry deadlines by credential so restarting the process cannot bypass
+throttling and independently credentialed mappings can still progress. Publish
+sanitized per-mapping status atomically, including last attempted
 run, last converged run, backlog, and unresolved creates. A partial run does not
 advance last-converged evidence. Verification checks freshness separately from
 the last exit status.
 
 Expose provision and observational verify through `mise run playbook`, preserving
 its dependency, inventory, connection, and task-selection guards. Support production
-only until staging has separately approved inputs. Provision installs and verifies
-the service; starting an enrolled timer is an external publication action requiring
+only until staging has separately approved inputs. Provision installs
+the service definitions; starting an enrolled timer is an external publication action requiring
 explicit authorization for its mappings. Verification observes installed definitions,
 ownership, timer state, and existing status without synchronizing metadata.
 Manual reconciliation uses the same executable and lock as the timer.
@@ -260,9 +263,65 @@ restart only after an authorized repair. Missing state requires the attended
 recovery bootstrap; copying configuration or rerunning provision cannot enable
 writes. No separate mapping database restore is needed for normal marker discovery.
 
+## Attended operation and recovery
+
+The `forgejo_metadata` inventory group and its UID/GID, protected tokens and
+repository mappings require a separately authorized enrollment change. The
+playbooks do not add a production host or select repositories themselves. All
+commands below require the operator's direction for the exact host and action;
+replace `<host>` with that selected target. A confirmation fingerprint is an
+execution-intent guard, not permission to publish.
+
+1. After authorizing installation, run
+   `mise run playbook -- forgejo-metadata provision production --limit <host>`.
+   Keep the timer disabled during initial enrollment or recovery. Provisioning
+   preserves existing initialization and pending creates; it does not initialize
+   replication. Use `verify` to observe current definitions and replication
+   evidence. A missing initialization or convergence status is pending acceptance
+   and returns failure.
+2. Run `mise run playbook -- forgejo-metadata plan production --limit <host>`.
+   It reports the installed public enrollment and its fingerprint without API
+   writes or changes to safety state. Review the destination visibility, repository
+   identities and automation actor before forming an attended request. Exact
+   request syntax is defined by the installed runtime's `control --help`.
+   Supply the request as `forgejo_metadata_request` in a private, uncommitted
+   JSON extra-vars file under `.tmp/`; it contains no tokens or issue content.
+3. For initial enrollment, select `bootstrap-initial` only after establishing
+   that no earlier writer or uncertain create exists. For recovery, stop previous
+   writers, preserve available safety state and resolve earlier outcomes before
+   selecting `bootstrap-recover`. Record a retrievable non-secret decision
+   reference. Bind the operation and confirmation to the reported fingerprint.
+   Submit with `mise run playbook -- forgejo-metadata bootstrap production
+   --limit <host> -e @.tmp/metadata-control.json`. The control unit discovers all
+   destination markers before changing initialization. It preserves surviving
+   unresolved intents and archives invalid prior state for investigation.
+4. After separately authorizing backfill, select `manual-apply` in a bound request
+   and run `mise run playbook -- forgejo-metadata apply production --limit <host>
+   -e @.tmp/metadata-control.json`. The root submission helper holds its own lock
+   until the fixed control unit finishes and then removes its transient request.
+   The control unit and timer use the same service operation lock. A successful
+   bootstrap alone is not replication acceptance.
+5. Run `mise run playbook -- forgejo-metadata verify production --limit <host>`
+   to observe the installed definitions, isolated account, timer selection and
+   existing convergence status. It does not start a unit or repair state. Backlog,
+   read-back errors, unresolved creates or stale convergence require investigation.
+   Enable the declared timer through a separately authorized provision action
+   only after the exact mappings and supported live behavior have been accepted.
+
+For an unresolved create, keep previous writers stopped and inspect the identified
+shadow. Ordinary complete discovery resolves an existing correctly owned marker.
+If no shadow exists, establish that the earlier request cannot still complete
+before authorizing `resolve-absent` for that exact source key. Record the decision
+and submit with `mise run playbook -- forgejo-metadata resolve production
+--limit <host> -e @.tmp/metadata-control.json`; the control repeats complete marker
+discovery before clearing the selected intent. It does not itself create a shadow.
+Invalid or missing safety state requires recovery bootstrap, even if the last
+status file reports earlier convergence. Ownership conflicts require a separately
+authorized repair of the identified object; a title match never permits adoption.
+
 ## Acceptance and delivery gates
 
-Review this design before implementation. Keep implementation plans uncommitted
+The design was reviewed before implementation. Keep implementation plans uncommitted
 under `.tmp/`. Production credentials, identity allocation, repository enrollment,
 deployment, initial backfill, and live acceptance require separate operator actions.
 

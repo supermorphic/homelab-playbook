@@ -1,6 +1,11 @@
 {
   "rules": [
     {
+      "prefixes": ["roles/forgejo_metadata/", "playbooks/forgejo-metadata/", "scripts/forgejo_metadata/", "tests/forgejo_metadata/"],
+      "selectors": ["forgejo_metadata/default"],
+      "reason": "Metadata runtime requires real HTTPS and host systemd acceptance"
+    },
+    {
       "prefixes": ["roles/forgejo/molecule/default/"],
       "selectors": ["forgejo/default"],
       "reason": "Forgejo scenario coverage"
