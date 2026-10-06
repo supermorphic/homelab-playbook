@@ -44,8 +44,12 @@ def prepare(directory, descriptor, architecture):
     rows = []
     for index, pin in enumerate([candidate['probe_image'], candidate['runner_image'],
                                  pins['forgejo_image'], pins['forgejo_postgres_image']]):
-        experiment.command([experiment.podman, 'pull', '--authfile', str(auth),
-                            '--arch', architecture, pin], timeout=600)
+        cached = experiment.command([experiment.podman, 'image', 'exists', pin], check=False)
+        if cached.returncode == 1:
+            experiment.command([experiment.podman, 'pull', '--authfile', str(auth),
+                                '--arch', architecture, pin], timeout=600)
+        elif cached.returncode != 0:
+            raise RuntimeError('Native image cache cannot be inspected')
         image = json.loads(experiment.command([experiment.podman, 'image', 'inspect', pin]).stdout)[0]
         identity = validate_image(image, pin, architecture)
         name = f'image-{index}.oci'
