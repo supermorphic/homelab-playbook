@@ -470,6 +470,11 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
             # retains the existing mapping-helper bounds and clears active caps.
             properties = [setting + ' CAP_NET_ADMIN' if setting.startswith((
                 'CapabilityBoundingSet=', 'AmbientCapabilities=')) else setting for setting in properties]
+        if stage == 'egress-only':
+            # Only trusted synthetic peer setup binds HTTPS inside its private
+            # namespace. Both peer and worker handoffs remove this capability.
+            properties = [setting + ' CAP_NET_BIND_SERVICE' if setting.startswith((
+                'CapabilityBoundingSet=', 'AmbientCapabilities=')) else setting for setting in properties]
         for setting in properties:
             argv.append('--property=' + setting)
         if worker:
