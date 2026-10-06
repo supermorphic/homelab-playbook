@@ -16,13 +16,18 @@ else:
 
 
 def main():
+    configuration = json.loads(Path('/worker.json').read_text())['network']
+    endpoints = ALLOWED + DENIED
+    if 'egress' in configuration:
+        from host_egress import EGRESS_DENIED
+        endpoints += EGRESS_DENIED
     if len(sys.argv) == 3 and sys.argv[1] == '--serve':
         descriptors = [int(value) for value in sys.argv[2].split(',')]
-        if len(descriptors) != len(ALLOWED + DENIED) or len(set(descriptors)) != len(descriptors) or min(descriptors) < 3:
+        if len(descriptors) != len(endpoints) or len(set(descriptors)) != len(descriptors) or min(descriptors) < 3:
             raise ValueError('Invalid controlled listener handoff')
         listeners = [socket.socket(fileno=descriptor) for descriptor in descriptors]
         endpoints = {(listener.getsockname()[0], listener.getsockname()[1]) for listener in listeners}
-        if endpoints != set(ALLOWED + DENIED):
+        if endpoints != set(ALLOWED + DENIED + (EGRESS_DENIED if 'egress' in configuration else ())):
             raise ValueError('Listener identity changed across peer handoff')
         print('listeners-ready', flush=True)
         while True:
@@ -45,7 +50,7 @@ def main():
     command(['/usr/sbin/ip', 'address', 'add', '192.0.2.20/32', 'dev', 'lo'])
     command(['/usr/sbin/ip', '-6', 'address', 'add', '2001:db8:57::20/128', 'dev', 'lo', 'nodad'])
     listeners = []
-    for address, port in ALLOWED + DENIED:
+    for address, port in endpoints:
         family = socket.AF_INET6 if ':' in address else socket.AF_INET
         listener = socket.socket(family)
         if family == socket.AF_INET6:
@@ -55,7 +60,7 @@ def main():
         listeners.append(listener)
     # Trusted setup ends here. Only synthetic sockets remain under an unused
     # identity, without capability to change policy or acquire execution privilege.
-    controller = json.loads(Path('/worker.json').read_text())['network']['controller']
+    controller = configuration['controller']
     os.execv('/usr/bin/setpriv', ['/usr/bin/setpriv', f'--reuid={controller["uid"]}',
         f'--regid={controller["gid"]}', '--clear-groups', '--bounding-set=-all',
         '--inh-caps=-all', '--ambient-caps=-all', '--no-new-privs',

@@ -3,6 +3,8 @@
 import os
 import select
 import subprocess
+from pathlib import Path
+import time
 
 if __package__:
     from .host_network import policy_source
@@ -37,10 +39,31 @@ def configure(configuration):
     command(['/usr/sbin/ip', 'address', 'add', '10.57.0.1/24', 'dev', 'fixture0'])
     command(['/usr/sbin/ip', '-6', 'address', 'add', 'fd57::1/64', 'dev', 'fixture0', 'nodad'])
     command(['/usr/sbin/ip', 'link', 'set', 'fixture0', 'up'])
-    command(['/usr/sbin/ip', 'route', 'add', 'default', 'via', '10.57.0.2', 'dev', 'fixture0'])
-    command(['/usr/sbin/ip', '-6', 'route', 'add', 'default', 'via', 'fd57::2', 'dev', 'fixture0'])
-    command(['/usr/sbin/nft', '--check', '--file', '-'], source=policy_source())
-    command(['/usr/sbin/nft', '--file', '-'], source=policy_source())
+    public = 'egress' in configuration
+    if public:
+        from host_egress import public_policy
+        policy = public_policy(configuration['egress'])
+        command(['/usr/sbin/ip', 'route', 'add', '192.0.2.20/32', 'via', '10.57.0.2', 'dev', 'fixture0'])
+        command(['/usr/sbin/ip', '-6', 'route', 'add', '2001:db8:57::20/128', 'via', 'fd57::2', 'dev', 'fixture0'])
+    else:
+        policy = policy_source()
+        command(['/usr/sbin/ip', 'route', 'add', 'default', 'via', '10.57.0.2', 'dev', 'fixture0'])
+        command(['/usr/sbin/ip', '-6', 'route', 'add', 'default', 'via', 'fd57::2', 'dev', 'fixture0'])
+    command(['/usr/sbin/nft', '--check', '--file', '-'], source=policy)
+    command(['/usr/sbin/nft', '--file', '-'], source=policy)
     peer.stdin.write('configure\n'); peer.stdin.flush()
     readiness(peer, 'listeners-ready')
+    if public:
+        Path('/work/network-ready').write_text('controlled-network-ready\n')
+        Path('/work/network-ready').chmod(0o444)
+        deadline = time.monotonic() + 25
+        while True:
+            try:
+                if Path('/work/egress-ready').read_text() == 'public-gateway-ready\n':
+                    break
+            except FileNotFoundError:
+                pass
+            if time.monotonic() >= deadline:
+                raise ValueError('Trusted public transport did not become ready')
+            time.sleep(0.1)
     return peer

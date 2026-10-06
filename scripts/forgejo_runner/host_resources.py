@@ -227,7 +227,7 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                     worker_reader=None, after_stop=None, assets=None,
                     asset_validator=None, asset_receiver=None):
     """Fixed trusted experiments share the same image ownership and disposal path."""
-    if stage not in ('resources-only', 'worker-only', 'job-only', 'network-only'):
+    if stage not in ('resources-only', 'worker-only', 'job-only', 'network-only', 'egress-only'):
         raise ValueError('Unknown host experiment')
     worker = stage != 'resources-only'
     if assets:
@@ -240,6 +240,7 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                      + target['ownership_marker'] + '.service', root / 'worker.ext4')
     services = None
     diagnostic = ''
+    gateway = None
 
     def cleanup():
         nonlocal diagnostic
@@ -248,14 +249,26 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
         for path, expected, parent in resources.entries:
             if identity(path.lstat()) != expected or identity(path.parent.lstat()) != parent:
                 return ['Resource identity changed; allocation preserved']
-        error_log = root.resolve() / 'stderr.log'
-        if any(path == error_log for path, _, _ in resources.entries):
-            descriptor = os.open(error_log, os.O_RDONLY | os.O_NOFOLLOW)
-            with os.fdopen(descriptor, 'r') as stream:
-                # Only the fixed trusted launcher/probe writes this private
-                # log. Never forward it to console, CI logs or a public PR.
-                diagnostic = stream.read(4096)
+        for name in ('stderr.log',):
+            error_log = root.resolve() / name
+            if any(path == error_log for path, _, _ in resources.entries):
+                descriptor = os.open(error_log, os.O_RDONLY | os.O_NOFOLLOW)
+                with os.fdopen(descriptor, 'r') as stream:
+                    # Trusted setup diagnostics stay in private outcomes.
+                    diagnostic = (diagnostic + stream.read(4096))[:4096]
+        if gateway is not None and gateway.get('stderr') is not None:
+            stream = gateway['stderr']
+            try:
+                stream.seek(0)
+                diagnostic = (diagnostic + stream.read(4096).decode(errors='replace'))[:4096]
+            finally:
+                stream.close()
         errors = unit.cleanup()
+        if not errors and gateway is not None and gateway.get('helper') is not None:
+            try:
+                gateway['helper'].wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                errors.append('Owned public transport survived unit termination; allocation preserved')
         if not errors and unit.attempted and after_stop is not None:
             errors = after_stop(target)
         if not errors:
@@ -272,7 +285,7 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
         return errors
 
     def setup_and_probe():
-        nonlocal services
+        nonlocal services, gateway
         if os.geteuid() != 0:
             raise ValueError('Administrator fixture access is required')
         validate(target, observe(target), allow_new_fixture=True)
@@ -282,10 +295,20 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
         owned_files = dict(extra_files or {})
         if worker:
             tools += ('setcap', 'getcap', 'catatonit')
-        if stage == 'network-only':
+        if stage in ('network-only', 'egress-only'):
             tools += ('ip', 'nft', 'nsenter', 'ss', 'unshare')
             configuration = json.loads(owned_files['worker.json'])
             configuration['network']['host_network_inode'] = os.stat('/proc/self/ns/net').st_ino
+            if stage == 'egress-only':
+                tools += ('pasta', 'getent')
+                public = observe_configuration()
+                configuration['network']['egress'] = public
+                owned_files['etc/resolv.conf'] = 'nameserver ' + dns_forward(public) + '\noptions timeout:2 attempts:1\n'
+                owned_files['etc/nsswitch.conf'] = owned_files['etc/nsswitch.conf'].replace('hosts: files\n', 'hosts: files dns\n')
+                certificates = Path('/etc/ssl/certs/ca-certificates.crt')
+                if certificates.stat().st_size > 2 * 1024**2:
+                    raise ValueError('Public trust bundle exceeds its bound')
+                owned_files['etc/ssl/certs/ca-certificates.crt'] = certificates.read_text()
             owned_files['worker.json'] = json.dumps(configuration)
         for tool in tools:
             if shutil.which(tool) is None:
@@ -442,7 +465,7 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                 'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID CAP_SETPCAP',
                 'AmbientCapabilities=CAP_SYS_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID',
                 'Environment=HOME=/work TMPDIR=/work']
-        if stage == 'network-only':
+        if stage in ('network-only', 'egress-only'):
             # Only fixed trusted setup receives NET_ADMIN. The worker handoff
             # retains the existing mapping-helper bounds and clears active caps.
             properties = [setting + ' CAP_NET_ADMIN' if setting.startswith((
@@ -461,6 +484,12 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
         command(argv)
         unit.claim()
         save_receipt()
+        if stage == 'egress-only':
+            current = unit.observe()
+            if current.get('InvocationID') != unit.invocation:
+                raise ValueError('Worker identity changed before public transport startup')
+            gateway = {}
+            start_gateway(target, current, configuration['network']['egress'], gateway)
         deadline = time.monotonic() + limits['job_seconds'] + 5
         while time.monotonic() < deadline:
             current = unit.observe()
@@ -471,6 +500,9 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                 if report['diagnostic']:
                     raise HostCommandError(report['diagnostic'])
                 if report['observations'] is not None:
+                    if stage == 'egress-only':
+                        return observe_public_boundary(target, report['observations'], current,
+                                                       gateway, worker_observer)
                     return worker_observer(target, report['observations'], current)
             if worker and output.stat().st_size:
                 if output.stat().st_size > 16384:
