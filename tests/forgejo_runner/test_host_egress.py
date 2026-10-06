@@ -147,6 +147,18 @@ class HostEgressTests(unittest.TestCase):
             self.assertEqual('none', command[command.index(option) + 1])
         for option in ('--no-map-gw', '--no-splice', '--foreground'):
             self.assertIn(option, command)
-        self.assertEqual('/proc/self/fd/19', command[command.index('--netns') + 1])
+        self.assertEqual('/work/gateway.netns', command[command.index('--netns') + 1])
         self.assertEqual('22002:22002', command[command.index('--runas') + 1])
         self.assertEqual('127.0.0.53', command[command.index('--dns-host') + 1])
+
+    def test_namespace_mount_refuses_the_host_namespace_before_mutation(self):
+        from types import SimpleNamespace
+        try:
+            launcher = importlib.import_module('scripts.forgejo_runner.gateway_launch')
+        except ModuleNotFoundError:
+            self.fail('Owned immutable namespace handoff is missing')
+        with patch.object(launcher.os, 'fstat', return_value=SimpleNamespace(st_ino=123)), \
+             patch.object(launcher.os, 'stat', return_value=SimpleNamespace(st_ino=123)), \
+             patch.object(launcher.os, 'open', side_effect=AssertionError('Mutation began')), \
+             self.assertRaises(ValueError):
+            launcher.prepare_namespace(19)

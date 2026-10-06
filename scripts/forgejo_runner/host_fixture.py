@@ -330,6 +330,7 @@ def inspect_egress(target: dict) -> dict:
     extra['worker.json'] = json.dumps(configuration)
     for name in ('host_network.py', 'network_setup.py', 'network_peer.py', 'host_egress.py', 'egress_probe.py'):
         extra[name] = (ROOT / 'scripts/forgejo_runner' / name).read_text()
+    extra['gateway-launch.py'] = (ROOT / 'scripts/forgejo_runner/gateway_launch.py').read_text()
     extra['offline_probe.py'] = (ROOT / 'scripts/forgejo_runner/worker_probe.py').read_text()
     payload = "__file__ = '/fixture/scripts/forgejo_runner/host_fixture.py'\n"
     for name in ('host_fixture.py', 'host_probe.py', 'host_resources.py', 'host_worker.py', 'host_network.py', 'host_egress.py'):

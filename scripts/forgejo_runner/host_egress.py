@@ -92,7 +92,7 @@ def pasta_arguments(configuration, controller, network_descriptor):
         raise ValueError('A pinned worker network descriptor is required')
     return ['/usr/bin/pasta', '--foreground', '--quiet', '--runas',
             str(controller['uid']) + ':' + str(controller['gid']),
-            '--netns', '/proc/self/fd/' + str(network_descriptor),
+            '--netns', '/work/gateway.netns',
             '--config-net', '-I', 'uplink0',
             '-a', '10.57.1.2', '-n', '24', '-g', '10.57.1.1',
             '-a', 'fd57:1::2', '-g', 'fd57:1::1',
@@ -258,7 +258,9 @@ def start_gateway(target, unit, configuration, state):
         state.update(expected=expected, argv=argv, stderr=gateway_error_stream(descriptors['root']))
         command = ['/usr/bin/nsenter', '--mount=/proc/self/fd/' + str(descriptors['mnt']),
                    '--pid=/proc/self/fd/' + str(descriptors['pid']),
-                   '--root=/proc/self/fd/' + str(descriptors['root']), '--wdns=/work', '--', *argv]
+                   '--root=/proc/self/fd/' + str(descriptors['root']), '--wdns=/work', '--',
+                   '/usr/bin/python3', '/gateway-launch.py', str(descriptors['net']),
+                   json.dumps(configuration), str(target['controller']['uid']) + ':' + str(target['controller']['gid'])]
         def attach():
             os.write(cgroup, str(os.getpid()).encode())
             os.close(cgroup)
