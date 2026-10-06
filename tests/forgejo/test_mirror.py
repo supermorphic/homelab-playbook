@@ -2,8 +2,12 @@
 from datetime import datetime, timedelta, timezone
 import importlib
 import io
+import itertools
 from pathlib import Path
+import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
 
 
@@ -53,6 +57,55 @@ class MirrorTests(unittest.TestCase):
         # Go's RFC3339 JSON represents offsets only to whole minutes.
         parsed = self.mirror.cron_instant('2026-09-30T02:00:00-10:00', tzif)
         self.assertEqual(now + timedelta(seconds=20), parsed.astimezone(timezone.utc))
+
+    def test_scan_waits_for_eligible_attempt_completion(self):
+        before = [{'id': 1, 'last_attempt': int(self.now.timestamp()) - 9 * 3600,
+                   'failed': False, 'interval_seconds': 28800}]
+        completed = [dict(before[0], last_attempt=int(self.now.timestamp()))]
+        snapshots = iter([before, before, before, completed])
+        observed = None
+
+        def current_rows(application, **kwargs):
+            nonlocal observed
+            observed = next(snapshots)
+            return observed
+
+        run = Mock(podman='podman')
+        application = SimpleNamespace(app='synthetic-app', wait=lambda: None)
+        with tempfile.TemporaryDirectory() as directory:
+            zone_file = Path(directory).resolve() / 'MirrorFixture'
+            cron_calls = 0
+
+            def current_cron(application):
+                nonlocal cron_calls
+                cron_calls += 1
+                zone = ZoneInfo.from_file(io.BytesIO(zone_file.read_bytes()))
+                return {'schedule': '0 0 2 * * *', 'exec_times': int(cron_calls > 1),
+                        'next': (self.now + timedelta(seconds=20)).astimezone(zone).isoformat()}
+
+            with patch.object(self.mirror, 'rows', side_effect=current_rows), \
+                    patch.object(self.mirror, 'cron', side_effect=current_cron), \
+                    patch.object(self.mirror, 'datetime', wraps=datetime) as clock, \
+                    patch.object(self.mirror.time, 'sleep'):
+                clock.now.return_value = self.now
+                self.mirror.scan(run, application, zone_file)
+        self.assertEqual(completed, observed)
+
+    def test_eligible_attempt_completion_has_a_deadline(self):
+        before = [{'id': 1, 'last_attempt': int(self.now.timestamp()) - 9 * 3600,
+                   'failed': False, 'interval_seconds': 28800}]
+        with patch.object(self.mirror, 'rows', return_value=before), \
+                patch.object(self.mirror.time, 'monotonic', side_effect=itertools.count(0, 16)), \
+                patch.object(self.mirror.time, 'sleep'):
+            with self.assertRaisesRegex(RuntimeError, 'completion deadline'):
+                self.mirror.wait_for_attempts(object(), before)
+
+    def test_new_failure_is_a_completed_attempt(self):
+        before = [{'id': 1, 'last_attempt': int(self.now.timestamp()) - 9 * 3600,
+                   'failed': False, 'interval_seconds': 28800}]
+        failed = [dict(before[0], failed=True, last_attempt=int(self.now.timestamp()))]
+        with patch.object(self.mirror, 'rows', return_value=failed):
+            self.mirror.wait_for_attempts(object(), before)
 
 
 if __name__ == '__main__':
