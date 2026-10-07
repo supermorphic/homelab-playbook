@@ -196,7 +196,7 @@ def host_capacity(parent):
         if key in ('MemTotal', 'MemAvailable'):
             memory[key] = int(value.split()[0]) * 1024
     return {'memory_total': memory['MemTotal'], 'memory_available': memory['MemAvailable'],
-            'disk_available': shutil.disk_usage(parent).free}
+            'disk_available': shutil.disk_usage(parent).free, 'cpu_count': os.cpu_count()}
 
 
 def active_services():
@@ -225,9 +225,9 @@ def run_resource_probe(target, observe, validate, probe_source):
 def run_image_probe(target, observe, validate, probe_source, *, stage='resources-only',
                     budget_validator=validate_probe_budget, extra_files=None, worker_observer=None,
                     worker_reader=None, after_stop=None, assets=None,
-                    asset_validator=None, asset_receiver=None):
+                    asset_validator=None, asset_receiver=None, asset_installer=None):
     """Fixed trusted experiments share the same image ownership and disposal path."""
-    if stage not in ('resources-only', 'worker-only', 'job-only', 'network-only', 'egress-only', 'native-only'):
+    if stage not in ('resources-only', 'worker-only', 'job-only', 'network-only', 'egress-only', 'native-only', 'workload-only'):
         raise ValueError('Unknown host experiment')
     worker = stage != 'resources-only'
     if assets:
@@ -295,11 +295,11 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
         owned_files = dict(extra_files or {})
         if worker:
             tools += ('setcap', 'getcap', 'catatonit')
-        if stage in ('network-only', 'egress-only', 'native-only'):
+        if stage in ('network-only', 'egress-only', 'native-only', 'workload-only'):
             tools += ('ip', 'nft', 'nsenter', 'ss', 'unshare')
             configuration = json.loads(owned_files['worker.json'])
             configuration['network']['host_network_inode'] = os.stat('/proc/self/ns/net').st_ino
-            if stage in ('egress-only', 'native-only'):
+            if stage in ('egress-only', 'native-only', 'workload-only'):
                 tools += ('slirp4netns', 'getent')
                 public = observe_configuration()
                 configuration['network']['egress'] = public
@@ -366,7 +366,9 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
         probe.write_text(probe_source)
         probe.chmod(0o444)
         resources.record_file(probe)
-        for relative, content in {**owned_files, **(assets or {})}.items():
+        if set(owned_files) & set(assets or {}):
+            raise ValueError('Trusted image files conflict with transferred assets')
+        for relative, content in {**(assets or {}), **owned_files}.items():
             if relative.startswith('/') or '..' in Path(relative).parts:
                 raise ValueError('Invalid trusted experiment file')
             path = staging / relative
@@ -387,13 +389,21 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                 continue
             if isinstance(content, tuple):
                 kind, destination = content
+                if kind == 'native-network-helper':
+                    if (relative != 'etc/runner-tools/netavark'
+                            or destination != 'work/input/netavark.tar'
+                            or destination not in (assets or {}) or asset_installer is None):
+                        raise ValueError('Invalid trusted native network helper installation')
+                    asset_installer(staging / destination, path)
+                    resources.record_file(path)
+                    continue
                 if kind != 'link' or not (path.parent / destination).resolve(strict=True).is_relative_to(staging.resolve()):
                     raise ValueError('Trusted image link leaves the allocation')
                 path.symlink_to(destination)
                 resources.record_file(path, allow_link=True)
             else:
                 path.write_text(content)
-                path.chmod(0o600 if stage in ('egress-only', 'native-only') and relative == 'work/network-ready' else 0o444)
+                path.chmod(0o600 if stage in ('egress-only', 'native-only', 'workload-only') and relative == 'work/network-ready' else 0o444)
                 resources.record_file(path)
         image = root / 'worker.ext4'
         with image.open('xb'):
@@ -468,12 +478,12 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                 'CapabilityBoundingSet=CAP_SYS_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID CAP_SETPCAP',
                 'AmbientCapabilities=CAP_SYS_ADMIN CAP_CHOWN CAP_SETUID CAP_SETGID',
                 'Environment=HOME=/work TMPDIR=/work']
-        if stage in ('network-only', 'egress-only', 'native-only'):
+        if stage in ('network-only', 'egress-only', 'native-only', 'workload-only'):
             # Only fixed trusted setup receives NET_ADMIN. The worker handoff
             # retains the existing mapping-helper bounds and clears active caps.
             properties = [setting + ' CAP_NET_ADMIN' if setting.startswith((
                 'CapabilityBoundingSet=', 'AmbientCapabilities=')) else setting for setting in properties]
-        if stage in ('egress-only', 'native-only'):
+        if stage in ('egress-only', 'native-only', 'workload-only'):
             # Only trusted synthetic peer setup binds HTTPS inside its private
             # namespace. Both peer and worker handoffs remove this capability.
             properties = [setting + ' CAP_NET_BIND_SERVICE' if setting.startswith((
@@ -492,7 +502,7 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
         command(argv)
         unit.claim()
         save_receipt()
-        if stage in ('egress-only', 'native-only'):
+        if stage in ('egress-only', 'native-only', 'workload-only'):
             current = unit.observe()
             if current.get('InvocationID') != unit.invocation:
                 raise ValueError('Worker identity changed before public transport startup')
@@ -508,7 +518,7 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                 if report['diagnostic']:
                     raise HostCommandError(report['diagnostic'])
                 if report['observations'] is not None:
-                    if stage in ('egress-only', 'native-only'):
+                    if stage in ('egress-only', 'native-only', 'workload-only'):
                         return observe_public_boundary(target, report['observations'], current,
                                                        gateway, worker_observer)
                     return worker_observer(target, report['observations'], current)

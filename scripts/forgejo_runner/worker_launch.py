@@ -13,6 +13,12 @@ def main():
         raise ValueError('The fixed worker launcher requires trusted setup authority')
     if os.getpid() != 1:
         raise ValueError('Private PID isolation is missing; no worker was started')
+    if configuration.get('native_network_helper'):
+        if __package__:
+            from .native_tools import verify_version
+        else:
+            from native_tools import verify_version
+        verify_version()
     # Permit file capabilities only on the owned read-only mapping helpers.
     # Every other /usr executable and the disposable image stay nosuid.
     for helper in ('newuidmap', 'newgidmap'):

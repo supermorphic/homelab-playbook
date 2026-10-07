@@ -1,0 +1,50 @@
+---
+- name: Validate the complete repository slot declaration
+  ansible.builtin.assert:
+    that:
+      - forgejo_runner_slots | forgejo_runner_validate_slots == forgejo_runner_slots
+      - forgejo_runner_slots | length == 3
+      - forgejo_runner_slots | map(attribute='repository') | sort == forgejo_runner_repositories | sort
+      - forgejo_runner_source_commit is match('^[0-9a-f]{40}$')
+      - forgejo_runner_helper_root == '/usr/local/libexec/forgejo-runner/' ~ forgejo_runner_source_commit
+    fail_msg: Declare all three repository slots with explicit unused identities and qualified finite limits
+
+- name: Validate the public deployment artifact manifest
+  ansible.builtin.assert:
+    that:
+      - forgejo_runner_asset_manifest is mapping
+      - forgejo_runner_asset_manifest | forgejo_runner_validate_manifest(forgejo_runner_candidate) == forgejo_runner_asset_manifest
+      - forgejo_runner_asset_manifest.schema | default(0) == 1
+      - forgejo_runner_asset_manifest.architecture | default('') == 'amd64'
+      - forgejo_runner_asset_manifest.source_tree | default('') is match('^[0-9a-f]{40}$')
+      - forgejo_runner_asset_manifest.job_image_id | default('') is match('^[0-9a-f]{64}$')
+      - forgejo_runner_asset_manifest.artifacts | default({}) | list | sort == ['forgejo-runner', 'job.oci', 'netavark']
+      - forgejo_runner_asset_directory is string and forgejo_runner_asset_directory | length > 0
+      - >-
+        forgejo_runner_asset_manifest | forgejo_runner_validate_public_assets(forgejo_runner_asset_directory)
+        == forgejo_runner_asset_manifest
+    fail_msg: Prepare and review the immutable public runner artifacts before provisioning
+
+- name: Validate every declared artifact bound and checksum
+  ansible.builtin.assert:
+    that:
+      - item.value is mapping
+      - item.value | list | sort == ['sha256', 'size']
+      - item.value.size is integer and item.value.size > 0 and item.value.size <= 2147483648
+      - item.value.sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: A deployment artifact is unbounded or lacks its immutable checksum
+  loop: "{{ forgejo_runner_asset_manifest.artifacts | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Require separate private enrollment authority for enabled repositories
+  ansible.builtin.assert:
+    that:
+      - forgejo_runner_enrollment_tokens is mapping
+      - forgejo_runner_enrollment_tokens[item.repository] | default('') is string
+      - forgejo_runner_enrollment_tokens[item.repository] | default('') | length > 0
+      - "'\n' not in forgejo_runner_enrollment_tokens[item.repository]"
+      - "'\r' not in forgejo_runner_enrollment_tokens[item.repository]"
+    fail_msg: Enroll repository-limited authority through the protected inventory boundary
+  loop: "{{ forgejo_runner_slots | selectattr('enabled') | list }}"
+  no_log: true

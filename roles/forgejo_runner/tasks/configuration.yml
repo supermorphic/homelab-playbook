@@ -1,0 +1,49 @@
+---
+- name: Install immutable trusted helper sources
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ forgejo_runner_public_files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Install checked job and runtime artifacts
+  ansible.builtin.copy:
+    src: "{{ forgejo_runner_asset_directory }}/{{ item.key }}"
+    dest: "{{ forgejo_runner_asset_root | trim }}/{{ item.key }}"
+    owner: root
+    group: root
+    mode: '0600'
+  loop: "{{ forgejo_runner_asset_manifest.artifacts | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Install private configuration and scoped service definitions
+  ansible.builtin.copy:
+    content: "{{ item.content }}"
+    dest: "{{ item.path }}"
+    owner: root
+    group: root
+    mode: "{{ '%04o' | format(item.mode) }}"
+  loop: "{{ forgejo_runner_rendered_files }}"
+  no_log: true
+
+- name: Verify the installed files against the reviewed candidate
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -B
+      - -c
+      - "{{ lookup('file', role_path ~ '/files/deployment_audit.py') }}"
+    stdin: "{{ {'files': forgejo_runner_desired_files, 'slots': forgejo_runner_slots} | to_json }}"
+    stdin_add_newline: false
+  register: forgejo_runner_installed_audit
+  failed_when: >-
+    forgejo_runner_installed_audit.rc != 0 or
+    (forgejo_runner_installed_audit.stdout | from_json).changed
+  changed_when: false
+  check_mode: false
+  no_log: true

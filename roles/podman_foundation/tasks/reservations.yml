@@ -1,0 +1,32 @@
+---
+- name: Inspect optional disposable runner identity reservation
+  ansible.builtin.stat:
+    path: /etc/forgejo-runner-reservations.json
+    follow: false
+  register: podman_foundation_reservation_stat
+
+- name: Require trusted runner reservation metadata
+  ansible.builtin.assert:
+    that:
+      - >-
+        not podman_foundation_reservation_stat.stat.exists or
+        (podman_foundation_reservation_stat.stat.isreg and not podman_foundation_reservation_stat.stat.islnk
+         and podman_foundation_reservation_stat.stat.uid == 0 and podman_foundation_reservation_stat.stat.gid == 0
+         and podman_foundation_reservation_stat.stat.mode == '0600'
+         and podman_foundation_reservation_stat.stat.nlink == 1 and podman_foundation_reservation_stat.stat.size <= 16384)
+    fail_msg: Runner identity reservation has unsafe ownership or file metadata
+
+- name: Read non-secret runner identity reservations
+  ansible.builtin.slurp:
+    src: /etc/forgejo-runner-reservations.json
+  when: podman_foundation_reservation_stat.stat.exists
+  register: podman_foundation_reservation
+
+- name: Keep foundation service accounts disjoint from runner authority
+  ansible.builtin.assert:
+    that:
+      - >-
+        podman_foundation_accounts | podman_foundation_validate_reservations(
+          podman_foundation_reservation.content | b64decode | from_json) == podman_foundation_accounts
+    fail_msg: A host service identity overlaps a reserved runner allocation; no account changes were made
+  when: podman_foundation_reservation.content is defined

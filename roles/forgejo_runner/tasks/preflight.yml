@@ -1,0 +1,67 @@
+---
+- name: Require the selected native runtime baseline
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'Debian'
+      - ansible_facts['distribution_major_version'] == '13'
+      - ansible_facts['architecture'] == 'x86_64'
+      - ansible_facts['service_mgr'] == 'systemd'
+      - ansible_user | default('') == 'ansible'
+      - ansible_password is not defined
+      - ansible_ssh_pass is not defined
+      - ansible_ssh_password is not defined
+      - ansible_become_password is not defined
+      - ansible_become_pass is not defined
+    fail_msg: Runners require the qualified amd64 Debian host and key-only ansible administration
+  no_log: true
+
+- name: Validate complete inputs before any host change
+  ansible.builtin.import_tasks: inputs.yml
+
+- name: Bind public artifacts and helpers to the exact committed candidate
+  ansible.builtin.assert:
+    that:
+      - >-
+        forgejo_runner_asset_manifest | forgejo_runner_validate_provenance(forgejo_runner_source_commit)
+        == forgejo_runner_asset_manifest
+    fail_msg: Commit the reviewed source and prepare its matching artifacts before provisioning
+
+- name: Validate trusted installation boundaries and retained reservations
+  ansible.builtin.import_tasks: boundaries.yml
+
+- name: Read effective host identities
+  ansible.builtin.command:
+    argv: [/usr/bin/getent, "{{ item }}"]
+  loop: [passwd, group]
+  register: forgejo_runner_host_identities
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Read current subordinate identity allocations
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -c
+      - >-
+        import pathlib,sys;
+        p=pathlib.Path(sys.argv[1]);
+        print(p.read_text() if p.exists() else '', end='')
+      - "{{ item }}"
+  loop: [/etc/subuid, /etc/subgid]
+  register: forgejo_runner_host_subids
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Require unused host identities and disjoint subordinate mappings
+  ansible.builtin.assert:
+    that:
+      - >-
+        forgejo_runner_slots | forgejo_runner_validate_unused_slots(
+          forgejo_runner_host_identities.results[0].stdout,
+          forgejo_runner_host_identities.results[1].stdout,
+          forgejo_runner_host_subids.results[0].stdout,
+          forgejo_runner_host_subids.results[1].stdout) == forgejo_runner_slots
+    fail_msg: A runner identity collides with existing host authority; no setup was performed
+  no_log: true

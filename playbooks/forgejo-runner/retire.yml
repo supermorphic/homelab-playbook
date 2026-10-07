@@ -1,0 +1,36 @@
+---
+- name: Retire repository-scoped Forgejo runners
+  hosts: forgejo
+  serial: 1
+  any_errors_fatal: true
+  gather_facts: false
+  become: false
+  pre_tasks:
+  - name: Require the selected runner host
+    ansible.builtin.assert:
+      that:
+      - inventory_hostname == 'nuc4'
+      fail_msg: Runner actions support the operator-selected NUC4 only
+  - name: Reject password-based Forgejo credentials
+    ansible.builtin.assert:
+      that:
+      - ansible_password is not defined
+      - ansible_ssh_pass is not defined
+      - ansible_ssh_password is not defined
+      - ansible_become_password is not defined
+      - ansible_become_pass is not defined
+      fail_msg: Forgejo operations require key-only SSH and passwordless sudo for the ansible account
+    no_log: true
+  - name: Prove fresh administrative connection prerequisites
+    ansible.builtin.import_role:
+      name: os_bootstrap
+      tasks_from: connection-preflight.yml
+  - name: Gather privileged host facts
+    ansible.builtin.setup: null
+    become: true
+  tasks:
+  - name: Retire the installed runner platform
+    ansible.builtin.import_role:
+      name: forgejo_runner
+      tasks_from: retire.yml
+    become: true

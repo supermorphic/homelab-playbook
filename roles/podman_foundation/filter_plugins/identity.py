@@ -194,9 +194,23 @@ def validate_accounts(
     return accounts
 
 
+def validate_reservations(accounts, reservation):
+    """Keep disposable private-image identities out of host service accounts."""
+    if (not isinstance(reservation, dict) or set(reservation) != {'schema', 'accounts'}
+            or reservation['schema'] != 1 or isinstance(reservation['schema'], bool)
+            or not isinstance(reservation['accounts'], list) or len(reservation['accounts']) > 6):
+        raise ValueError('unsupported runner identity reservation')
+    reserved = reservation['accounts']
+    # The same independent cross-account oracle checks declarations and all
+    # primary/subordinate intersections, including exact-name adoption.
+    validate_accounts(accounts + reserved, '', '', '', '')
+    return accounts
+
+
 class FilterModule:
     def filters(self):
         return {
             "podman_foundation_validate_accounts": validate_accounts,
             "podman_foundation_file_subid_provider": file_subid_provider,
+            "podman_foundation_validate_reservations": validate_reservations,
         }

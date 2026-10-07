@@ -11,6 +11,17 @@ SCRIPT = ROOT / "scripts/forgejo_runner/test.py"
 
 
 class DispatchTests(unittest.TestCase):
+    def test_workload_dispatch_accepts_each_current_molecule_scenario(self):
+        from scripts.molecule import SCENARIOS
+        for selector in SCENARIOS:
+            for arguments in (('host-fixture', '--native-workload', selector),
+                              ('compatibility', '--workload', selector)):
+                with self.subTest(arguments=arguments):
+                    result = self.run_cli(*arguments)
+                    self.assertEqual(1, result.returncode)
+                    self.assertNotIn('invalid choice', result.stderr)
+                    self.assertNotIn('Traceback', result.stderr)
+
     def test_public_egress_requires_explicit_disposable_target(self):
         result = self.run_cli('host-fixture', '--egress-probe-only')
         self.assertEqual(1, result.returncode)
@@ -30,6 +41,23 @@ class DispatchTests(unittest.TestCase):
                 result = self.run_cli('host-fixture', '--native-probe-only', option)
                 self.assertEqual(2, result.returncode)
                 self.assertNotIn('Traceback', result.stderr)
+
+    def test_native_workloads_require_the_explicit_host_target(self):
+        for option in (('--native-workload','forgejo/default'),('--suite','stock-runtime')):
+            with self.subTest(option=option):
+                result=self.run_cli('host-fixture',*option)
+                self.assertEqual(1,result.returncode)
+                self.assertIn('disposable',result.stderr)
+                self.assertNotIn('Traceback',result.stderr)
+        for option in ('--native-probe-only','--job-probe-only','--egress-probe-only','--preflight-only'):
+            with self.subTest(option=option):
+                result=self.run_cli('host-fixture','--native-workload','forgejo/default',option)
+                self.assertEqual(2,result.returncode)
+        for arguments in (('compatibility','--suite','stock-runtime'),
+                          ('host-fixture','--native-workload','forgejo/default','--suite','stock-runtime'),
+                          ('host-fixture','--native-workload','forgejo/default; false')):
+            with self.subTest(arguments=arguments):
+                self.assertEqual(2,self.run_cli(*arguments).returncode)
 
     def run_cli(self, *arguments):
         environment = os.environ.copy()

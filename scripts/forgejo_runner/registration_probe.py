@@ -175,7 +175,10 @@ def run_one_job(experiment, directory, application, repository, token, runtime, 
                 f"  second:\n    runs-on: {label}\n    steps:\n      - run: echo unexpected-second-job\n")
     if workload:
         from scripts.forgejo_runner.workload import workflow as workload_workflow
-        workflow = workload_workflow(label, application, repository, workload["workspace"], workload["selector"])
+        workflow = workload_workflow(label, application, repository, workload["workspace"],
+            workload.get('selector'), suite=workload.get('suite'),
+            clone_base=application.url if runtime.get('offline') else None,
+            public_probe=runtime.get('public_probe', False))
     if runtime_probe:
         from scripts.forgejo_runner.workload import runtime_workflow
         workflow = runtime_workflow(label, runtime['workspace'], public_probe=runtime.get('public_probe', False))
@@ -258,8 +261,9 @@ def run_one_job(experiment, directory, application, repository, token, runtime, 
         raise RuntimeError("Forgejo did not retire the ephemeral runner")
     if workload:
         evidence_record = {"source_tree": workload["source_tree"], "workflow_commit": commit,
-                           "selector": workload["selector"], "status": "success"}
+                           **{key:workload[key] for key in ('selector', 'suite') if key in workload},
+                           "status": "success"}
         experiment.private_file(evidence, experiment.run_id + ".workload.json",
                                 json.dumps(evidence_record, indent=2) + "\n")
-        print(f"Forgejo workload {workload['selector']} passed at {commit}")
+        print(f"Forgejo workload {workload.get('selector', workload.get('suite'))} passed at {commit}")
     print("One-job runner completed one job and its registration was retired by Forgejo")

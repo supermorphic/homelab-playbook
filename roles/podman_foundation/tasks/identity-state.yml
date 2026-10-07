@@ -1,4 +1,7 @@
 ---
+- name: Validate reserved disposable runner identities
+  ansible.builtin.import_tasks: reservations.yml
+
 - name: Read effective host users
   ansible.builtin.command:
     argv: [/usr/bin/getent, passwd]

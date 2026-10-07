@@ -34,6 +34,18 @@ class HostInputTests(unittest.TestCase):
                     module.receive_asset(io.BytesIO(data), path, descriptor)
                 self.assertFalse(path.exists(), 'Partial owned asset must be removed')
 
+    def test_failed_asset_writeback_is_not_admitted_or_left_for_use(self):
+        from unittest.mock import patch
+        module = self.module()
+        data = b'verified public asset'
+        descriptor = {'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'asset'
+            with patch.object(module.os, 'fsync', side_effect=OSError('synthetic writeback failure')):
+                with self.assertRaisesRegex(OSError, 'synthetic writeback failure'):
+                    module.receive_asset(io.BytesIO(data), path, descriptor)
+            self.assertFalse(path.exists())
+
     def test_asset_cannot_replace_existing_file_or_follow_symlink(self):
         module = self.module()
         descriptor = {'size': 8, 'sha256': hashlib.sha256(b'expected').hexdigest()}

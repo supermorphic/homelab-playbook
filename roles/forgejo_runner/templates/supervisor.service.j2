@@ -1,0 +1,18 @@
+[Unit]
+Description=Disposable Forgejo runner for {{ forgejo_runner_slot.repository }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+LimitCORE=0
+ExecStart=/usr/bin/python3 -B {{ forgejo_runner_helper_root }}/control.py cycle --config {{ forgejo_runner_slot.state_root }}/config.json
+ExecStopPost=/usr/bin/python3 -B {{ forgejo_runner_helper_root }}/control.py recover --config {{ forgejo_runner_slot.state_root }}/config.json
+TimeoutStartSec=11400
+TimeoutStopSec=300
+KillMode=control-group
+StandardOutput=journal
+StandardError=null

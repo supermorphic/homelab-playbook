@@ -1,0 +1,41 @@
+---
+- name: Install qualified runtime prerequisites
+  ansible.builtin.package:
+    name:
+      - podman
+      - slirp4netns
+      - uidmap
+      - passt  # codespell:ignore passt
+      - dbus-user-session
+      - acl
+      - nftables
+      - iproute2
+      - e2fsprogs
+      - libcap2-bin
+      - ca-certificates
+    state: present
+
+- name: Create immutable public helper directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - /usr/local/libexec
+    - /usr/local/libexec/forgejo-runner
+    - "{{ forgejo_runner_helper_root }}"
+    - "{{ forgejo_runner_helper_root }}/scripts"
+    - "{{ forgejo_runner_helper_root }}/scripts/forgejo_runner"
+
+- name: Create private runner and artifact boundaries
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  loop: >-
+    {{ ['/var/lib/forgejo-runner', '/var/lib/forgejo-runner/assets', forgejo_runner_asset_root | trim]
+       + (forgejo_runner_slots | map(attribute='state_root') | list) }}

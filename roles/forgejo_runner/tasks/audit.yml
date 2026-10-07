@@ -1,0 +1,54 @@
+---
+- name: Compare deployment inputs and independently inspect admission state
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -B
+      - -c
+      - "{{ lookup('file', role_path ~ '/files/deployment_audit.py') }}"
+    stdin: "{{ {'files': forgejo_runner_desired_files, 'slots': forgejo_runner_slots, 'plan': true} | to_json }}"
+    stdin_add_newline: false
+  register: forgejo_runner_audit
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Retain only the non-secret deployment decision
+  ansible.builtin.set_fact:
+    forgejo_runner_deployment_changed: "{{ (forgejo_runner_audit.stdout | from_json).changed }}"
+
+- name: Inspect existing timer definitions before pausing admission
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/forgejo-runner-{{ item.name }}.timer"
+    follow: false
+  loop: "{{ forgejo_runner_slots }}"
+  register: forgejo_runner_existing_timers
+
+- name: Pause installed queue polling before a changed deployment
+  ansible.builtin.systemd_service:
+    name: "forgejo-runner-{{ item.item.name }}.timer"
+    state: stopped
+  when:
+    - forgejo_runner_deployment_changed
+    - item.stat.exists
+  loop: "{{ forgejo_runner_existing_timers.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Repeat current admission and file preconditions after polling stops
+  ansible.builtin.include_tasks: drain.yml
+  when: forgejo_runner_deployment_changed
+
+- name: Require current empty state immediately before changing inputs
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -B
+      - -c
+      - "{{ lookup('file', role_path ~ '/files/deployment_audit.py') }}"
+    stdin: "{{ {'files': forgejo_runner_desired_files, 'slots': forgejo_runner_slots} | to_json }}"
+    stdin_add_newline: false
+  when: forgejo_runner_deployment_changed
+  changed_when: false
+  check_mode: false
+  no_log: true

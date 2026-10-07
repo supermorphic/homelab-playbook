@@ -31,6 +31,11 @@
       - forgejo_postgres_major | string == '17'
       - forgejo_health_timeout_seconds is integer
       - forgejo_health_timeout_seconds >= 1 and forgejo_health_timeout_seconds <= 300
+      - forgejo_actions_enabled is boolean
+      - forgejo_actions_log_retention_days is integer and forgejo_actions_log_retention_days is not boolean
+      - forgejo_actions_log_retention_days >= 1 and forgejo_actions_log_retention_days <= 30
+      - forgejo_actions_artifact_retention_days is integer and forgejo_actions_artifact_retention_days is not boolean
+      - forgejo_actions_artifact_retention_days >= 1 and forgejo_actions_artifact_retention_days <= 30
       - forgejo_backup_timeout_seconds == 1800
       - forgejo_recovery_timeout_seconds == 300
       - forgejo_transfer_timeout == '2h'

@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll the scoped Forgejo queue for {{ forgejo_runner_slot.repository }}
+
+[Timer]
+OnBootSec=10s
+OnUnitInactiveSec={{ forgejo_runner_slot.limits.idle_seconds }}s
+AccuracySec=1s
+Unit=forgejo-runner-{{ forgejo_runner_slot.name }}.service
+
+[Install]
+WantedBy=timers.target

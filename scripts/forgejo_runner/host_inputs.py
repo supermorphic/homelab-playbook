@@ -43,6 +43,10 @@ def receive_asset(stream, path, descriptor):
                 output.write(chunk)
             if digest.hexdigest() != descriptor['sha256']:
                 raise ValueError('Offline asset checksum differs from its manifest')
+            # Flush only this owned asset. Dirty staging pages otherwise reduce
+            # MemAvailable at the fresh workload reserve check before allocation.
+            output.flush()
+            os.fsync(output.fileno())
             os.fchmod(output.fileno(), 0o444)
         except BaseException:
             current = path.lstat()
