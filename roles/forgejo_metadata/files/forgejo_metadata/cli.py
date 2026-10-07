@@ -88,11 +88,12 @@ def control(request,mappings,store,fingerprint):
     if request.get('previous_writers_stopped') is not True or request.get('outcomes_resolved') is not True:
         raise MirrorError('recovery_decision_required')
     # Complete discovery must succeed for every enrollment before state changes.
+    ownership=store.ownership_evidence()
     owned={}
     for mapping in mappings:
         source,destination=clients(mapping); destination.preflight(mapping)
         if not source.inventory(mapping).complete: raise MirrorError('incomplete_inventory')
-        owned.update(discover_owned(mapping,destination.inventory(mapping)))
+        owned.update(discover_owned(mapping,destination.inventory(mapping),ownership))
     if operation.startswith('bootstrap-'):
         store.bootstrap(operation.removeprefix('bootstrap-'),request['decision_ref'])
         for target in owned.values():

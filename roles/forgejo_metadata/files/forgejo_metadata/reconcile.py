@@ -21,19 +21,23 @@ def verify_projection(projection,observed):
     if 'labels' in expected: expected['labels']=sorted(expected['labels'])
     if normalize(projection.key.kind,observed,expected)!=expected: raise MirrorError('readback_mismatch')
 
-def discover_owned(mapping,inventory):
+def discover_owned(mapping,inventory,ownership=None):
     if not inventory.complete: raise MirrorError('incomplete_inventory')
-    owned={}
+    owned={}; locators=set()
     groups=[('label',inventory.labels,None),('milestone',inventory.milestones,None),('issue',inventory.issues,None)]
     groups += [('comment',rows,parent) for parent,rows in inventory.comments.items()]
     for kind,rows,parent in groups:
         for row in rows:
             if kind=='issue' and 'pull_request' in row: continue
+            if kind=='issue': locators.add('/issues/'+str(row['number']))
+            elif kind=='comment': locators.add('/issues/comments/'+str(row['id']))
             text=row.get('description' if kind in ('label','milestone') else 'body') or ''
             key=parse_marker(text,kind)
             actor=(row.get('user') or {}).get('id')
             if key is None:
-                if kind in ('issue','comment') and actor==mapping.actor_id or kind in ('label','milestone') and (row.get('name','').startswith('fj-') or ' [fj-' in row.get('title','')):
+                recognizable=(f'\n---\nForgejo {mapping.source_repo} #' in text
+                              or bool(text.splitlines()) and text.splitlines()[-1].startswith('<!-- forgejo-mirror:'))
+                if kind in ('issue','comment') and recognizable or kind in ('label','milestone') and (row.get('name','').startswith('fj-') or ' [fj-' in row.get('title','')):
                     raise MirrorError('ownership_conflict')
                 continue
             if key.instance!=mapping.instance or key.repository_id!=mapping.source_id: continue
@@ -44,6 +48,16 @@ def discover_owned(mapping,inventory):
             fields=dict(row)
             if parent is not None: fields['_parent_id']=parent
             owned[key]=DestinationObject(key,locator,fields)
+    observed={key_string(key):target.locator for key,target in owned.items()}
+    prefix=f'{mapping.instance}:{mapping.source_id}:'
+    if any(identity.startswith(prefix) and observed.get(identity)!=locator
+           and (identity not in observed or locator in locators) for identity,locator in (ownership or {}).items()):
+        raise MirrorError('ownership_conflict')
+    return owned
+
+def discover_recorded(mapping,destination,store):
+    owned=discover_owned(mapping,destination.inventory(mapping),store.load().get('ownership',{}))
+    store.remember_owned(owned)
     return owned
 
 def comment_parent(mapping,owned,parent_id,target):
@@ -58,7 +72,7 @@ def reconcile(mapping,source,destination,store,write_budget):
         store.require_initialized(); destination.preflight(mapping)
         source_data=source.inventory(mapping)
         if not source_data.complete: raise MirrorError('incomplete_inventory')
-        owned=discover_owned(mapping,destination.inventory(mapping))
+        owned=discover_recorded(mapping,destination,store)
         # Rediscovery retires intents even when the source object has disappeared.
         for target in owned.values():
             if key_string(target.key) in store.load()['pending']:
@@ -90,7 +104,7 @@ def reconcile(mapping,source,destination,store,write_budget):
                     except MirrorError: pass
                 if result.writes>=write_budget: result.backlog+=1; continue
                 destination.preflight(mapping)
-                fresh=discover_owned(mapping,destination.inventory(mapping))
+                fresh=discover_recorded(mapping,destination,store)
                 observed=fresh.get(projection.key)
                 if target and observed is None: raise MirrorError('ownership_conflict')
                 target=observed
@@ -104,7 +118,7 @@ def reconcile(mapping,source,destination,store,write_budget):
                     except APIError as error:
                         store.finish_create(projection.key,error.outcome,None)
                         raise
-                    fresh=discover_owned(mapping,destination.inventory(mapping))
+                    fresh=discover_recorded(mapping,destination,store)
                     created=fresh.get(projection.key)
                     if created is None or created.locator!=locator: raise MirrorError('ownership_conflict')
                     if kind=='comment': parent=comment_parent(mapping,fresh,parent_id,created)
@@ -116,7 +130,7 @@ def reconcile(mapping,source,destination,store,write_budget):
                     if result.writes>=write_budget: result.backlog+=1
                     else:
                         destination.preflight(mapping)
-                        fresh=discover_owned(mapping,destination.inventory(mapping))
+                        fresh=discover_recorded(mapping,destination,store)
                         current=fresh.get(projection.key)
                         if current is None: raise MirrorError('ownership_conflict')
                         if kind=='comment': parent=comment_parent(mapping,fresh,parent_id,current)

@@ -134,6 +134,36 @@ class CLITests(unittest.TestCase):
         status=json.loads((self.root/'status.json').read_text())
         self.assertIsNone(status['mappings'][0]['last_converged'])
 
+    def test_bootstrap_preserves_unmarked_owner_history_and_recovery_refuses_erased_shadow(self):
+        self.destination.data.issues.append({'id':90,'number':90,'body':'Owner history','user':{'id':11}})
+        request=self.request('bootstrap-initial')
+        with patch.object(self.module,'trusted_request',return_value=json.loads(request.read_text())):
+            self.assertEqual(0,self.run_cli('control','--request',str(request)))
+        self.assertEqual(0,self.run_cli('apply'))
+        self.destination.data.issues[1]['body']='Erased shadow'
+        request=self.request('bootstrap-recover')
+        self.destination.writes=[]
+        with patch.object(self.module,'trusted_request',return_value=json.loads(request.read_text())):
+            self.assertEqual(1,self.run_cli('control','--request',str(request)))
+        self.assertEqual([],self.destination.writes)
+
+    def test_damaged_initialization_cannot_replace_ownership_evidence_during_recovery(self):
+        from forgejo_metadata.state import StateStore, atomic_json
+        request=self.request('bootstrap-initial')
+        with patch.object(self.module,'trusted_request',return_value=json.loads(request.read_text())):
+            self.assertEqual(0,self.run_cli('control','--request',str(request)))
+        self.assertEqual(0,self.run_cli('apply'))
+        row=self.destination.data.issues[0]; replacement=copy.deepcopy(row)
+        row['body']='Erased shadow'; replacement.update(id=901,number=901)
+        self.destination.data.issues.append(replacement)
+        store=StateStore(self.root/'state.json',enrollment_fingerprint(load_config(CONFIG)))
+        document=store.load(); document['initialization']={}; atomic_json(store.path,document)
+        before=store.path.read_bytes()
+        request=self.request('bootstrap-recover')
+        with patch.object(self.module,'trusted_request',return_value=json.loads(request.read_text())):
+            self.assertEqual(1,self.run_cli('control','--request',str(request)))
+        self.assertEqual(before,store.path.read_bytes())
+
     def test_ownership_conflict_stops_mapping_but_independent_mapping_converges(self):
         from forgejo_metadata.state import StateStore
         document=json.loads(self.config.read_text()); other=copy.deepcopy(document['mappings'][0])

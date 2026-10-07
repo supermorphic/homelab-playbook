@@ -61,6 +61,39 @@ class ReconciliationTests(unittest.TestCase):
         self.assertIn('ownership_conflict',self.run_mirror().errors)
         row['user']['id']=11; row['body']='Removed marker'
         self.assertIn('ownership_conflict',self.run_mirror().errors)
+    def test_unmarked_owner_issues_and_comments_survive_backfill_and_repeat(self):
+        issue={'id':90,'number':90,'body':'Owner history','user':{'id':11}}
+        comment={'id':91,'body':'Owner comment','user':{'id':11}}
+        self.destination.data.issues.append(copy.deepcopy(issue))
+        self.destination.data.comments[90]=[copy.deepcopy(comment)]
+        self.assertEqual([],self.run_mirror().errors)
+        self.assertEqual(issue,self.destination.data.issues[0])
+        self.assertEqual([comment],self.destination.data.comments[90])
+        self.destination.writes=[]
+        self.assertEqual(0,self.run_mirror().writes)
+        self.assertEqual([],self.destination.writes)
+    def test_fresh_discovery_rejects_recognizable_shadow_with_removed_marker(self):
+        self.run_mirror()
+        row=self.destination.data.issues[0]
+        row['body']=row['body'].split('\n<!-- forgejo-mirror:')[0]
+        self.store.path.unlink(); self.store.bootstrap('initial','fresh')
+        self.destination.writes=[]
+        self.assertIn('ownership_conflict',self.run_mirror().errors)
+        self.assertEqual([],self.destination.writes)
+    def test_known_shadow_cannot_be_replaced_after_body_erasure_or_deletion(self):
+        for kind in ('issue','comment'):
+            with self.subTest(kind=kind):
+                self.run_mirror()
+                row=(self.destination.data.issues[0] if kind=='issue'
+                     else self.destination.data.comments[103][0])
+                original=row['body']; row['body']='Human-looking replacement'
+                self.destination.writes=[]
+                self.assertIn('ownership_conflict',self.run_mirror().errors)
+                self.assertEqual([],self.destination.writes)
+                row['body']=original
+        self.destination.data.issues=[]; self.destination.writes=[]
+        self.assertIn('ownership_conflict',self.run_mirror().errors)
+        self.assertEqual([],self.destination.writes)
     def test_pr_with_marker_like_body_is_excluded(self):
         self.source.data.issues.append({'id':99,'number':99,'pull_request':{}})
         self.destination.data.issues.append({'id':98,'pull_request':{},'user':{'id':11},'body':'junk'})
