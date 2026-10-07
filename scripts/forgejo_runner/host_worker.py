@@ -94,8 +94,10 @@ def validate_process_boundary(target, records, outer, host_net, host_userns, hos
         raise ValueError('Worker and subordinate container observations are required')
 
 
-def worker_files(target, launcher, *, oci_assets=(), registry_images=()):
+def worker_files(target, launcher, *, oci_assets=(), registry_images=(), storage_driver='vfs'):
     """Private image NSS records authorize only the declared unused ID ranges."""
+    if storage_driver not in ('vfs', 'overlay'):
+        raise ValueError('Unknown owned worker storage driver')
     worker = target['worker']
     user, uid, gid = worker['user'], worker['uid'], worker['gid']
     if (len(oci_assets) > 5 or len(set(oci_assets)) != len(oci_assets)
@@ -103,7 +105,7 @@ def worker_files(target, launcher, *, oci_assets=(), registry_images=()):
         raise ValueError('Invalid declared OCI asset paths')
     files = {
         'worker-launch.py': launcher,
-        'worker.json': json.dumps({'worker': worker, 'limits': target['limits']}),
+        'worker.json': json.dumps({'worker': worker, 'limits': target['limits'], 'storage_driver':storage_driver}),
         'etc/passwd': f'root:x:0:0:root:/root:/usr/sbin/nologin\n{user}:x:{uid}:{gid}:fixture:/work:/usr/sbin/nologin\n',
         'etc/group': f'root:x:0:\n{user}:x:{gid}:\n',
         'etc/nsswitch.conf': 'passwd: files\ngroup: files\nshadow: files\nhosts: files\n',
@@ -116,7 +118,7 @@ def worker_files(target, launcher, *, oci_assets=(), registry_images=()):
         # percentage default would give each child a fraction of that already
         # bounded maximum, preventing ordinary Podman startup.
         'etc/systemd/user.conf': '[Manager]\nDefaultTasksMax=infinity\n',
-        'etc/containers/storage.conf': f'[storage]\ndriver="vfs"\ngraphroot="/work/graph"\nrunroot="/run/user/{uid}/storage"\n',
+        'etc/containers/storage.conf': f'[storage]\ndriver="{storage_driver}"\ngraphroot="/work/graph"\nrunroot="/run/user/{uid}/storage"\n',
         'etc/containers/containers.conf': '[engine]\ncgroup_manager="systemd"\nevents_logger="file"\nimage_copy_tmp_dir="/work/image-tmp"\n',
         'etc/containers/policy.json': '{"default":[{"type":"reject"}],"transports":'
             '{"tarball":{"": [{"type":"insecureAcceptAnything"}]}}}\n',
@@ -133,6 +135,8 @@ def worker_files(target, launcher, *, oci_assets=(), registry_images=()):
         # of engine copy settings. It resolves only to the finite private image.
         'var/tmp': ('link', '../work/image-tmp'),
     }
+    if storage_driver == 'overlay':
+        files['etc/containers/storage.conf'] += '[storage.options.overlay]\nmount_program=""\n'
     if oci_assets:
         policy = json.loads(files['etc/containers/policy.json'])
         policy['transports']['oci-archive'] = {

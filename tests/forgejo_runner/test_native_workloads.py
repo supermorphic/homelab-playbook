@@ -41,6 +41,25 @@ class NativeWorkloadTests(unittest.TestCase):
             with self.subTest(refs=refs),self.assertRaises(ValueError):
                 host_worker.worker_files(self.target(),'trusted launcher',registry_images=refs)
 
+    def test_workload_overlay_is_native_and_confined_to_owned_storage(self):
+        import tomllib
+        from scripts.forgejo_runner import host_worker,worker_probe
+        target=self.target(); uid=target['worker']['uid']
+        files=host_worker.worker_files(target,'trusted launcher',storage_driver='overlay')
+        store=tomllib.loads(files['etc/containers/storage.conf'])['storage']
+        self.assertEqual('overlay',store['driver'])
+        self.assertEqual('',store['options']['overlay']['mount_program'])
+        config=json.loads(files['worker.json'])
+        observed={'graphDriverName':'overlay','graphRoot':'/work/graph',
+                  'runRoot':f'/run/user/{uid}/storage','graphOptions':{'overlay.mountopt':'nodev'}}
+        worker_probe.validate_storage_driver(observed,config)
+        for key,value in (('graphDriverName','vfs'),('graphRoot','/host/state'),
+                          ('runRoot','/host/run'),('graphOptions',{'overlay.mount_program':'/usr/bin/fuse-overlayfs'})):
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                worker_probe.validate_storage_driver({**observed,key:value},config)
+        with self.assertRaises(ValueError):
+            host_worker.worker_files(target,'trusted launcher',storage_driver='arbitrary')
+
     def test_native_build_arguments_use_the_verified_local_oci_identity(self):
         import subprocess
         from scripts.forgejo_runner.native_job import NativeRun

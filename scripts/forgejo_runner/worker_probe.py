@@ -78,6 +78,18 @@ def sibling_lifetime(limits):
     return seconds + 30
 
 
+def validate_storage_driver(store, configuration):
+    worker=configuration['worker']
+    expected=configuration.get('storage_driver','vfs')
+    options=store.get('graphOptions',{})
+    if (store.get('graphDriverName') != expected
+            or store.get('graphRoot') != '/work/graph'
+            or store.get('runRoot') != f"/run/user/{worker['uid']}/storage"
+            or not isinstance(options,dict)
+            or expected == 'overlay' and options.get('overlay.mount_program')):
+        raise ValueError('Worker storage differs from its selected owned native driver')
+
+
 def main():
     config = json.loads(Path('/worker.json').read_text())
     worker = config['worker']
@@ -100,6 +112,7 @@ def main():
     client = ['/usr/bin/podman', '--remote', '--url=unix:' + str(endpoint)]
     info = json.loads(execute(client + ['info', '--format=json']))
     validate_mappings(info['host'].get('idMappings', {}), worker)
+    validate_storage_driver(info['store'],config)
     if (info['host']['security']['rootless'] is not True or info['host']['cgroupVersion'] != 'v2'
             or info['host']['cgroupManager'] != 'systemd'):
         raise ValueError('Worker server lacks rootless delegated cgroups')

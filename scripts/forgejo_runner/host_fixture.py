@@ -388,7 +388,8 @@ def inspect_native_jobs(target: dict, images: Path, *, public_network=False, wor
         from scripts.forgejo_runner.host_worker import worker_files
         extra = worker_files(target, (ROOT / 'scripts/forgejo_runner/worker_launch.py').read_text(),
                              oci_assets=[image['asset'] for image in configuration['images']],
-                             registry_images=sorted(registry_sources(**workload)) if workload else ())
+                             registry_images=sorted(registry_sources(**workload)) if workload else (),
+                             storage_driver='overlay' if workload else 'vfs')
         extra['offline_probe.py'] = (ROOT / 'scripts/forgejo_runner/worker_probe.py').read_text()
         extra['job.json'] = json.dumps(configuration)
         if public_network:
