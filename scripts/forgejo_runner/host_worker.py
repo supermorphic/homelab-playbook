@@ -153,8 +153,18 @@ def worker_files(target, launcher, *, oci_assets=(), registry_images=(), storage
             approved |= registry_sources(selector)
         if any(not isinstance(ref, str) or ref not in approved for ref in registry_images):
             raise ValueError('Invalid workload registry source')
+        def policy_identity(reference):
+            # The Docker transport matches a tag or a digest, never both.
+            # Approval above still checks the original exact configured source.
+            if '@' not in reference:
+                return reference
+            name, digest = reference.split('@', 1)
+            namespace, image = name.rsplit('/', 1)
+            return namespace + '/' + image.split(':', 1)[0] + '@' + digest
         policy = json.loads(files['etc/containers/policy.json'])
-        policy['transports']['docker'] = {ref: [{'type':'insecureAcceptAnything'}] for ref in registry_images}
+        policy['transports']['docker'] = {
+            policy_identity(ref): [{'type': 'insecureAcceptAnything'}]
+            for ref in registry_images}
         files['etc/containers/policy.json'] = json.dumps(policy)
     return files
 

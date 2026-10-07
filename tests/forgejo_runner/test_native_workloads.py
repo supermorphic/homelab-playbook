@@ -41,6 +41,27 @@ class NativeWorkloadTests(unittest.TestCase):
             with self.subTest(refs=refs),self.assertRaises(ValueError):
                 host_worker.worker_files(self.target(),'trusted launcher',registry_images=refs)
 
+    def test_digest_policy_matches_the_runtime_identity_without_admitting_tags(self):
+        from scripts.forgejo_runner import host_worker
+        from scripts.forgejo.runtime import defaults
+        pins = defaults()
+        for key, repository in (('forgejo_postgres_image', 'docker.io/library/postgres'),
+                                ('forgejo_image', 'codeberg.org/forgejo/forgejo'),
+                                ('forgejo_rclone_image', 'docker.io/rclone/rclone')):
+            reference = pins[key]
+            identity = repository + '@' + reference.split('@', 1)[1]
+            with self.subTest(reference=reference):
+                files = host_worker.worker_files(self.target(), 'trusted launcher',
+                                                 registry_images=[reference])
+                policy = json.loads(files['etc/containers/policy.json'])
+                self.assertEqual({identity}, set(policy['transports']['docker']))
+                self.assertEqual([{'type': 'reject'}], policy['default'])
+                self.assertNotIn(repository, policy['transports']['docker'])
+                self.assertNotIn(reference.split('@', 1)[0], policy['transports']['docker'])
+        with self.assertRaises(ValueError):
+            host_worker.worker_files(self.target(), 'trusted launcher',
+                registry_images=['docker.io/library/postgres@sha256:' + '0' * 64])
+
     def test_workload_overlay_is_native_and_confined_to_owned_storage(self):
         import tomllib
         from scripts.forgejo_runner import host_worker,worker_probe
