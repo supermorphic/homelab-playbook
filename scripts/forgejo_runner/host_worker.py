@@ -120,7 +120,10 @@ def worker_files(target, launcher, *, oci_assets=(), registry_images=(), storage
         'etc/systemd/user.conf': '[Manager]\nDefaultTasksMax=infinity\n'
             'DefaultEnvironment=CONTAINERS_STORAGE_CONF=/etc/containers/storage.conf\n',
         'etc/containers/storage.conf': f'[storage]\ndriver="{storage_driver}"\ngraphroot="/work/graph"\nrootless_storage_path="/work/graph"\nrunroot="/run/user/{uid}/containers"\n',
-        'etc/containers/containers.conf': '[engine]\ncgroup_manager="systemd"\nevents_logger="file"\nimage_copy_tmp_dir="/work/image-tmp"\n',
+        # Preserve a result-inspection grace period without retaining hundreds
+        # of completed Ansible exec monitors for Podman's default five minutes.
+        'etc/containers/containers.conf': '[engine]\ncgroup_manager="systemd"\nevents_logger="file"\n'
+            'image_copy_tmp_dir="/work/image-tmp"\nexit_command_delay=30\n',
         'etc/containers/policy.json': '{"default":[{"type":"reject"}],"transports":'
             '{"tarball":{"": [{"type":"insecureAcceptAnything"}]}}}\n',
         'etc/systemd/user/worker-probe.service':

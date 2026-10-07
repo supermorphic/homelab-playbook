@@ -145,3 +145,15 @@ class NativeWorkloadTests(unittest.TestCase):
                     return bad if payload.splitlines()[-1].startswith('print(json.dumps(run_image_probe(') else {'architecture':'amd64'}
                 with self.subTest(field=field), patch.object(host_fixture,'ssh_observation',side_effect=failure),self.assertRaises(ValueError):
                     host_fixture.inspect_native_jobs(self.target(),Path('.tmp/images.json'),public_network=True,workload=selected)
+
+    def test_completed_exec_monitors_have_a_short_bounded_result_grace(self):
+        import tomllib
+        from scripts.forgejo_runner import host_worker
+        files=host_worker.worker_files(self.target(),'trusted launcher')
+        engine=tomllib.loads(files['etc/containers/containers.conf'])['engine']
+        delay=engine['exit_command_delay']
+        self.assertIs(type(delay),int)
+        # Keep results available for ordinary client inspection, without five
+        # minutes of completed Ansible exec monitors consuming the PID budget.
+        self.assertGreaterEqual(delay,10)
+        self.assertLessEqual(delay,30)
