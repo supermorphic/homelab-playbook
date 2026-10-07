@@ -33,7 +33,7 @@ semaphore_controller_identity_enabled: false
 # Provisioning checks these IDs for conflicts before creating the account.
 forgejo_metadata_uid: 2003
 forgejo_metadata_gid: 2003
-forgejo_metadata_timer_enabled: false
+forgejo_metadata_timer_enabled: true
 
 # github_metadata_write: owner supermorphic; expiration none.
 # Selected GitHub repository: supermorphic/homelab-playbook.
