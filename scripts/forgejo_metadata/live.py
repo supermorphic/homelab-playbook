@@ -166,6 +166,8 @@ class Experiment:
             self.mutate('issue','issue',verb,repo,issue)
             self.mutate('milestone','milestone',verb,repo,milestone)
             if action=='finish':
+                # Forgejo represents an absent deadline with a year-9999 date.
+                self.mutate('milestone','milestone','update',repo,milestone,'--due-date','9999-12-31')
                 self.mutate('issue','issue','label','clear',repo,issue)
                 self.mutate('issue','issue','update',repo,issue,'--milestone','0')
         elif action=='interrupt':

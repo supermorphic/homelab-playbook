@@ -135,14 +135,22 @@ class DestinationAPI(Client):
         if not isinstance(actor,dict): raise APIError('invalid_response')
         if actor.get('id')!=mapping.actor_id: raise APIError('destination_actor')
     def inventory(self,mapping):
-        issues=[r for r in self.pages('/issues?state=all&sort=created&direction=asc&per_page=100') if 'pull_request' not in r]
-        comments={r['id']:self.pages(f"/issues/{r['number']}/comments?per_page=100") for r in issues}
+        rows=self.pages('/issues?state=all&sort=created&direction=asc&per_page=100')
+        issues=[r for r in rows if 'pull_request' not in r]
+        parents={(self.origin+self.prefix+f"/issues/{r['number']}").lower():r for r in rows}
+        comments={r['id']:[] for r in issues}
+        for comment in self.pages('/issues/comments?per_page=100'):
+            url=comment.get('issue_url')
+            parent=parents.get(url.lower()) if isinstance(url,str) else None
+            if parent is None: raise APIError('incomplete_inventory')
+            if 'pull_request' not in parent: comments[parent['id']].append(comment)
         return Inventory(issues,comments,self.pages('/labels?per_page=100'),self.pages('/milestones?state=all&per_page=100'))
     def create(self,projection,parent=None):
         kind=projection.key.kind
         endpoint=f'/issues/{parent.fields["number"]}/comments' if kind=='comment' else '/'+{'issue':'issues','label':'labels','milestone':'milestones'}[kind]
         fields=dict(projection.fields)
         if kind=='issue': fields.pop('state',None)
+        if kind=='milestone' and fields.get('due_on') is None: fields.pop('due_on',None)
         value,_=self.request('POST',endpoint,fields)
         if kind=='label': return '/labels/'+quote(value['name'],safe='')
         if kind=='comment': return '/issues/comments/'+str(value['id'])

@@ -23,8 +23,9 @@ This service neither changes repository authority nor promotes GitHub on failure
 Use a repository-owned Python standard-library executable and a separate Ansible
 role. Install it on Debian as a host-native helper. A system-level oneshot unit
 runs as a dedicated non-login account, separate from `svc-forgejo`. A persistent
-calendar timer invokes reconciliation approximately every quarter hour and catches
-up after downtime. There is no listener, webhook, container, or application database.
+calendar timer follows native Git push mirroring's nightly 02:00 cadence in the
+host's timezone and catches up after downtime. There is no listener, webhook,
+container, or application database.
 
 Alternatives considered:
 
@@ -168,8 +169,10 @@ and test any repository-wide comment optimization against the accepted issue set
 Reconcile labels and milestones before dependent issues, then issue comments.
 Apply title, generated body, source label membership, milestone assignment, and
 open/closed state to each owned issue. Apply comment edits as well as additions.
-Milestone changes include title, description, state, and due date; labels include
-name, color, and the bounded description. Explicitly clear removed issue labels,
+Milestone changes include title, description, state, and due date. Convert due
+timestamps to their UTC calendar date before writing; GitHub stores midnight for
+the supplied date. Labels include name, color, and the bounded description.
+Explicitly clear removed issue labels,
 milestone assignments, and milestone due dates where supported by the API.
 Compare normalized supported fields before writing. Repeated converged runs make
 no effective writes. Unrelated GitHub fields do not cause perpetual updates.
@@ -276,7 +279,8 @@ throttling and independently credentialed mappings can still progress. Publish
 sanitized per-mapping status atomically, including last attempted
 run, last converged run, backlog, and unresolved creates. A partial run does not
 advance last-converged evidence. Verification checks freshness separately from
-the last exit status.
+the last exit status. The freshness window must cover the next nightly run,
+the longer day at the autumn clock change, and the bounded run duration.
 
 Expose provision and observational verify through `mise run playbook`, preserving
 its dependency, inventory, connection, and task-selection guards. Support production

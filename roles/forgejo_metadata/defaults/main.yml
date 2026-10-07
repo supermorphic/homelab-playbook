@@ -10,4 +10,5 @@ forgejo_metadata_helper_root: /usr/local/libexec/forgejo-metadata
 forgejo_metadata_config_root: /etc/forgejo-metadata
 forgejo_metadata_write_budget: 100
 forgejo_metadata_timeout_seconds: 600
-forgejo_metadata_freshness_seconds: 3600
+# Allow a 25-hour calendar day plus the bounded nightly run.
+forgejo_metadata_freshness_seconds: 93600

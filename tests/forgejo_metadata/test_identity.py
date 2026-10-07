@@ -71,6 +71,14 @@ class IdentityTests(unittest.TestCase):
         self.assertIn('migrated', p.fields['body'])
         with self.assertRaisesRegex(self.model.MirrorError, 'projection_limit'):
             self.identity.render_projection(self.mapping, 'issue', dict(ISSUE, body='x' * 300000))
+
+    def test_milestone_due_date_preserves_utc_calendar_day(self):
+        for due_on,expected in [(None,None),('2026-01-01T17:00:00-07:00','2026-01-02T00:00:00Z'),
+            ('2026-01-02T02:00:00+02:00','2026-01-02T00:00:00Z'),('2026-01-02T13:20:00Z','2026-01-02T00:00:00Z')]:
+            with self.subTest(due_on=due_on):
+                projection=self.identity.render_projection(self.mapping,'milestone',
+                    {'id':43,'title':'Delivery','description':'','state':'open','due_on':due_on})
+                self.assertEqual(expected,projection.fields['due_on'])
     def test_multiline_label_description_remains_discoverable(self):
         projection=self.identity.render_projection(self.mapping,'label',{'id':42,'name':'bug','color':'abcdef','description':'first\nsecond'})
         self.assertEqual(projection.key,self.identity.parse_marker(projection.fields['description'],'label'))

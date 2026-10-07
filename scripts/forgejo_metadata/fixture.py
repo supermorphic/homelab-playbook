@@ -94,7 +94,11 @@ class Fixture:
                     with fixture.lock:
                         rows=fixture.data[kind]
                         if method=='GET':
-                            if len(parts)==1: self.collection(rows); return
+                            if len(parts)==1 or parts==['issues','comments']:
+                                hidden=getattr(fixture,'hidden_issue_reads',{}) if kind=='issues' else {}
+                                visible=[row for row in rows if not hidden.get(row['id'],0)]
+                                for identity in hidden: hidden[identity]=max(0,hidden[identity]-1)
+                                self.collection(visible); return
                             elif kind=='comments' and len(parts)==3 and parts[-1]=='comments': self.collection([row for row in rows if row['_parent']==int(parts[1])]); return
                             else:
                                 ident=suffix.removeprefix('/labels/') if kind=='labels' else parts[-1]; value=next((copy.deepcopy(row) for row in rows if str(row.get('name') if kind=='labels' else row['id'] if kind=='comments' else row['number'])==ident),None)
@@ -103,6 +107,11 @@ class Fixture:
                         length=int(self.headers.get('Content-Length','0'))
                         if length>65536: self.reply(413,{}); return
                         fields=json.loads(self.rfile.read(length))
+                        if method=='POST' and kind=='milestones' and 'due_on' in fields and not isinstance(fields['due_on'],str):
+                            self.reply(422,{'message':'due_on must be a date-time string when supplied'}); return
+                        if kind=='milestones' and isinstance(fields.get('due_on'),str):
+                            # GitHub stores midnight for the supplied calendar date.
+                            fields['due_on']=fields['due_on'].split('T',1)[0]+'T00:00:00Z'
                         if kind=='labels' and isinstance(fields.get('description'),str):
                             # GitHub normalizes label descriptions to a single line.
                             fields['description']=' '.join(fields['description'].split())
@@ -111,7 +120,12 @@ class Fixture:
                             number=101+sum(len(value) for value in fixture.data.values())
                             row=dict(fields,id=number,number=number,user={'id':11})
                             if kind=='issues': row['state']='open'
-                            if kind=='comments': row['_parent']=int(parts[1])
+                            if kind=='issues' and mode.get('hide_new_issues_scans'):
+                                fixture.hidden_issue_reads=getattr(fixture,'hidden_issue_reads',{})
+                                fixture.hidden_issue_reads[number]=mode['hide_new_issues_scans']
+                            if kind=='comments':
+                                row['_parent']=int(parts[1])
+                                row['issue_url']=f'https://127.0.0.1:{self.server.server_address[1]}{prefix}/issues/{parts[1]}'
                             rows.append(row)
                         else:
                             ident=suffix.removeprefix('/labels/') if kind=='labels' else parts[-1]; row=next((row for row in rows if str(row.get('name') if kind=='labels' else row['id'] if kind=='comments' else row['number'])==ident),None)

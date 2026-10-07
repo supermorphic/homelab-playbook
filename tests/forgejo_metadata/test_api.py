@@ -38,6 +38,18 @@ class APITests(unittest.TestCase):
             with self.assertRaises(MirrorError):
                 self.client([(200,dict(repo,**changes),{})]).preflight(self.mapping)
 
+    def test_milestone_create_without_deadline_respects_github_date_schema(self):
+        from forgejo_metadata.identity import render_projection
+        def transport(method,url,headers,payload):
+            # GitHub's create schema permits an optional date-time string, not null.
+            if 'due_on' in payload and not isinstance(payload['due_on'],str):
+                return 422,json.dumps({'message':'invalid due_on'}).encode(),{}
+            return 201,json.dumps(dict(payload,id=101,number=1)).encode(),{}
+        client=self.api.DestinationAPI(self.mapping,'synthetic-token',transport=transport,sleep=lambda _:None)
+        for due_on in (None,'2026-12-31T00:00:00Z'):
+            projection=render_projection(self.mapping,'milestone',{'id':43,'title':'Example','description':'','state':'open','due_on':due_on})
+            self.assertEqual('/milestones/1',client.create(projection))
+
     def test_rejection_and_uncertain_creation_have_distinct_outcomes(self):
         for status,expected in [(422,'not_created'),(503,'unknown'),(429,'not_created')]:
             with self.assertRaises(self.api.APIError) as raised:
@@ -54,6 +66,26 @@ class APITests(unittest.TestCase):
         self.assertEqual([4],[r['id'] for r in inventory.comments[1]])
         self.assertTrue(any('type=issues' in c[1] for c in self.calls))
         self.assertFalse(any('/issues/2/comments' in c[1] for c in self.calls))
+
+    def test_repository_comments_keep_issue_parents_and_exclude_pull_requests(self):
+        parent='https://api.github.com/repos/example/recovery/issues/'
+        next_page='https://api.github.com/repos/example/recovery/issues/comments?per_page=100&page=2'
+        client=self.client([(200,[{'id':101,'number':5},{'id':102,'number':6,'pull_request':{}}],{}),
+            (200,[{'id':201,'issue_url':parent+'5'}],{'Link':f'<{next_page}>; rel="next"'}),
+            (200,[{'id':202,'issue_url':parent+'6'},{'id':203,'issue_url':parent.upper()+'5'}],{}),
+            (200,[],{}),(200,[],{})])
+        inventory=client.inventory(self.mapping)
+        self.assertEqual([101],[row['id'] for row in inventory.issues])
+        self.assertEqual([201,203],[row['id'] for row in inventory.comments[101]])
+        self.assertFalse(any('/issues/5/comments' in call[1] or '/issues/6/comments' in call[1] for call in self.calls))
+
+    def test_repository_comments_with_unknown_or_foreign_parents_fail_closed(self):
+        for parent in (None,'https://api.github.com/repos/example/recovery/issues/99',
+                       'https://foreign.example/repos/example/recovery/issues/5'):
+            with self.subTest(parent=parent):
+                client=self.client([(200,[{'id':101,'number':5}],{}),
+                    (200,[{'id':201,'issue_url':parent}],{}),(200,[],{}),(200,[],{})])
+                with self.assertRaises(MirrorError): client.inventory(self.mapping)
 
     def test_malformed_final_page_does_not_return_partial_inventory(self):
         client=self.client([(200,[{'id':1}],{'Link':'<https://api.github.com/repos/example/recovery/issues?page=2>; rel="next"'}),(500,{}, {})])

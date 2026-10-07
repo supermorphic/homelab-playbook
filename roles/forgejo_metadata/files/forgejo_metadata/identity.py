@@ -1,5 +1,6 @@
 """Deterministic source attribution and durable destination markers."""
 import re
+from datetime import datetime, timezone
 from .model import MirrorError, SourceKey, Projection, positive
 PATTERN=r'forgejo-mirror:v=1;src=([a-z0-9_-]{1,16});repo=([0-9]+);kind=(issue|comment|label|milestone);id=([0-9]+)'
 
@@ -14,6 +15,15 @@ def parse_marker(text: str, kind: str) -> SourceKey | None:
     key=SourceKey(match[1],int(match[2]),kind,int(match[4]))
     if not positive(key.repository_id) or not positive(key.object_id): return None
     return key
+
+def milestone_due_date(value):
+    if value is None: return None
+    try:
+        timestamp=datetime.fromisoformat(value.replace('Z','+00:00'))
+        if timestamp.tzinfo is None: raise ValueError
+        return timestamp.astimezone(timezone.utc).date().isoformat()+'T00:00:00Z'
+    except (AttributeError,TypeError,ValueError,OverflowError):
+        raise MirrorError('invalid_source_object') from None
 
 def render_projection(mapping, kind: str, source: dict) -> Projection:
     if kind not in ('issue','comment','label','milestone') or not positive(source.get('id')):
@@ -40,7 +50,7 @@ def render_projection(mapping, kind: str, source: dict) -> Projection:
         if kind=='milestone':
             title=source['title']+f" [fj-{source['id']}]"
             if len(title)>255: raise MirrorError('projection_limit')
-            fields={'title':title,'description':body,'state':source['state'],'due_on':source.get('due_on')}
+            fields={'title':title,'description':body,'state':source['state'],'due_on':milestone_due_date(source.get('due_on'))}
         elif kind=='issue':
             if len(source['title'])>256: raise MirrorError('projection_limit')
             fields={'title':source['title'],'body':body,'state':source['state']}
