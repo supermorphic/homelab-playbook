@@ -8,9 +8,9 @@ import subprocess
 import sys
 
 if __package__:
-    from .host_egress import transport_arguments
+    from .host_egress import TRANSPORT_MTU, transport_arguments
 else:
-    from host_egress import transport_arguments
+    from host_egress import TRANSPORT_MTU, transport_arguments
 
 
 def prepare_tap(network, host):
@@ -27,7 +27,7 @@ def prepare_tap(network, host):
         # Linux TUNSETIFF, IFF_TAP | IFF_NO_PI. Only this private interface
         # descriptor crosses the privilege handoff, never a namespace handle.
         fcntl.ioctl(tap, 0x400454ca, struct.pack('16sH', b'uplink0', 0x1002))
-        commands = (['link', 'set', 'uplink0', 'up'],
+        commands = (['link', 'set', 'uplink0', 'mtu', str(TRANSPORT_MTU), 'up'],
                     ['address', 'add', '10.57.1.100/24', 'dev', 'uplink0'],
                     ['route', 'add', 'default', 'via', '10.57.1.2', 'dev', 'uplink0'],
                     ['-6', 'address', 'add', 'fd00::100/64', 'dev', 'uplink0', 'nodad'],

@@ -9,6 +9,9 @@ import stat
 import time
 
 FORGEJO_HOST = 'forgejo.infra.supermorphic.com'
+# Keep complete TLS records in one private packet before slirp translates them
+# to host socket writes. Some upstream endpoints reset on short handshake writes.
+TRANSPORT_MTU = 65520
 EGRESS_DENIED = (('10.57.0.2', 443), ('fd57::2', 443),
                  ('192.0.2.20', 443), ('2001:db8:57::20', 443))
 NONPUBLIC4 = ('0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8',
@@ -88,7 +91,7 @@ def transport_arguments(configuration, tap_descriptor):
     validate_configuration(configuration)
     if type(tap_descriptor) is not int or tap_descriptor < 3:
         raise ValueError('A preopened private TAP descriptor is required')
-    return ['/usr/bin/slirp4netns', '--netns-type=tapfd', '--cidr=10.57.1.0/24',
+    return ['/usr/bin/slirp4netns', '--netns-type=tapfd', '--mtu=' + str(TRANSPORT_MTU), '--cidr=10.57.1.0/24',
             '--enable-ipv6', '--disable-host-loopback', '--disable-dns',
             '--enable-seccomp', str(tap_descriptor)]
 

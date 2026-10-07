@@ -163,3 +163,28 @@ class HostEgressTests(unittest.TestCase):
              patch.object(launcher.os, 'open', side_effect=AssertionError('Mutation began')), \
              self.assertRaises(ValueError):
             launcher.prepare_tap(19, 20)
+
+    def test_private_transport_keeps_a_full_tls_record_within_one_packet(self):
+        from types import SimpleNamespace
+        launcher = importlib.import_module('scripts.forgejo_runner.gateway_launch')
+        configuration = {'forgejo_addresses': ['10.57.1.20'],
+                         'host_addresses': ['10.57.1.4'], 'dns_address': '10.57.1.53'}
+        command = self.egress.transport_arguments(configuration, 9)
+        options = [argument for argument in command if argument.startswith('--mtu=')]
+        self.assertEqual(1, len(options), 'Transport must declare its private packet bound')
+        mtu = int(options[0].split('=', 1)[1])
+        # TLS permits 16 KiB records plus encryption and TCP/IP overhead. The
+        # private TAP must not turn a single write into short upstream writes.
+        self.assertGreaterEqual(mtu, 16384 + 2048 + 60)
+        self.assertLessEqual(mtu, 65521)  # slirp4netns supported maximum
+        with patch.object(launcher.os, 'fstat', side_effect=lambda fd: SimpleNamespace(st_ino=456 if fd == 19 else 123)), \
+             patch.object(launcher.os, 'stat', side_effect=[SimpleNamespace(st_ino=123), SimpleNamespace(st_ino=456), SimpleNamespace(st_ino=123)]), \
+             patch.object(launcher.os, 'setns', create=True), \
+             patch.object(launcher.os, 'CLONE_NEWNET', 0, create=True), \
+             patch.object(launcher.os, 'open', return_value=21), \
+             patch.object(launcher.fcntl, 'ioctl'), \
+             patch.object(launcher.subprocess, 'run') as run:
+            self.assertEqual(21, launcher.prepare_tap(19, 20))
+        links = [call.args[0] for call in run.call_args_list if call.args[0][1:4] == ['link', 'set', 'uplink0']]
+        self.assertEqual(1, len(links))
+        self.assertEqual(str(mtu), links[0][links[0].index('mtu') + 1])
