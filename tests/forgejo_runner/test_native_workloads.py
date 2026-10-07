@@ -47,6 +47,11 @@ class NativeWorkloadTests(unittest.TestCase):
         target=self.target(); uid=target['worker']['uid']
         files=host_worker.worker_files(target,'trusted launcher',storage_driver='overlay')
         store=tomllib.loads(files['etc/containers/storage.conf'])['storage']
+        import configparser
+        manager=configparser.ConfigParser(interpolation=None); manager.optionxform=str
+        manager.read_string(files['etc/systemd/user.conf'])
+        self.assertEqual('CONTAINERS_STORAGE_CONF=/etc/containers/storage.conf',
+                         manager['Manager']['DefaultEnvironment'])
         self.assertEqual('overlay',store['driver'])
         self.assertEqual('',store['options']['overlay']['mount_program'])
         config=json.loads(files['worker.json'])

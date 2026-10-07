@@ -117,7 +117,8 @@ def worker_files(target, launcher, *, oci_assets=(), registry_images=(), storage
         # The finite root-owned ancestor bounds the whole worker. systemd's
         # percentage default would give each child a fraction of that already
         # bounded maximum, preventing ordinary Podman startup.
-        'etc/systemd/user.conf': '[Manager]\nDefaultTasksMax=infinity\n',
+        'etc/systemd/user.conf': '[Manager]\nDefaultTasksMax=infinity\n'
+            'DefaultEnvironment=CONTAINERS_STORAGE_CONF=/etc/containers/storage.conf\n',
         'etc/containers/storage.conf': f'[storage]\ndriver="{storage_driver}"\ngraphroot="/work/graph"\nrunroot="/run/user/{uid}/storage"\n',
         'etc/containers/containers.conf': '[engine]\ncgroup_manager="systemd"\nevents_logger="file"\nimage_copy_tmp_dir="/work/image-tmp"\n',
         'etc/containers/policy.json': '{"default":[{"type":"reject"}],"transports":'
