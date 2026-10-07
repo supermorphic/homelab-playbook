@@ -65,7 +65,7 @@ def require_success(rows: list[dict], commit: str) -> None:
         raise RuntimeError('Workload did not succeed at its exact workflow commit')
 
 
-def runtime_workflow(label: str, workspace: Path) -> str:
+def runtime_workflow(label: str, workspace: Path, *, public_probe=False) -> str:
     """One allowlisted job exercises real remote API operations and loopback HTTP."""
     import yaml
     probe = '''import json, os, pathlib, subprocess, time
@@ -116,6 +116,8 @@ assert subprocess.run(['podman', '--remote', 'container', 'exists', identity]).r
 print('actual-job-runtime-passed')
 '''
     script = "set -eu\npython3 - <<'PY'\n" + probe + 'PY\n'
+    if public_probe:
+        script += 'python3 "$TMPDIR/public-probe.py"\n'
     return yaml.safe_dump({'name': 'native runtime probe', 'on': ['push'], 'jobs': {
         'first': {'runs-on': label, 'steps': [{'env': {
             'CONTAINER_HOST': 'unix:///var/run/docker.sock', 'TMPDIR': str(workspace),

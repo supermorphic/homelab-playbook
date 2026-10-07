@@ -178,7 +178,7 @@ def run_one_job(experiment, directory, application, repository, token, runtime, 
         workflow = workload_workflow(label, application, repository, workload["workspace"], workload["selector"])
     if runtime_probe:
         from scripts.forgejo_runner.workload import runtime_workflow
-        workflow = runtime_workflow(label, runtime['workspace'])
+        workflow = runtime_workflow(label, runtime['workspace'], public_probe=runtime.get('public_probe', False))
     if controller_failure:
         workflow = workflow.replace("echo independent-first-job", "sleep 90")
     created = application.request(path + "/contents/.forgejo/workflows/probe.yml", method="POST",

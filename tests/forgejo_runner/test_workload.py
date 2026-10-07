@@ -13,6 +13,19 @@ class WorkloadTests(unittest.TestCase):
         self.assertTrue(path.is_file(), 'Real Forgejo workload probe is missing')
         return importlib.import_module('scripts.forgejo_runner.workload')
 
+    def test_failed_public_probe_fails_the_real_job_script(self):
+        import yaml
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            executable = root / 'python3'
+            executable.write_text('#!/bin/sh\nif [ "$#" -eq 0 ]; then /bin/cat >/dev/null; exit 0; fi\nexit 19\n')
+            executable.chmod(0o755)
+            document = yaml.safe_load(self.module().runtime_workflow('synthetic', root, public_probe=True))
+            script = document['jobs']['first']['steps'][0]['run']
+            result = subprocess.run(['bash', '-ec', script], env={'PATH': directory + ':/usr/bin:/bin',
+                'TMPDIR': directory}, cwd=root, capture_output=True, text=True)
+            self.assertEqual(19, result.returncode)
+
     def test_failed_repository_command_fails_the_job(self):
         module = self.module()
         with tempfile.TemporaryDirectory() as directory:

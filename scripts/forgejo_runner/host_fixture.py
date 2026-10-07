@@ -358,11 +358,14 @@ def inspect_egress(target: dict) -> dict:
     return outcome
 
 
-def inspect_native_jobs(target: dict, images: Path) -> dict:
+def inspect_native_jobs(target: dict, images: Path, *, public_network=False) -> dict:
     from scripts.forgejo_runner.host_worker import validate_job_budget
     from scripts.forgejo_runner.native_assets import prepare
     validate_target(target)
     validate_job_budget(target)
+    if public_network:
+        from scripts.forgejo_runner.host_network import validate_network_target
+        validate_network_target(target)
     # Observe the target before preparing assets, and repeat the full host
     # preflight and reserve check immediately before remote allocation.
     payload = "__file__ = '/fixture/scripts/forgejo_runner/host_fixture.py'\n"
@@ -381,6 +384,16 @@ def inspect_native_jobs(target: dict, images: Path) -> dict:
                              oci_assets=[image['asset'] for image in configuration['images']])
         extra['offline_probe.py'] = (ROOT / 'scripts/forgejo_runner/worker_probe.py').read_text()
         extra['job.json'] = json.dumps(configuration)
+        if public_network:
+            worker = json.loads(extra['worker.json'])
+            worker['network'] = {'controller': target['controller']}
+            extra['worker.json'] = json.dumps(worker)
+            for name in ('host_network.py', 'network_setup.py', 'network_peer.py', 'host_egress.py', 'egress_probe.py'):
+                extra[name] = (ROOT / 'scripts/forgejo_runner' / name).read_text()
+            extra['gateway-launch.py'] = (ROOT / 'scripts/forgejo_runner/gateway_launch.py').read_text()
+            for name in ('host_network.py', 'host_egress.py'):
+                payload += 'exec(' + repr((ROOT / 'scripts/forgejo_runner' / name).read_text()) + ')\n'
+
         probe = '''import contextlib, json, pathlib, sys, tarfile
 for name, destination in (('source.tar', '/work/source'), ('vendor.tar', '/work/vendor')):
     pathlib.Path(destination).mkdir(mode=0o700)
@@ -392,17 +405,25 @@ with pathlib.Path('/work/job-progress.log').open('w', buffering=1) as progress, 
     result = run_probe()
 print(json.dumps(result), flush=True)
 '''
+        stage = 'native-only' if public_network else 'job-only'
+        if public_network:
+            probe = probe.replace('result = run_probe()', 'import egress_probe; result = run_probe(observed=egress_probe.main())')
         payload += 'exec(' + repr((ROOT / 'scripts/forgejo_runner/host_inputs.py').read_text()) + ')\n'
         payload += 'print(json.dumps(run_image_probe(' + repr(target) + ', observe, validate_observation, ' + repr(probe)
-        payload += ", stage='job-only', budget_validator=validate_job_budget, extra_files=" + repr(extra)
+        payload += ", stage=" + repr(stage) + ", budget_validator=validate_job_budget, extra_files=" + repr(extra)
         payload += ', assets=' + repr(assets) + ', asset_validator=validate_assets, asset_receiver=receive_asset'
-        payload += ', worker_observer=observe_job_boundary, worker_reader=read_worker_result, after_stop=worker_cleanup_errors)))\n'
+        payload += ', worker_observer=observe_job_boundary, worker_reader=read_worker_result, after_stop=lambda t: worker_cleanup_errors(t)'
+        payload += "+worker_cleanup_errors({**t,'worker':t['controller']}))))\n"
         outcome = ssh_observation(target, payload, timeout=target['limits']['job_seconds'] + 600,
                                   input_files=[Path(directory) / Path(name).name for name in assets])
     required = {'rootless_api', 'sibling_containers', 'mapped_bind', 'private_loopback',
                 'published_loopback', 'user_manager', 'bounded_storage', 'outer_limits',
                 'process_boundary', 'one_job', 'job_runtime'}
-    if (not isinstance(outcome, dict) or outcome.get('acceptance') != 'job-only'
+    if public_network:
+        required |= {'allowed_ipv4', 'allowed_ipv6', 'denied_ipv4', 'denied_ipv6', 'policy_immutable',
+                     'alternate_network_modes', 'kernel_policy', 'controlled_peer', 'dns', 'forgejo_https',
+                     'public_http', 'public_https', 'gateway_boundary', 'job_public_access'}
+    if (not isinstance(outcome, dict) or outcome.get('acceptance') != stage
             or type(outcome.get('exit_code')) is not int or outcome['exit_code'] not in (0, 1, 130)
             or not isinstance(outcome.get('cleanup_errors'), list)):
         raise ValueError('Invalid native job experiment outcome')
@@ -416,7 +437,8 @@ print(json.dumps(result), flush=True)
 
 def run(images: Path | None, target: Path | None, *, preflight_only: bool = False,
         resource_probe_only: bool = False, worker_probe_only: bool = False,
-        job_probe_only: bool = False, network_probe_only: bool = False, egress_probe_only: bool = False) -> int:
+        job_probe_only: bool = False, network_probe_only: bool = False, egress_probe_only: bool = False,
+        native_probe_only: bool = False) -> int:
     """Separate observational prerequisites from the unfinished containment gate."""
     if target is None:
         raise ValueError("An explicit disposable Debian host fixture descriptor is required")
@@ -430,6 +452,25 @@ def run(images: Path | None, target: Path | None, *, preflight_only: bool = Fals
     except (OSError, ValueError) as error:
         raise ValueError("Cannot load disposable host descriptor") from error
     validate_target(descriptor)
+    if native_probe_only:
+        if preflight_only or resource_probe_only or worker_probe_only or job_probe_only or network_probe_only or egress_probe_only:
+            raise ValueError('Combined native probe cannot be mixed with isolated experiments')
+        if images is None or not images.resolve().is_relative_to((ROOT / '.tmp').resolve()):
+            raise ValueError('Native acceptance requires a reviewed image descriptor under .tmp')
+        if subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip():
+            raise ValueError('Native acceptance requires a clean committed source candidate')
+        tree = subprocess.check_output(['git', 'write-tree'], cwd=ROOT, text=True).strip()
+        result = inspect_native_jobs(descriptor, images, public_network=True)
+        if (tree != result['source_tree'] or tree != subprocess.check_output(['git', 'write-tree'], cwd=ROOT, text=True).strip()
+                or subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip()):
+            raise RuntimeError('Native acceptance source changed; evidence is invalid')
+        with tempfile.NamedTemporaryFile(mode='w', prefix='host-native-outcome-', suffix='.json', dir=target.parent, delete=False) as evidence:
+            json.dump(result, evidence, indent=2); evidence.write('\n')
+        print(f'Combined native outcome saved to {evidence.name}')
+        if result['exit_code']:
+            raise RuntimeError('Combined native probe failed; inspect saved outcome and any retained allocation')
+        print('Combined native job and network checks passed; full workload acceptance remains pending')
+        return 0
     if network_probe_only or egress_probe_only:
         if preflight_only or resource_probe_only or worker_probe_only or job_probe_only or images:
             raise ValueError('Network probe cannot be combined with other experiments')
