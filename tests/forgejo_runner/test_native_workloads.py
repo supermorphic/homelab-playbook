@@ -61,6 +61,39 @@ class NativeWorkloadTests(unittest.TestCase):
             with self.subTest(value=value),self.assertRaises(ValueError):
                 worker_probe.sibling_lifetime({'job_seconds':value})
 
+    def test_job_image_git_seeds_exact_archived_tree_without_credentials_in_argv(self):
+        import os, subprocess, sys, tempfile
+        from types import SimpleNamespace
+        from scripts.forgejo_runner import native_job
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); original=root/'original'; restored=root/'restored'
+            original.mkdir(); restored.mkdir()
+            def git(path,*args):
+                return subprocess.check_output(['git','-C',str(path),*args],text=True,stderr=subprocess.PIPE).strip()
+            git(original,'init','-q'); (original/'candidate').write_text('exact source')
+            git(original,'add','--all'); tree=git(original,'write-tree')
+            archive=root/'archive.tar'
+            subprocess.run(['git','-C',str(original),'archive','--output',str(archive),tree],check=True)
+            import tarfile
+            with tarfile.open(archive) as a: a.extractall(restored,filter='data')
+            remote=root/'remote'/'fixture'/'repository.git'; remote.mkdir(parents=True)
+            git(remote,'init','--bare','-q')
+            password='synthetic-private-secret'
+            app=SimpleNamespace(url=str(root/'remote'),user='fixture',password=password)
+            captured={}
+            class LocalImage:
+                def foreground(self,suffix,argv,**kwargs):
+                    captured['argv']=argv
+                    self_result=subprocess.run([sys.executable,*argv[-3:]],
+                        input=kwargs['input_text'],cwd=restored,env={**os.environ,
+                        'PYTHONPATH':str(Path.cwd())},capture_output=True,text=True,check=True)
+                    return self_result
+            native_job.seed_native_source(LocalImage(),'localhost/job:fixture',restored,tree,app,{'name':'repository'})
+            self.assertEqual(tree,git(remote,'rev-parse','main^{tree}'))
+            self.assertNotIn(password,' '.join(captured['argv']))
+            self.assertIn('--userns=keep-id:uid=0,gid=0',captured['argv'])
+            self.assertEqual(tree,git(restored,'write-tree'))
+
     def test_native_workload_inspection_requires_all_twenty_six_checks(self):
         from scripts.forgejo_runner import host_fixture
         fields=('rootless_api','sibling_containers','mapped_bind','private_loopback','published_loopback',

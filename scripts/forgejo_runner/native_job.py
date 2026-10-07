@@ -85,6 +85,30 @@ def save_job_diagnostic(run_id, directory, output):
         stream.write('\n'.join(records)[-4096:])
 
 
+def seed_native_source(experiment, image, root, tree, application, repository):
+    """Use job-image Git with only owned source and stdin synthetic credentials."""
+    program = """import json,sys
+from pathlib import Path
+from types import SimpleNamespace
+from scripts.forgejo_runner.workload import restore_source_tree,seed_repository
+request=json.load(sys.stdin)
+root=Path(request['root'])
+restore_source_tree(root,request['tree'])
+actual=seed_repository(root,SimpleNamespace(**request['application']),request['repository'])
+print(actual)
+"""
+    request = {'root':str(root), 'tree':tree, 'repository':repository,
+               'application':{key:getattr(application,key) for key in ('url','user','password')}}
+    result = experiment.foreground('source-seed', [
+        '--interactive', '--pull=never', '--network=host',
+        '--userns=keep-id:uid=0,gid=0', '--user=0:0',
+        '--volume', f'{root}:{root}', '--workdir', str(root),
+        '--entrypoint', 'python3', image, '-B', '-c', program,
+    ], input_text=json.dumps(request), timeout=180)
+    if result.stdout.strip() != tree:
+        raise ValueError('Seeded native workload does not match its declared tree')
+
+
 def run_probe(*, observed=None):
     import offline_probe
     from scripts.forgejo_runner.registration_probe import run_registration, run_one_job
@@ -94,9 +118,8 @@ def run_probe(*, observed=None):
     selection = configuration.get('workload')
     if selection:
         from scripts.forgejo_runner.fixture import ROOT
-        from scripts.forgejo_runner.workload import restore_source_tree, validation_script
+        from scripts.forgejo_runner.workload import validation_script
         validation_script(**selection)
-        restore_source_tree(ROOT, configuration['source_tree'])
     worker = json.loads(Path('/worker.json').read_text())['worker']
     endpoint = f'/run/user/{worker["uid"]}/podman.sock'
     experiment = NativeRun({}, endpoint)
@@ -106,7 +129,7 @@ def run_probe(*, observed=None):
     experiment.observe_volumes()
     candidate = {key: images[value] for key, value in configuration['candidate'].items()}
     if selection:
-        from scripts.forgejo_runner.workload import build_image, seed_repository
+        from scripts.forgejo_runner.workload import build_image
         descriptor = experiment.private_file(directory, 'candidate.json', json.dumps({
             'probe_images': {'amd64': configuration['candidate']['probe_image']},
             'runner_images': {'amd64': configuration['candidate']['runner_image']},
@@ -114,8 +137,7 @@ def run_probe(*, observed=None):
         }))
         job_image = build_image(experiment, descriptor, 'amd64')
         application, repository, token = run_registration(experiment, directory, empty=True)
-        if seed_repository(ROOT, application, repository) != configuration['source_tree']:
-            raise ValueError('Seeded workload source changed')
+        seed_native_source(experiment, job_image, ROOT, configuration['source_tree'], application, repository)
     else:
         # Namespace UID0 uses only the worker-owned socket, never host UID0.
         build = Path('/work/job-image'); build.mkdir()
