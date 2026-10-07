@@ -67,6 +67,26 @@ class APITests(unittest.TestCase):
         self.assertTrue(any('type=issues' in c[1] for c in self.calls))
         self.assertFalse(any('/issues/2/comments' in c[1] for c in self.calls))
 
+    def test_repository_comments_keep_issue_parents_and_exclude_pull_requests(self):
+        parent='https://api.github.com/repos/example/recovery/issues/'
+        next_page='https://api.github.com/repos/example/recovery/issues/comments?per_page=100&page=2'
+        client=self.client([(200,[{'id':101,'number':5},{'id':102,'number':6,'pull_request':{}}],{}),
+            (200,[{'id':201,'issue_url':parent+'5'}],{'Link':f'<{next_page}>; rel="next"'}),
+            (200,[{'id':202,'issue_url':parent+'6'},{'id':203,'issue_url':parent.upper()+'5'}],{}),
+            (200,[],{}),(200,[],{})])
+        inventory=client.inventory(self.mapping)
+        self.assertEqual([101],[row['id'] for row in inventory.issues])
+        self.assertEqual([201,203],[row['id'] for row in inventory.comments[101]])
+        self.assertFalse(any('/issues/5/comments' in call[1] or '/issues/6/comments' in call[1] for call in self.calls))
+
+    def test_repository_comments_with_unknown_or_foreign_parents_fail_closed(self):
+        for parent in (None,'https://api.github.com/repos/example/recovery/issues/99',
+                       'https://foreign.example/repos/example/recovery/issues/5'):
+            with self.subTest(parent=parent):
+                client=self.client([(200,[{'id':101,'number':5}],{}),
+                    (200,[{'id':201,'issue_url':parent}],{}),(200,[],{}),(200,[],{})])
+                with self.assertRaises(MirrorError): client.inventory(self.mapping)
+
     def test_malformed_final_page_does_not_return_partial_inventory(self):
         client=self.client([(200,[{'id':1}],{'Link':'<https://api.github.com/repos/example/recovery/issues?page=2>; rel="next"'}),(500,{}, {})])
         with self.assertRaises(MirrorError): client.pages('/issues')
