@@ -1,0 +1,21 @@
+---
+- name: Render the slot configuration and supervisor definitions
+  ansible.builtin.set_fact:
+    forgejo_runner_rendered_files: >-
+      {{ forgejo_runner_rendered_files + [
+         {'path': forgejo_runner_slot.state_root ~ '/config.json', 'mode': 384,
+          'content': lookup('template', 'config.json.j2')},
+         {'path': '/etc/systemd/system/forgejo-runner-' ~ forgejo_runner_slot.name ~ '.service',
+          'mode': 420, 'content': lookup('template', 'supervisor.service.j2')},
+         {'path': '/etc/systemd/system/forgejo-runner-' ~ forgejo_runner_slot.name ~ '.timer',
+          'mode': 420, 'content': lookup('template', 'supervisor.timer.j2')}] }}
+  no_log: true
+
+- name: Render protected enrollment input for the declared repository
+  ansible.builtin.set_fact:
+    forgejo_runner_rendered_files: >-
+      {{ forgejo_runner_rendered_files + [
+         {'path': forgejo_runner_slot.state_root ~ '/enrollment-token', 'mode': 384,
+          'content': lookup('template', 'enrollment-token.j2')}] }}
+  when: forgejo_runner_slot.repository in forgejo_runner_enrollment_tokens
+  no_log: true

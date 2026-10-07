@@ -1,0 +1,22 @@
+---
+- name: Require explicit disabled declarations before retirement
+  ansible.builtin.assert:
+    that:
+      - forgejo_runner_slots | forgejo_runner_validate_slots == forgejo_runner_slots
+      - forgejo_runner_slots | selectattr('enabled') | list | length == 0
+    fail_msg: Retirement requires disabled declarations; identity reservations are retained
+
+- name: Drain all owned jobs before retirement
+  ansible.builtin.import_tasks: drain.yml
+
+- name: Publish disabled slots with their retained identity reservations
+  ansible.builtin.import_tasks: main.yml
+
+- name: Remove only the retired repository enrollment inputs
+  ansible.builtin.file:
+    path: "{{ item.state_root }}/enrollment-token"
+    state: absent
+  loop: "{{ forgejo_runner_slots }}"
+  loop_control:
+    label: "{{ item.repository }}"
+  no_log: true

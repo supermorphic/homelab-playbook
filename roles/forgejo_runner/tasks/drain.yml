@@ -1,0 +1,31 @@
+---
+- name: Inspect existing slot definitions
+  ansible.builtin.stat:
+    path: "{{ item.state_root }}/config.json"
+    follow: false
+  loop: "{{ forgejo_runner_slots }}"
+  register: forgejo_runner_current_definitions
+
+- name: Stop all installed repository polling before waiting for a job
+  ansible.builtin.systemd_service:
+    name: "forgejo-runner-{{ item.item.name }}.timer"
+    state: stopped
+  when: item.stat.exists
+  loop: "{{ forgejo_runner_current_definitions.results }}"
+  loop_control:
+    label: "{{ item.item.repository }}"
+
+- name: Drain jobs and require independently empty owned runtime
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -B
+      - -c
+      - "{{ lookup('file', role_path ~ '/files/deployment_dispatch.py') }}"
+      - drain
+      - "{{ item.item.state_root }}/config.json"
+  when: item.stat.exists
+  loop: "{{ forgejo_runner_current_definitions.results }}"
+  loop_control:
+    label: "{{ item.item.repository }}"
+  changed_when: false

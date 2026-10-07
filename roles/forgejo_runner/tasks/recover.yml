@@ -1,0 +1,55 @@
+---
+- name: Stop all repository polling before explicit recovery
+  ansible.builtin.systemd_service:
+    name: "forgejo-runner-{{ item.name }}.timer"
+    state: stopped
+  loop: "{{ forgejo_runner_slots }}"
+  loop_control:
+    label: "{{ item.repository }}"
+
+- name: Stop supervision and dispose every owned runtime even if Forgejo is unavailable
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -B
+      - -c
+      - "{{ lookup('file', role_path ~ '/files/deployment_dispatch.py') }}"
+      - recover
+      - "{{ item.state_root }}/config.json"
+  loop: "{{ forgejo_runner_slots }}"
+  loop_control:
+    label: "{{ item.repository }}"
+  register: forgejo_runner_initial_recovery
+  failed_when: forgejo_runner_initial_recovery.rc not in [0, 1]
+  changed_when: true
+
+- name: Restore explicitly supplied protected authority only after owned local disposal
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -B
+      - -c
+      - "{{ lookup('file', role_path ~ '/files/deployment_dispatch.py') }}"
+      - restore-authority
+      - "{{ item.state_root }}/config.json"
+      - "{{ item.repository }}"
+    stdin: "{{ forgejo_runner_enrollment_tokens[item.repository] }}"
+    stdin_add_newline: false
+  when: item.repository in forgejo_runner_enrollment_tokens
+  loop: "{{ forgejo_runner_slots }}"
+  changed_when: true
+  no_log: true
+
+- name: Reconcile outstanding registration before any admission can resume
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -B
+      - -c
+      - "{{ lookup('file', role_path ~ '/files/deployment_dispatch.py') }}"
+      - recover
+      - "{{ item.state_root }}/config.json"
+  loop: "{{ forgejo_runner_slots }}"
+  loop_control:
+    label: "{{ item.repository }}"
+  changed_when: true

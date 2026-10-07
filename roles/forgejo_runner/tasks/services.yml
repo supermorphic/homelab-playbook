@@ -1,0 +1,14 @@
+---
+- name: Reload changed supervisor definitions
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: forgejo_runner_deployment_changed
+
+- name: Reconcile repository queue polling
+  ansible.builtin.systemd_service:
+    name: "forgejo-runner-{{ item.name }}.timer"
+    enabled: "{{ item.enabled }}"
+    state: "{{ 'started' if item.enabled else 'stopped' }}"
+  loop: "{{ forgejo_runner_slots }}"
+  loop_control:
+    label: "{{ item.repository }}"

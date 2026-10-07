@@ -1,0 +1,50 @@
+---
+- name: Assemble public helper file comparisons
+  ansible.builtin.set_fact:
+    forgejo_runner_public_files: "{{ forgejo_runner_helper_root | forgejo_runner_deployment_sources }}"
+    forgejo_runner_rendered_files: []
+    forgejo_runner_reservation:
+      schema: 1
+      accounts: >-
+        {{ (forgejo_runner_slots | map(attribute='worker') | list)
+           + (forgejo_runner_slots | map(attribute='controller') | list) }}
+
+- name: Assemble repository configuration and service comparisons
+  ansible.builtin.include_tasks: slot-definitions.yml
+  loop: "{{ forgejo_runner_slots }}"
+  loop_control:
+    loop_var: forgejo_runner_slot
+    label: "{{ forgejo_runner_slot.name }}"
+
+- name: Assemble host registry and identity reservations
+  ansible.builtin.set_fact:
+    forgejo_runner_rendered_files: >-
+      {{ forgejo_runner_rendered_files + [
+         {'path': '/var/lib/forgejo-runner/slots.json', 'mode': 384,
+          'content': {'schema': 1, 'slots': forgejo_runner_slots} | to_nice_json},
+         {'path': '/etc/forgejo-runner-reservations.json', 'mode': 384,
+          'content': forgejo_runner_reservation | to_nice_json}] }}
+  no_log: true
+
+- name: Compute private candidate checksums without publishing inputs
+  ansible.builtin.set_fact:
+    forgejo_runner_desired_files: "{{ forgejo_runner_public_files }}"
+  no_log: true
+
+- name: Bind each rendered input to its checksum
+  ansible.builtin.set_fact:
+    forgejo_runner_desired_files: >-
+      {{ forgejo_runner_desired_files + [
+         {'path': item.path, 'mode': item.mode, 'sha256': item.content | hash('sha256')}] }}
+  loop: "{{ forgejo_runner_rendered_files }}"
+  no_log: true
+
+- name: Bind every immutable job artifact to its checksum
+  ansible.builtin.set_fact:
+    forgejo_runner_desired_files: >-
+      {{ forgejo_runner_desired_files + [
+         {'path': (forgejo_runner_asset_root | trim) ~ '/' ~ item.key,
+          'mode': 384, 'sha256': item.value.sha256}] }}
+  loop: "{{ forgejo_runner_asset_manifest.artifacts | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"

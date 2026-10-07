@@ -233,7 +233,8 @@ def build_image(experiment, descriptor: Path, architecture: str) -> str:
     if experiment.command([experiment.podman, 'image', 'exists', name], check=False).returncode != 1:
         raise RuntimeError('Workload image already exists or cannot be inspected')
     experiment.command([
-        experiment.podman, 'build', '--label', f'{experiment.label}={experiment.run_id}',
+        experiment.podman, 'build', '--arch=' + architecture,
+        '--label', f'{experiment.label}={experiment.run_id}',
         '--build-arg', 'MISE_IMAGE=' + mise,
         '--build-arg', 'PODMAN_IMAGE=' + candidate['probe_image'], '--tag', name,
         '--file', str(ROOT / 'scripts/forgejo_runner/Containerfile.job'),

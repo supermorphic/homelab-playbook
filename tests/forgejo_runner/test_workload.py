@@ -5,9 +5,32 @@ import importlib
 import subprocess
 import tempfile
 import unittest
+import json
+from unittest.mock import Mock
 
 
 class WorkloadTests(unittest.TestCase):
+    def test_job_image_build_requests_the_selected_architecture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            descriptor = Path(directory) / 'candidate.json'
+            descriptor.write_text(json.dumps({
+                'probe_images': {'amd64': 'quay.io/podman/stable@sha256:' + 'a'*64},
+                'mise_images': {'amd64': 'ghcr.io/jdx/mise@sha256:' + 'b'*64}}))
+            experiment = Mock()
+            experiment.podman = 'podman'
+            experiment.label = 'io.example.owned'
+            experiment.run_id = 'synthetic'
+            experiment.name.return_value = 'synthetic-job'
+            experiment.job_images = []
+            calls = []
+            def command(argv, **keywords):
+                calls.append(argv)
+                return subprocess.CompletedProcess(argv, 1 if argv[1:3] == ['image', 'exists'] else 0, '')
+            experiment.command = command
+            self.module().build_image(experiment, descriptor, 'amd64')
+            build = next(argv for argv in calls if argv[1] == 'build')
+            self.assertIn('--arch=amd64', build)
+
     def module(self):
         path = Path(__file__).resolve().parents[2] / 'scripts/forgejo_runner/workload.py'
         self.assertTrue(path.is_file(), 'Real Forgejo workload probe is missing')

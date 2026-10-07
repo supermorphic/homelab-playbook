@@ -1,0 +1,7 @@
+{{ {
+  'schema': 1,
+  'slot': forgejo_runner_slot,
+  'manifest': forgejo_runner_asset_manifest,
+  'assets_root': forgejo_runner_asset_root | trim,
+  'installation': forgejo_runner_helper_root
+} | to_nice_json }}

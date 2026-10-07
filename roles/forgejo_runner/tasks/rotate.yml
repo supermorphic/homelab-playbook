@@ -1,0 +1,6 @@
+---
+- name: Stop admission and drain before credential replacement
+  ansible.builtin.import_tasks: drain.yml
+
+- name: Reconcile protected inputs and resume declared slots
+  ansible.builtin.import_tasks: main.yml

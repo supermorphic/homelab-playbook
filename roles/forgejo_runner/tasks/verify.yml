@@ -1,0 +1,28 @@
+---
+- name: Validate declared slots without reading enrollment inputs
+  ansible.builtin.assert:
+    that:
+      - forgejo_runner_slots | forgejo_runner_validate_slots == forgejo_runner_slots
+      - forgejo_runner_slots | length == 3
+      - forgejo_runner_slots | map(attribute='repository') | sort == forgejo_runner_repositories | sort
+      - forgejo_runner_source_commit is match('^[0-9a-f]{40}$')
+      - forgejo_runner_helper_root == '/usr/local/libexec/forgejo-runner/' ~ forgejo_runner_source_commit
+    fail_msg: Standalone verification requires the reviewed three repository declarations
+
+- name: Observe runner ownership and effective resource bounds
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -B
+      - -c
+      - "{{ lookup('file', role_path ~ '/files/deployment_dispatch.py') }}"
+      - verify
+      - "{{ item.state_root }}/config.json"
+      - --expected-slot-stdin
+    stdin: "{{ item | to_json }}"
+    stdin_add_newline: false
+  loop: "{{ forgejo_runner_slots }}"
+  loop_control:
+    label: "{{ item.repository }}"
+  changed_when: false
+  check_mode: false

@@ -1,0 +1,59 @@
+---
+- name: Inspect trusted installation boundaries
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop: >-
+    {{ ['/etc', '/etc/systemd', '/etc/systemd/system', '/usr/local', '/usr/local/libexec',
+        '/usr/local/libexec/forgejo-runner', forgejo_runner_helper_root,
+        forgejo_runner_helper_root ~ '/scripts', forgejo_runner_helper_root ~ '/scripts/forgejo_runner',
+        '/var/lib', '/var/lib/forgejo-runner', '/var/lib/forgejo-runner/assets', forgejo_runner_asset_root | trim]
+       + (forgejo_runner_slots | map(attribute='state_root') | list) }}
+  register: forgejo_runner_boundaries
+
+- name: Reject linked or replaceable installation boundaries
+  ansible.builtin.assert:
+    that:
+      - not item.stat.exists or not item.stat.islnk
+      - not item.stat.exists or item.stat.uid == 0
+      - not item.stat.exists or item.stat.gid == 0
+      - not item.stat.exists or item.stat.mode[-2:] in ['00', '40', '44', '50', '55']
+      - not item.stat.exists or item.stat.isdir
+    fail_msg: Runner installation directories must be root-owned and cannot be adopted through links
+  loop: "{{ forgejo_runner_boundaries.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Inspect existing identity reservation metadata
+  ansible.builtin.stat:
+    path: /etc/forgejo-runner-reservations.json
+    follow: false
+  register: forgejo_runner_reservation_stat
+
+- name: Require an authority-owned private reservation file
+  ansible.builtin.assert:
+    that:
+      - >-
+        not forgejo_runner_reservation_stat.stat.exists or
+        (forgejo_runner_reservation_stat.stat.isreg and not forgejo_runner_reservation_stat.stat.islnk
+         and forgejo_runner_reservation_stat.stat.uid == 0 and forgejo_runner_reservation_stat.stat.gid == 0
+         and forgejo_runner_reservation_stat.stat.mode == '0600'
+         and forgejo_runner_reservation_stat.stat.nlink == 1 and forgejo_runner_reservation_stat.stat.size <= 16384)
+    fail_msg: Runner identity reservations must have the trusted private file boundary
+
+- name: Observe existing runner identity reservation
+  ansible.builtin.slurp:
+    src: /etc/forgejo-runner-reservations.json
+  when: forgejo_runner_reservation_stat.stat.exists
+  register: forgejo_runner_existing_reservation
+
+- name: Preserve reserved identities across updates and retirement
+  ansible.builtin.assert:
+    that:
+      - (forgejo_runner_existing_reservation.content | b64decode | from_json).schema == 1
+      - >-
+        (forgejo_runner_existing_reservation.content | b64decode | from_json).accounts | sort(attribute='name')
+        == ((forgejo_runner_slots | map(attribute='worker') | list)
+            + (forgejo_runner_slots | map(attribute='controller') | list)) | sort(attribute='name')
+    fail_msg: Runner identity changes require an attended migration; reserved identities are not recycled
+  when: forgejo_runner_existing_reservation.content is defined

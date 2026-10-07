@@ -1,0 +1,24 @@
+---
+- name: Validate complete deployment before host changes
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Prepare desired file comparisons
+  ansible.builtin.import_tasks: definitions.yml
+
+- name: Guard active jobs and pause polling for changed inputs
+  ansible.builtin.import_tasks: audit.yml
+
+- name: Recheck current identity boundaries immediately before provisioning
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Prepare private storage and native runtime capability
+  ansible.builtin.import_tasks: storage.yml
+
+- name: Publish the guarded deployment
+  ansible.builtin.import_tasks: configuration.yml
+
+- name: Reconcile repository supervisors
+  ansible.builtin.import_tasks: services.yml
+
+- name: Verify runners without repair or enrollment
+  ansible.builtin.import_tasks: verify.yml

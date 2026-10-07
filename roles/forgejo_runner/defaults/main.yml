@@ -1,0 +1,21 @@
+---
+# Identities and enrollment inputs require an explicit operator declaration.
+forgejo_runner_slots: []
+forgejo_runner_repositories:
+  - supermorphic/career-ops
+  - supermorphic/homelab-playbook
+  - supermorphic/homelab-talos
+forgejo_runner_enrollment_tokens: {}
+forgejo_runner_asset_directory: ''
+forgejo_runner_asset_manifest: {}
+forgejo_runner_source_commit: "{{ lookup('pipe', 'git rev-parse HEAD') | trim }}"
+forgejo_runner_helper_root: "/usr/local/libexec/forgejo-runner/{{ forgejo_runner_source_commit }}"
+forgejo_runner_asset_root: >-
+  /var/lib/forgejo-runner/assets/{{ forgejo_runner_asset_manifest | to_json(sort_keys=true) | hash('sha256') }}
+forgejo_runner_candidate:
+  probe_images:
+    amd64: quay.io/podman/stable@sha256:fed8b8aa7c6720a9ad89b835468265dd714efa553f1b483ef458b77f53265a05
+  runner_images:
+    amd64: data.forgejo.org/forgejo/runner@sha256:874c731a92850983e43f24dfe5a92a686092441324dd8844de28d3aac71b09fc
+  mise_images:
+    amd64: ghcr.io/jdx/mise@sha256:e84c5219888503210bf9dafd8f772d7d227eb0ffbd230d0deed3e3c7f82009b1
