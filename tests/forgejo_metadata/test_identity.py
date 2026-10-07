@@ -51,7 +51,7 @@ class IdentityTests(unittest.TestCase):
         label={'id':2**63-1,'name':'bug','color':'abcdef','description':'Long description'}
         projection=self.identity.render_projection(mapping,'label',label)
         payload=f'forgejo-mirror:v=1;src={"x"*16};repo=9223372036854775807;kind=label;id=9223372036854775807'
-        self.assertEqual(payload,projection.fields['description'].splitlines()[0])
+        self.assertEqual(payload,projection.fields['description'].partition(' ')[0])
         self.assertLessEqual(len(projection.fields['description']),100)
         self.assertEqual(projection.key,self.identity.parse_marker(projection.fields['description'],'label'))
 
@@ -74,3 +74,16 @@ class IdentityTests(unittest.TestCase):
     def test_multiline_label_description_remains_discoverable(self):
         projection=self.identity.render_projection(self.mapping,'label',{'id':42,'name':'bug','color':'abcdef','description':'first\nsecond'})
         self.assertEqual(projection.key,self.identity.parse_marker(projection.fields['description'],'label'))
+    def test_label_marker_survives_github_single_line_normalization(self):
+        text='forgejo-mirror:v=1;src=fixture;repo=7;kind=label;id=42 Something is broken'
+        expected=self.model.SourceKey('fixture',7,'label',42)
+        self.assertEqual(expected,self.identity.parse_marker(text,'label'))
+        projection=self.identity.render_projection(self.mapping,'label',
+            {'id':42,'name':'bug','color':'abcdef','description':'  Something\nis\tbroken  '})
+        self.assertEqual(text,projection.fields['description'])
+    def test_label_description_truncation_does_not_leave_trailing_space(self):
+        payload='forgejo-mirror:v=1;src=fixture;repo=7;kind=label;id=42'
+        capacity=99-len(payload)
+        projection=self.identity.render_projection(self.mapping,'label',
+            {'id':42,'name':'bug','color':'abcdef','description':'a'*(capacity-1)+' b'})
+        self.assertEqual(payload+' '+'a'*(capacity-1),projection.fields['description'])

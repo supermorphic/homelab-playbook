@@ -48,6 +48,24 @@ class ReconciliationTests(unittest.TestCase):
         self.source.data.issues.append(dict(self.source.data.issues[0],id=25,number=6))
         self.destination.failure='http_422'; self.run_mirror(); self.assertEqual({},self.store.load()['pending'])
         self.destination.failure=None; self.run_mirror(); self.assertEqual(2,len(self.destination.data.issues))
+    def test_normalized_accepted_label_resolves_intent_without_duplicate(self):
+        from forgejo_metadata.api import APIError
+        create=self.destination.create; first=[True]
+        def normalized(projection,parent=None):
+            locator=create(projection,parent)
+            if projection.key.kind=='label':
+                row=self.destination.rows[locator]
+                row['description']=' '.join(row['description'].split())
+                if first[0]:
+                    first[0]=False
+                    raise APIError('transport_failure')
+            return locator
+        self.destination.create=normalized
+        self.assertTrue(self.run_mirror().errors)
+        self.assertTrue(self.store.load()['pending'])
+        self.assertEqual([],self.run_mirror().errors)
+        self.assertEqual(1,len(self.destination.data.labels))
+        self.assertEqual({},self.store.load()['pending'])
     def test_budget_makes_progress_and_unmarked_human_history_survives(self):
         self.destination.data.issues.append({'id':90,'number':90,'body':'Human history','user':{'id':99}})
         for _ in range(8): self.run_mirror(1)

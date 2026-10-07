@@ -103,6 +103,9 @@ class Fixture:
                         length=int(self.headers.get('Content-Length','0'))
                         if length>65536: self.reply(413,{}); return
                         fields=json.loads(self.rfile.read(length))
+                        if kind=='labels' and isinstance(fields.get('description'),str):
+                            # GitHub normalizes label descriptions to a single line.
+                            fields['description']=' '.join(fields['description'].split())
                         if mode.get('drop'): fields.pop(mode['drop'],None)
                         if method=='POST':
                             number=101+sum(len(value) for value in fixture.data.values())

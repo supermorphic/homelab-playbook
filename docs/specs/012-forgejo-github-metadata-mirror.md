@@ -115,6 +115,8 @@ content inside a source body cannot define destination ownership.
 
 Labels have no Markdown body. Put a compact source identity marker in their
 description, followed by as much original description as the API permits. Use
+a single line because GitHub converts label-description newlines to spaces;
+retain read compatibility with the original newline-separated format. Use
 a deterministic name containing the source label ID and a readable source name.
 Bound the readable part to GitHub's name limit without truncating the identity.
 Preserve full original names in issue attribution. Label description truncation

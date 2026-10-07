@@ -8,7 +8,7 @@ def marker(key):
 
 def parse_marker(text: str, kind: str) -> SourceKey | None:
     if not isinstance(text,str): return None
-    pattern = r'^'+PATTERN+r'(?:\n[^\n]*)?$' if kind=='label' else r'<!-- '+PATTERN+r' -->$'
+    pattern = r'^'+PATTERN+r'(?:[ \n][^\n]*)?$' if kind=='label' else r'<!-- '+PATTERN+r' -->$'
     match=re.search(pattern,text)
     if not match or match[3]!=kind: return None
     key=SourceKey(match[1],int(match[2]),kind,int(match[4]))
@@ -24,8 +24,8 @@ def render_projection(mapping, kind: str, source: dict) -> Projection:
         name='fj-'+source['name'][:50-len(suffix)-3]+suffix
         identity=marker(key)
         if len(identity)>100: raise MirrorError('projection_limit')
-        text=' '.join((source.get('description') or '').splitlines())
-        description=identity+ ('\n'+text[:99-len(identity)] if text and len(identity)<99 else '')
+        text=' '.join((source.get('description') or '').split())
+        description=identity+ (' '+text[:99-len(identity)].rstrip() if text and len(identity)<99 else '')
         fields={'name':name,'color':source['color'].lstrip('#').lower(),'description':description}
     else:
         body=source.get('description' if kind=='milestone' else 'body') or ''
