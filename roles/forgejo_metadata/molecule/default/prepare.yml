@@ -1,0 +1,93 @@
+---
+- name: Prepare disposable metadata APIs
+  hosts: forgejo_metadata
+  gather_facts: true
+  become: true
+  tasks:
+    - name: Inspect the owned container runtime mount
+      ansible.builtin.command:
+        argv: [findmnt, --mountpoint, /run, --noheadings, --output, 'FSTYPE,PROPAGATION']
+      changed_when: false
+      register: forgejo_metadata_fixture_runtime_mount
+
+    - name: Require a private temporary runtime mount before enabling propagation
+      ansible.builtin.assert:
+        that:
+          - forgejo_metadata_fixture_runtime_mount.stdout.split() == ['tmpfs', 'private']
+        fail_msg: Refusing propagation changes outside the owned container runtime tmpfs
+
+    - name: Allow credential mounts to propagate between fixture service namespaces
+      ansible.builtin.command:
+        argv: [mount, --make-shared, /run]
+      changed_when: true
+
+    - name: Start fixture journal collection for runtime evidence
+      ansible.builtin.systemd_service:
+        name: systemd-journald.service
+        state: started
+
+    - name: Create root-owned fixture installation
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /usr/local/libexec
+        - /etc/forgejo-metadata-fixture
+
+    - name: Install disposable HTTPS fixture
+      ansible.builtin.copy:
+        src: "{{ lookup('env', 'MOLECULE_PROJECT_DIRECTORY') }}/../../scripts/forgejo_metadata/fixture.py"
+        dest: /usr/local/libexec/forgejo-metadata-fixture.py
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Install systemd acceptance probe
+      ansible.builtin.copy:
+        src: probe.py
+        dest: /usr/local/libexec/forgejo-metadata-probe.py
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Install fixture server unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/forgejo-metadata-fixture.service
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Disposable loopback metadata APIs
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/python3 /usr/local/libexec/forgejo-metadata-fixture.py serve --root /etc/forgejo-metadata-fixture
+
+    - name: Start owned fixture server
+      ansible.builtin.systemd_service:
+        name: forgejo-metadata-fixture.service
+        daemon_reload: true
+        state: started
+
+    - name: Wait for source HTTPS listener
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 18443
+        timeout: 30
+
+    - name: Install disposable destination CA in system trust
+      ansible.builtin.copy:
+        remote_src: true
+        src: /etc/forgejo-metadata-fixture/ca.pem
+        dest: /usr/local/share/ca-certificates/forgejo-metadata-fixture.crt
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Refresh only the disposable container trust store
+      ansible.builtin.command:
+        argv: [/usr/sbin/update-ca-certificates]
+      changed_when: true

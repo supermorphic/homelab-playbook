@@ -1,0 +1,3 @@
+---
+- name: Reuse the registered Podman create lifecycle
+  ansible.builtin.import_playbook: ../../../system_maintenance/molecule/default/create.yml

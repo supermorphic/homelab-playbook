@@ -1,0 +1,72 @@
+---
+- name: Inspect public metadata definition ownership
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+    follow: false
+    checksum_algorithm: sha256
+    get_mime: false
+    get_attributes: false
+  loop:
+    - {path: '{{ forgejo_metadata_config_root }}/config.json', template: config.json.j2}
+    - {path: /etc/systemd/system/forgejo-metadata.service, template: mirror.service.j2}
+    - {path: /etc/systemd/system/forgejo-metadata-control.service, template: control.service.j2}
+    - {path: /etc/systemd/system/forgejo-metadata.timer, template: mirror.timer.j2}
+  register: forgejo_metadata_definitions
+
+- name: Require current immutable public metadata definitions
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists and item.stat.isreg | default(false) and not item.stat.islnk | default(true)
+      - item.stat.uid == 0 and item.stat.mode == '0644'
+      - item.stat.checksum == lookup('template', item.item.template) | hash('sha256')
+    fail_msg: Metadata definitions differ; verification cannot repair them
+  loop: "{{ forgejo_metadata_definitions.results }}"
+  loop_control:
+    label: "{{ item.item.path }}"
+
+- name: Inspect installed metadata executable files
+  ansible.builtin.stat:
+    path: "{{ forgejo_metadata_helper_root }}/forgejo_metadata/{{ item | basename }}"
+    follow: false
+    checksum_algorithm: sha256
+    get_mime: false
+    get_attributes: false
+  loop: "{{ query('fileglob', role_path + '/files/forgejo_metadata/*.py') }}"
+  register: forgejo_metadata_executables
+
+- name: Require installed metadata code to match the repository
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists and item.stat.isreg | default(false) and not item.stat.islnk | default(true)
+      - item.stat.uid == 0 and item.stat.mode == '0644'
+      - item.stat.checksum == lookup('file', item.item, rstrip=false) | hash('sha256')
+    fail_msg: Metadata runtime differs; verification cannot repair it
+  loop: "{{ forgejo_metadata_executables.results }}"
+  loop_control:
+    label: "{{ item.item | basename }}"
+
+- name: Observe metadata account isolation
+  ansible.builtin.command:
+    argv: [/usr/bin/id, -G, '{{ forgejo_metadata_account }}']
+  register: forgejo_metadata_groups
+  changed_when: false
+
+- name: Require metadata non-login private identity
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.getent_passwd[forgejo_metadata_account][5] == '/usr/sbin/nologin'
+      - forgejo_metadata_groups.stdout | trim == forgejo_metadata_gid | string
+    fail_msg: Metadata account is not isolated as declared
+
+- name: Observe metadata timer activation
+  ansible.builtin.command:
+    argv: [/usr/bin/systemctl, is-enabled, forgejo-metadata.timer]
+  register: forgejo_metadata_timer_activation
+  changed_when: false
+  failed_when: false
+
+- name: Require declared metadata timer activation
+  ansible.builtin.assert:
+    that:
+      - forgejo_metadata_timer_activation.stdout | trim == ('enabled' if forgejo_metadata_timer_enabled else 'disabled')
+    fail_msg: Metadata timer enablement differs from the declaration

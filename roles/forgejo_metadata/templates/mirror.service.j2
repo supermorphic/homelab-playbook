@@ -1,0 +1,30 @@
+[Unit]
+Description=One-way Forgejo issue metadata mirror
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User={{ forgejo_metadata_account }}
+Group={{ forgejo_metadata_account }}
+WorkingDirectory={{ forgejo_metadata_helper_root }}
+ExecStart=/usr/bin/python3 -B -m forgejo_metadata --config {{ forgejo_metadata_config_root }}/config.json apply
+{% for name in (forgejo_metadata_mappings | map(attribute='source_credential') | list + forgejo_metadata_mappings | map(attribute='destination_credential') | list) | unique %}
+LoadCredential={{ name }}:{{ forgejo_metadata_config_root }}/credentials/{{ name }}
+{% endfor %}
+UMask=0077
+TimeoutStartSec={{ forgejo_metadata_timeout_seconds + 30 }}
+MemoryMax=256M
+TasksMax=32
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ forgejo_metadata_state_root }}
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=

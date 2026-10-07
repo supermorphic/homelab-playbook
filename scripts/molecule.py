@@ -96,6 +96,19 @@ FORGEJO_PLATFORMS = tuple(
 )
 
 
+FORGEJO_METADATA_PLATFORMS = tuple(
+    Platform(
+        name=item.name,
+        base_image=item.base_image,
+        image=f"localhost/homelab-playbook-forgejo-metadata-{item.name}:local",
+        container=f"homelab-playbook-forgejo-metadata-{item.name}",
+        container_command=item.container_command,
+        containerfile=item.containerfile,
+    )
+    for item in DEFAULT_PLATFORMS
+)
+
+
 @dataclass(frozen=True)
 class Scenario:
     selector: str
@@ -105,6 +118,12 @@ class Scenario:
 
 
 SCENARIOS: Mapping[str, Scenario] = MappingProxyType({
+    "forgejo_metadata/default": Scenario(
+        selector="forgejo_metadata/default",
+        role_name="forgejo_metadata",
+        scenario_name="default",
+        platforms=FORGEJO_METADATA_PLATFORMS,
+    ),
     "forgejo/default": Scenario(
         selector="forgejo/default",
         role_name="forgejo",

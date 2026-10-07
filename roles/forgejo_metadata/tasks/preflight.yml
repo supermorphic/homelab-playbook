@@ -1,0 +1,57 @@
+---
+- name: Require supported metadata mirror administration
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'Debian'
+      - ansible_facts['distribution_major_version'] == '13'
+      - ansible_facts['service_mgr'] == 'systemd'
+      - ansible_user | default('') == 'ansible'
+      - ansible_password is not defined
+      - ansible_ssh_pass is not defined
+      - ansible_ssh_password is not defined
+      - ansible_become_password is not defined
+      - ansible_become_pass is not defined
+    fail_msg: Metadata mirror requires Debian 13 and key-only ansible administration
+  no_log: true
+
+- name: Validate metadata mirror declaration
+  ansible.builtin.import_tasks: inputs.yml
+
+- name: Read existing account allocations
+  ansible.builtin.getent:
+    database: "{{ item }}"
+  loop: [passwd, group]
+
+- name: Check metadata identity allocation before mutation
+  ansible.builtin.import_tasks: identity-check.yml
+
+- name: Inspect metadata boundaries
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  loop:
+    - "{{ forgejo_metadata_state_root }}"
+    - "{{ forgejo_metadata_helper_root }}"
+    - "{{ forgejo_metadata_config_root }}"
+    - "{{ forgejo_metadata_config_root }}/credentials"
+    - /usr/local
+    - /usr/local/libexec
+    - /run/forgejo-metadata
+  register: forgejo_metadata_boundaries
+
+- name: Reject unsafe metadata boundaries
+  ansible.builtin.assert:
+    that:
+      - not item.stat.exists or item.stat.isdir
+      - not item.stat.exists or not item.stat.islnk
+      - not item.stat.exists or not item.stat.wgrp and not item.stat.woth  # codespell:ignore woth
+      - >-
+        not item.stat.exists or item.stat.uid ==
+        (forgejo_metadata_uid if item.item == forgejo_metadata_state_root else 0)
+    fail_msg: Existing metadata boundary has unsafe type, permissions or ownership
+  loop: "{{ forgejo_metadata_boundaries.results }}"
+  loop_control:
+    label: "{{ item.item }}"

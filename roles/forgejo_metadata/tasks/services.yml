@@ -1,0 +1,22 @@
+---
+- name: Install metadata system units
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/etc/systemd/system/{{ item.name }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - {src: mirror.service.j2, name: forgejo-metadata.service}
+    - {src: control.service.j2, name: forgejo-metadata-control.service}
+    - {src: mirror.timer.j2, name: forgejo-metadata.timer}
+  notify: Reload metadata system definitions
+
+- name: Apply pending metadata unit definitions before scheduling
+  ansible.builtin.meta: flush_handlers
+
+- name: Reconcile explicitly selected metadata schedule
+  ansible.builtin.systemd_service:
+    name: forgejo-metadata.timer
+    enabled: "{{ forgejo_metadata_timer_enabled }}"
+    state: "{{ 'started' if forgejo_metadata_timer_enabled else 'stopped' }}"

@@ -1,0 +1,28 @@
+---
+- name: Validate current metadata host and declaration
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Verify current installed metadata definitions
+  ansible.builtin.import_tasks: verify-definitions.yml
+
+- name: Observe public metadata enrollment and intent fingerprint
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/runuser
+      - -u
+      - "{{ forgejo_metadata_account }}"
+      - --
+      - /usr/bin/python3
+      - -B
+      - -m
+      - forgejo_metadata
+      - --config
+      - "{{ forgejo_metadata_config_root }}/config.json"
+      - plan
+    chdir: "{{ forgejo_metadata_helper_root }}"
+  register: forgejo_metadata_plan
+  changed_when: false
+
+- name: Report public metadata enrollment and confirmation fingerprint
+  ansible.builtin.debug:
+    msg: "{{ forgejo_metadata_plan.stdout | from_json }}"

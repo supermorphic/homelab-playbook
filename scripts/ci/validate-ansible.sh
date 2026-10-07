@@ -30,6 +30,7 @@ mise run test:secrets
 mise run test:tls
 mise run test:semaphore -- unit
 mise run test:forgejo -- unit
+mise run test:forgejo-metadata -- unit
 mise run test:forgejo-runner -- unit
 uv run --frozen --no-sync python -m unittest discover -s tests/ansible -p 'test_*.py' -v
 

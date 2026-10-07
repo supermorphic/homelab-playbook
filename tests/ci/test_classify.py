@@ -776,7 +776,7 @@ class ChangedRunnerTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("Selected validation depth: full", result.stdout)
         self.assertIn("Escalated validation depth: fast -> full", result.stdout)
-        self.assertEqual(12, result.stdout.count("Would run:"))
+        self.assertEqual(14, result.stdout.count("Would run:"))
         self.assertIn(
             "Would run: mise run test:molecule -- system_maintenance/default",
             result.stdout,

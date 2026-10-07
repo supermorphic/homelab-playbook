@@ -192,6 +192,9 @@ jobs:
         run: |
           mise run test:forgejo -- compatibility
           mise run test:forgejo -- fixture
+      - name: Test one-way metadata reconciliation over HTTPS
+        if: matrix.selector == 'forgejo_metadata/default' && matrix.platform == 'debian13'
+        run: mise run test:forgejo-metadata -- fixture
 
   merge-gate:
     name: merge-gate

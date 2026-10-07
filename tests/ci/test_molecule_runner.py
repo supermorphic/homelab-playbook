@@ -143,6 +143,7 @@ class RunnerCliTests(unittest.TestCase):
                 "reverse_proxy/default",
                 "semaphore/default",
                 "forgejo/default",
+                "forgejo_metadata/default",
             },
             set(scenarios),
         )
@@ -215,6 +216,19 @@ class RunnerCliTests(unittest.TestCase):
                     "debian13", "docker.io/library/debian:13",
                     "localhost/homelab-playbook-forgejo-debian13:local",
                     "homelab-playbook-forgejo-debian13",
+                    "/usr/lib/systemd/systemd", "Containerfile.debian13",
+                ),
+            ],
+        }
+        expected["forgejo_metadata/default"] = {
+            "role_name": "forgejo_metadata",
+            "scenario_name": "default",
+            "groups": ["forgejo_metadata"],
+            "platforms": [
+                (
+                    "debian13", "docker.io/library/debian:13",
+                    "localhost/homelab-playbook-forgejo-metadata-debian13:local",
+                    "homelab-playbook-forgejo-metadata-debian13",
                     "/usr/lib/systemd/systemd", "Containerfile.debian13",
                 ),
             ],

@@ -1,0 +1,4 @@
+{{ {'version': 1, 'mappings': forgejo_metadata_mappings,
+    'state_root': forgejo_metadata_state_root, 'write_budget': forgejo_metadata_write_budget,
+    'timeout_seconds': forgejo_metadata_timeout_seconds,
+    'freshness_seconds': forgejo_metadata_freshness_seconds} | to_nice_json }}

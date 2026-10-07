@@ -1,0 +1,21 @@
+---
+- name: Repeat metadata target and declaration checks
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Verify current installed metadata target definitions
+  ansible.builtin.import_tasks: verify-definitions.yml
+
+- name: Require explicit attended metadata operation
+  ansible.builtin.assert:
+    that:
+      - forgejo_metadata_request is mapping
+      - forgejo_metadata_request.operation in forgejo_metadata_allowed_operations
+    fail_msg: Supply a fingerprint-bound request and the exact attended operation
+
+- name: Submit fixed metadata control and wait for its result
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - "{{ forgejo_metadata_helper_root }}/submit.py"
+    stdin: "{{ forgejo_metadata_request | to_json }}"
+  changed_when: true

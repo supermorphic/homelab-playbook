@@ -1,0 +1,15 @@
+---
+- name: Converge metadata runtime without initialization
+  hosts: forgejo_metadata
+  gather_facts: true
+  become: true
+  vars_files: [vars/main.yml]
+  tasks:
+    - name: Provision host-native metadata mirror
+      ansible.builtin.import_role:
+        name: forgejo_metadata
+
+    - name: Seed owned safety state before the second converge
+      ansible.builtin.command:
+        argv: [/usr/bin/python3, /usr/local/libexec/forgejo-metadata-probe.py, seed]
+        creates: /var/lib/forgejo-metadata/state.json

@@ -1,0 +1,13 @@
+---
+forgejo_metadata_account: svc-forgejo-metadata
+forgejo_metadata_uid: null
+forgejo_metadata_gid: null
+forgejo_metadata_mappings: []
+forgejo_metadata_tokens: {}
+forgejo_metadata_timer_enabled: false
+forgejo_metadata_state_root: /var/lib/forgejo-metadata
+forgejo_metadata_helper_root: /usr/local/libexec/forgejo-metadata
+forgejo_metadata_config_root: /etc/forgejo-metadata
+forgejo_metadata_write_budget: 100
+forgejo_metadata_timeout_seconds: 600
+forgejo_metadata_freshness_seconds: 3600

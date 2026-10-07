@@ -1,0 +1,30 @@
+---
+- name: Validate metadata host and declaration
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Observe installed metadata definitions
+  ansible.builtin.import_tasks: verify-definitions.yml
+
+- name: Observe metadata initialization and convergence without repair
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/runuser
+      - -u
+      - "{{ forgejo_metadata_account }}"
+      - --
+      - /usr/bin/python3
+      - -B
+      - -m
+      - forgejo_metadata
+      - --config
+      - "{{ forgejo_metadata_config_root }}/config.json"
+      - check
+    chdir: "{{ forgejo_metadata_helper_root }}"
+  register: forgejo_metadata_check
+  changed_when: false
+  failed_when: false
+
+- name: Require current successful metadata convergence
+  ansible.builtin.assert:
+    that: forgejo_metadata_check.rc == 0
+    fail_msg: "Metadata replication acceptance is pending: {{ forgejo_metadata_check.stdout | trim }}"
