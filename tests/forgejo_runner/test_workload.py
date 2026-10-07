@@ -13,7 +13,7 @@ class WorkloadTests(unittest.TestCase):
         self.assertTrue(path.is_file(), 'Real Forgejo workload probe is missing')
         return importlib.import_module('scripts.forgejo_runner.workload')
 
-    def test_stock_runtime_suite_runs_only_the_five_pinned_tasks(self):
+    def test_stock_runtime_suite_prepares_the_image_then_runs_the_five_pinned_tasks(self):
         module = self.module()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -24,12 +24,56 @@ class WorkloadTests(unittest.TestCase):
                                     capture_output=True, text=True)
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertEqual(['trust --yes', 'install --locked', 'run bootstrap',
+                'run test:molecule -- semaphore/default',
                 'run test:forgejo -- compatibility', 'run test:forgejo -- fixture',
                 'run test:semaphore -- compatibility', 'run test:semaphore -- fixture',
                 'run test:semaphore -- controller'], (root / 'calls').read_text().splitlines())
         for kwargs in ({'suite':'stock-runtime; false'}, {'selector':'forgejo/default', 'suite':'stock-runtime'}, {}):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 module.validation_script(**kwargs)
+
+    def execute(self, *, prerequisite_fails=False):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            mise = root / 'mise'
+            mise.write_text('''#!/bin/sh
+printf '%s\\n' "$*" >> calls
+case "$*" in
+  "run test:molecule -- semaphore/default")
+    if [ "$FAIL_PREREQUISITE" = 1 ]; then exit 23; fi
+    touch semaphore-image ;;
+  "run test:semaphore -- controller")
+    if [ ! -f semaphore-image ]; then exit 24; fi ;;
+esac
+''')
+            mise.chmod(0o755)
+            env = {'PATH': directory + ':/usr/bin:/bin',
+                   'FAIL_PREREQUISITE': str(int(prerequisite_fails))}
+            result = subprocess.run(['bash', '-ec', self.module().validation_script(suite='stock-runtime')],
+                                    cwd=root, env=env, capture_output=True, text=True)
+            calls = (root / 'calls').read_text().splitlines()
+            return result, calls
+
+    def test_stock_controller_requires_same_job_image_preparation(self):
+        result, calls = self.execute()
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(1, calls.count('run test:molecule -- semaphore/default'))
+        self.assertLess(calls.index('run test:molecule -- semaphore/default'),
+                        calls.index('run test:semaphore -- controller'))
+        self.assertEqual(5, sum(call.startswith(('run test:forgejo --', 'run test:semaphore --'))
+                                for call in calls))
+
+    def test_failed_image_preparation_stops_stock_commands(self):
+        result, calls = self.execute(prerequisite_fails=True)
+        self.assertEqual(23, result.returncode)
+        self.assertFalse(any(call.startswith(('run test:forgejo --', 'run test:semaphore --'))
+                             for call in calls))
+
+    def test_stock_policy_admits_only_canonical_prerequisite_base(self):
+        sources = self.module().registry_sources(suite='stock-runtime')
+        self.assertIn('docker.io/library/debian:13', sources)
+        self.assertNotIn('docker.io/library/debian', sources)
+
 
     def test_native_workflow_clones_the_private_loopback_application(self):
         import yaml

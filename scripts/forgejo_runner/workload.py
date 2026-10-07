@@ -25,7 +25,7 @@ def validation_script(selector: str | None = None, *, suite=None) -> str:
     if suite is not None:
         if selector is not None or suite != 'stock-runtime':
             raise ValueError('Unknown or conflicting workload suite')
-        commands = STOCK_RUNTIME_COMMANDS
+        commands = ('mise run test:molecule -- semaphore/default', *STOCK_RUNTIME_COMMANDS)
     else:
         if selector not in SCENARIOS:
             raise ValueError('Unknown Molecule workload selector')
@@ -45,7 +45,8 @@ def registry_sources(selector=None, *, suite=None):
     pins = defaults()
     return {pins['forgejo_image'], pins['forgejo_postgres_image'], pins['forgejo_rclone_image'],
             forgejo_samba, semaphore_samba, SEMAPHORE_IMAGE, POSTGRES_IMAGE, RCLONE_IMAGE,
-            restore.SEMAPHORE_IMAGE, restore.POSTGRES_IMAGE, restore.RCLONE_IMAGE}
+            restore.SEMAPHORE_IMAGE, restore.POSTGRES_IMAGE, restore.RCLONE_IMAGE} | {
+                platform.base_image for platform in SCENARIOS['semaphore/default'].platforms}
 
 
 def restore_source_tree(root: Path, expected: str) -> str:
