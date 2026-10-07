@@ -52,11 +52,12 @@ class NativeWorkloadTests(unittest.TestCase):
         manager.read_string(files['etc/systemd/user.conf'])
         self.assertEqual('CONTAINERS_STORAGE_CONF=/etc/containers/storage.conf',
                          manager['Manager']['DefaultEnvironment'])
+        self.assertEqual('/work/graph',store['rootless_storage_path'])
         self.assertEqual('overlay',store['driver'])
         self.assertEqual('',store['options']['overlay']['mount_program'])
         config=json.loads(files['worker.json'])
         observed={'graphDriverName':'overlay','graphRoot':'/work/graph',
-                  'runRoot':f'/run/user/{uid}/storage','graphOptions':{'overlay.mountopt':'nodev'}}
+                  'runRoot':f'/run/user/{uid}/containers','graphOptions':{'overlay.mountopt':'nodev'}}
         worker_probe.validate_storage_driver(observed,config)
         for key,value in (('graphDriverName','vfs'),('graphRoot','/host/state'),
                           ('runRoot','/host/run'),('graphOptions',{'overlay.mount_program':'/usr/bin/fuse-overlayfs'})):

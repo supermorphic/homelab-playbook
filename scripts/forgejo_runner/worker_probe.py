@@ -84,7 +84,7 @@ def validate_storage_driver(store, configuration):
     options=store.get('graphOptions',{})
     if (store.get('graphDriverName') != expected
             or store.get('graphRoot') != '/work/graph'
-            or store.get('runRoot') != f"/run/user/{worker['uid']}/storage"
+            or store.get('runRoot') != f"/run/user/{worker['uid']}/containers"
             or not isinstance(options,dict)
             or expected == 'overlay' and options.get('overlay.mount_program')):
         raise ValueError('Worker storage differs from its selected owned native driver')

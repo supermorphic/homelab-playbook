@@ -226,7 +226,8 @@ class HostWorkerTests(unittest.TestCase):
         import tomllib
         files = self.worker.worker_files(self.target(), 'trusted launcher')
         storage = tomllib.loads(files['etc/containers/storage.conf'])['storage']
-        self.assertEqual('/run/user/2202/storage', storage['runroot'])
+        self.assertEqual('/run/user/2202/containers', storage['runroot'])
+        self.assertEqual('/work/graph', storage['rootless_storage_path'])
         self.assertEqual('/work/graph', storage['graphroot'])
 
     def test_offline_fixture_has_private_network_files_without_external_resolvers(self):
