@@ -51,7 +51,7 @@ class ImageStore:
 
 
 class NativeAssetTests(unittest.TestCase):
-    def prepare_assets(self, store):
+    def prepare_assets(self, store, *, workload=None):
         module = importlib.import_module('scripts.forgejo_runner.native_assets')
         from scripts.forgejo_runner.fixture import ROOT, RunnerRun
         scratch = ROOT / '.tmp/forgejo-runner'
@@ -62,18 +62,26 @@ class NativeAssetTests(unittest.TestCase):
             descriptor.write_text(json.dumps({
                 'probe_images': {'amd64': store.references[0]},
                 'runner_images': {'amd64': store.references[1]},
+                **({'mise_images': {'amd64':store.references[4]}} if workload else {}),
             }))
             with patch('scripts.forgejo.runtime.defaults', return_value={
                     'forgejo_image': store.references[2],
                     'forgejo_postgres_image': store.references[3]}), \
                     patch.object(RunnerRun, 'command', side_effect=store.command):
-                assets, configuration = module.prepare(directory, descriptor, 'amd64')
+                assets, configuration = module.prepare(directory, descriptor, 'amd64', **({'workload':workload} if workload else {}))
             self.assertEqual([row['id'] for row in configuration['images']],
-                             ['1' * 64, '2' * 64, '3' * 64, '4' * 64])
-            self.assertEqual(len(assets), 6)
-            for index in range(4):
+                             [str(index+1)*64 for index in range(5 if workload else 4)])
+            self.assertEqual(len(assets), 7 if workload else 6)
+            for index in range(5 if workload else 4):
                 self.assertEqual((directory / f'image-{index}.oci').read_bytes(),
                                  b'public OCI asset')
+
+    def test_native_workload_stages_a_fifth_immutable_mise_asset(self):
+        store=ImageStore()
+        pin='ghcr.io/jdx/mise@sha256:'+'e'*64
+        store.references.append(pin); store.cached.add(pin)
+        store.images[pin]={'Id':'5'*64,'Architecture':'amd64','RepoDigests':[pin]}
+        self.prepare_assets(store,workload={'selector':'forgejo/default'})
 
     def test_verified_cached_assets_work_after_registry_manifest_retirement(self):
         try:

@@ -71,9 +71,17 @@ def check_published_http(bindings):
         connection.close()
 
 
+def sibling_lifetime(limits):
+    seconds = limits['job_seconds']
+    if type(seconds) is not int or not 0 < seconds <= 10800:
+        raise ValueError('Invalid synthetic sibling lifetime')
+    return seconds + 30
+
+
 def main():
     config = json.loads(Path('/worker.json').read_text())
     worker = config['worker']
+    lifetime = sibling_lifetime(config['limits'])
     runtime = Path(f'/run/user/{worker["uid"]}')
     status = dict(line.split(':', 1) for line in Path('/proc/self/status').read_text().splitlines() if ':' in line)
     validate_credentials(status, worker['uid'], worker['gid'])
@@ -111,7 +119,7 @@ def main():
     execute(client + ['import', str(archive), 'localhost/worker-synthetic:fixture'])
     share = Path('/work/share'); share.mkdir(mode=0o777); share.chmod(0o777)
     # UID1 exercises a subordinate host ID, :U ownership and a same-path bind.
-    server = "import pathlib,socket,time; pathlib.Path('/work/share/result').write_text('owned-sibling'); s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(); pathlib.Path('/work/share/port').write_text(str(s.getsockname()[1])); c,a=s.accept(); c.sendall(b'private-loopback'); c.close(); time.sleep(90)"
+    server = f"import pathlib,socket,time; pathlib.Path('/work/share/result').write_text('owned-sibling'); s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(); pathlib.Path('/work/share/port').write_text(str(s.getsockname()[1])); c,a=s.accept(); c.sendall(b'private-loopback'); c.close(); time.sleep({lifetime})"
     common = ['run', '-d', '--security-opt=no-new-privileges', '-v', '/usr:/usr:ro,nosuid,nodev',
               '-v', '/work/share:/work/share:U', '--user=1:1']
     first = execute(client + common + ['--network=host', '--name=worker-sibling-one',
@@ -133,7 +141,7 @@ def main():
     if Path('/work/copied').read_text() != 'owned-sibling':
         raise ValueError('Sibling copy failed')
     second = execute(client + common + ['--network=none', '--name=worker-sibling-two',
-                     'localhost/worker-synthetic:fixture', '/usr/bin/python3', '-c', 'import time; time.sleep(90)']).strip()
+                     'localhost/worker-synthetic:fixture', '/usr/bin/python3', '-c', f'import time; time.sleep({lifetime})']).strip()
     http_server = """from http.server import BaseHTTPRequestHandler, HTTPServer
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):

@@ -13,6 +13,57 @@ class WorkloadTests(unittest.TestCase):
         self.assertTrue(path.is_file(), 'Real Forgejo workload probe is missing')
         return importlib.import_module('scripts.forgejo_runner.workload')
 
+    def test_stock_runtime_suite_runs_only_the_five_pinned_tasks(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'mise').write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> calls\n')
+            (root / 'mise').chmod(0o755)
+            result = subprocess.run(['bash', '-ec', module.validation_script(suite='stock-runtime')],
+                                    env={'PATH': directory + ':/usr/bin:/bin'}, cwd=root,
+                                    capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(['trust --yes', 'install --locked', 'run bootstrap',
+                'run test:forgejo -- compatibility', 'run test:forgejo -- fixture',
+                'run test:semaphore -- compatibility', 'run test:semaphore -- fixture',
+                'run test:semaphore -- controller'], (root / 'calls').read_text().splitlines())
+        for kwargs in ({'suite':'stock-runtime; false'}, {'selector':'forgejo/default', 'suite':'stock-runtime'}, {}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                module.validation_script(**kwargs)
+
+    def test_native_workflow_clones_the_private_loopback_application(self):
+        import yaml
+        from types import SimpleNamespace
+        application = SimpleNamespace(app='container-name', user='fixture', url='http://127.0.0.1:12345')
+        document = yaml.safe_load(self.module().workflow('fixture-label', application,
+            {'name':'repository'}, Path('/work/job-workspace'), 'forgejo/default',
+            clone_base=application.url, public_probe=True))
+        script = document['jobs']['first']['steps'][0]['run']
+        self.assertIn('git clone http://127.0.0.1:12345/fixture/repository.git ', script)
+        self.assertIn('python3 "$TMPDIR/public-probe.py"', script)
+        self.assertEqual('unexpected-second-job', document['jobs']['second']['steps'][0]['run'].split()[-1])
+
+    def test_archived_source_must_reconstruct_the_exact_git_tree(self):
+        module = self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); original=root/'original'; restored=root/'restored'
+            original.mkdir(); restored.mkdir()
+            def git(path,*args):
+                return subprocess.check_output(['git','-C',str(path),*args],text=True).strip()
+            git(original,'init','-q')
+            (original/'executable').write_text('#!/bin/sh\necho candidate\n')
+            (original/'executable').chmod(0o755)
+            (original/'link').symlink_to('executable')
+            git(original,'add','--all'); tree=git(original,'write-tree')
+            archive=root/'source.tar'
+            subprocess.run(['git','-C',str(original),'archive','--format=tar','--output',str(archive),tree],check=True)
+            import tarfile
+            with tarfile.open(archive) as t: t.extractall(restored,filter='data')
+            self.assertEqual(tree,module.restore_source_tree(restored,tree))
+            self.assertEqual(tree,git(restored,'write-tree'))
+            changed=root/'changed'; changed.mkdir(); (changed/'different').write_text('different')
+            with self.assertRaises(ValueError): module.restore_source_tree(changed,tree)
+
     def test_failed_public_probe_fails_the_real_job_script(self):
         import yaml
         with tempfile.TemporaryDirectory() as directory:

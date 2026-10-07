@@ -30,6 +30,11 @@ def main(argv: list[str] | None = None) -> int:
                         help='Bounded public DNS/download and controlled denial test on the native host')
     parser.add_argument('--native-probe-only', action='store_true',
                         help='Combined real-job and public-network acceptance in the bounded native worker')
+    parser.add_argument('--native-workload', choices=('forgejo/default','system_maintenance/default',
+                        'system_maintenance/baseline','semaphore/default','reverse_proxy/default'),
+                        help='Run a named Molecule scenario in the bounded native worker')
+    parser.add_argument('--suite', choices=('stock-runtime',),
+                        help='Run the five stock runtime checks in the bounded native worker')
     parser.add_argument("--workload", choices=("forgejo/default", "system_maintenance/default",
                         "system_maintenance/baseline", "semaphore/default", "reverse_proxy/default"),
                         help="Run a staged repository Molecule candidate in a real Forgejo job")
@@ -38,8 +43,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--workflow-contracts', action='store_true',
                         help='Exercise synthetic workflow outputs, artifacts and negative gates')
     args = parser.parse_args(argv)
-    if (args.host_fixture or args.preflight_only or args.resource_probe_only or args.worker_probe_only or args.job_probe_only or args.network_probe_only or args.egress_probe_only or args.native_probe_only) and args.mode != "host-fixture":
+    if (args.host_fixture or args.preflight_only or args.resource_probe_only or args.worker_probe_only or args.job_probe_only or args.network_probe_only or args.egress_probe_only or args.native_probe_only or args.native_workload or args.suite) and args.mode != "host-fixture":
         parser.error("host options require host-fixture mode")
+    if (args.native_workload or args.suite) and (args.native_workload and args.suite
+            or args.native_probe_only or args.preflight_only or args.resource_probe_only
+            or args.worker_probe_only or args.job_probe_only or args.network_probe_only
+            or args.egress_probe_only or args.workload or args.controller_failure or args.workflow_contracts):
+        parser.error('native workloads cannot be mixed with other experiments')
     if args.resource_probe_only and (args.preflight_only or args.fixture):
         parser.error('resource probe cannot be combined with preflight or image fixtures')
     if args.worker_probe_only and (args.resource_probe_only or args.preflight_only or args.fixture):
@@ -69,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.mode == "host-fixture":
             from scripts.forgejo_runner.host_fixture import run
+            if args.native_workload or args.suite:
+                return run(args.fixture, args.host_fixture, native_workload=args.native_workload, suite=args.suite)
             if args.native_probe_only:
                 return run(args.fixture, args.host_fixture, native_probe_only=True)
             if args.egress_probe_only:

@@ -39,6 +39,23 @@ def validate_job_budget(target, capacity=None):
             raise ValueError('Insufficient native job reserve; no setup was performed')
 
 
+def validate_workload_budget(target, capacity=None):
+    limits = target['limits']
+    ranges = {'memory_bytes': (1024**3, 3 * 1024**3),
+              'disk_bytes': (16 * 1024**3, 32 * 1024**3),
+              'pids': (512, 1024), 'cpu_percent': (50, 200), 'job_seconds': (900, 10800)}
+    if any(type(limits[key]) is not int or not low <= limits[key] <= high
+           for key, (low, high) in ranges.items()):
+        raise ValueError('Native workload exceeds its finite experiment budgets')
+    if capacity is not None:
+        if (capacity['memory_available'] < limits['memory_bytes'] + 4 * 1024**3
+                or capacity['memory_total'] < limits['memory_bytes'] + 4 * 1024**3
+                or capacity['disk_available'] < limits['disk_bytes'] + 4 * 1024**3
+                or type(capacity.get('cpu_count')) is not int
+                or limits['cpu_percent'] > capacity['cpu_count'] // 2 * 100):
+            raise ValueError('Insufficient native workload reserve; no setup was performed')
+
+
 def worker_cleanup_errors(target, proc=Path('/proc')):
     worker = target['worker']
     for process in proc.iterdir():
@@ -77,12 +94,12 @@ def validate_process_boundary(target, records, outer, host_net, host_userns, hos
         raise ValueError('Worker and subordinate container observations are required')
 
 
-def worker_files(target, launcher, *, oci_assets=()):
+def worker_files(target, launcher, *, oci_assets=(), registry_images=()):
     """Private image NSS records authorize only the declared unused ID ranges."""
     worker = target['worker']
     user, uid, gid = worker['user'], worker['uid'], worker['gid']
-    if (len(oci_assets) > 4 or len(set(oci_assets)) != len(oci_assets)
-            or any(re.fullmatch(r'image-[0-3]\.oci', name) is None for name in oci_assets)):
+    if (len(oci_assets) > 5 or len(set(oci_assets)) != len(oci_assets)
+            or any(re.fullmatch(r'image-[0-4]\.oci', name) is None for name in oci_assets)):
         raise ValueError('Invalid declared OCI asset paths')
     files = {
         'worker-launch.py': launcher,
@@ -120,6 +137,16 @@ def worker_files(target, launcher, *, oci_assets=()):
         policy = json.loads(files['etc/containers/policy.json'])
         policy['transports']['oci-archive'] = {
             '/work/input/' + name: [{'type': 'insecureAcceptAnything'}] for name in oci_assets}
+        files['etc/containers/policy.json'] = json.dumps(policy)
+    if registry_images:
+        from scripts.forgejo_runner.workload import registry_sources, SCENARIOS
+        approved = registry_sources(suite='stock-runtime')
+        for selector in SCENARIOS:
+            approved |= registry_sources(selector)
+        if any(not isinstance(ref, str) or ref not in approved for ref in registry_images):
+            raise ValueError('Invalid workload registry source')
+        policy = json.loads(files['etc/containers/policy.json'])
+        policy['transports']['docker'] = {ref: [{'type':'insecureAcceptAnything'}] for ref in registry_images}
         files['etc/containers/policy.json'] = json.dumps(policy)
     return files
 
@@ -254,6 +281,8 @@ def observe_worker_boundary(target, observed, unit):
 
 def observe_job_boundary(target, observed, unit):
     required = {'one_job', 'job_runtime'}
+    if isinstance(observed, dict) and 'job_workload' in observed:
+        required.add('job_workload')
     if isinstance(observed, dict) and 'job_public_access' in observed:
         required.add('job_public_access')
     if not isinstance(observed, dict) or any(observed.get(key) is not True for key in required):

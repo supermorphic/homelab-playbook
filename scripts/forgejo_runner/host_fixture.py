@@ -358,11 +358,17 @@ def inspect_egress(target: dict) -> dict:
     return outcome
 
 
-def inspect_native_jobs(target: dict, images: Path, *, public_network=False) -> dict:
-    from scripts.forgejo_runner.host_worker import validate_job_budget
+def inspect_native_jobs(target: dict, images: Path, *, public_network=False, workload=None) -> dict:
+    from scripts.forgejo_runner.host_worker import validate_job_budget, validate_workload_budget
     from scripts.forgejo_runner.native_assets import prepare
+    from scripts.forgejo_runner.workload import validation_script, registry_sources
     validate_target(target)
-    validate_job_budget(target)
+    budget = validate_workload_budget if workload is not None else validate_job_budget
+    budget(target)
+    if workload is not None:
+        validation_script(**workload)
+        if not public_network:
+            raise ValueError('Native workloads require the accepted public network boundary')
     if public_network:
         from scripts.forgejo_runner.host_network import validate_network_target
         validate_network_target(target)
@@ -373,15 +379,16 @@ def inspect_native_jobs(target: dict, images: Path, *, public_network=False) -> 
         payload += 'exec(' + repr((ROOT / 'scripts/forgejo_runner' / name).read_text()) + ')\n'
     preflight = payload + 't=' + repr(target) + '\n'
     preflight += 'o=validate_observation(t,observe(t),allow_new_fixture=True)\n'
-    preflight += "validate_job_budget(t,host_capacity(Path(t['state_root']).parent if Path(t['state_root']).parent.exists() else Path(t['state_root']).parent.parent))\n"
+    preflight += budget.__name__ + "(t,host_capacity(Path(t['state_root']).parent if Path(t['state_root']).parent.exists() else Path(t['state_root']).parent.parent))\n"
     preflight += "print(json.dumps({'architecture':o['architecture']}))\n"
     architecture = ssh_observation(target, preflight)['architecture']
     scratch = ROOT / '.tmp/forgejo-runner'; scratch.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='native-assets-', dir=scratch) as directory:
-        assets, configuration = prepare(Path(directory), images, architecture)
+        assets, configuration = prepare(Path(directory), images, architecture, **({'workload':workload} if workload else {}))
         from scripts.forgejo_runner.host_worker import worker_files
         extra = worker_files(target, (ROOT / 'scripts/forgejo_runner/worker_launch.py').read_text(),
-                             oci_assets=[image['asset'] for image in configuration['images']])
+                             oci_assets=[image['asset'] for image in configuration['images']],
+                             registry_images=sorted(registry_sources(**workload)) if workload else ())
         extra['offline_probe.py'] = (ROOT / 'scripts/forgejo_runner/worker_probe.py').read_text()
         extra['job.json'] = json.dumps(configuration)
         if public_network:
@@ -395,6 +402,7 @@ def inspect_native_jobs(target: dict, images: Path, *, public_network=False) -> 
                 payload += 'exec(' + repr((ROOT / 'scripts/forgejo_runner' / name).read_text()) + ')\n'
 
         probe = '''import contextlib, json, pathlib, sys, tarfile
+sys.dont_write_bytecode = True
 for name, destination in (('source.tar', '/work/source'), ('vendor.tar', '/work/vendor')):
     pathlib.Path(destination).mkdir(mode=0o700)
     with tarfile.open('/work/input/' + name) as archive:
@@ -405,12 +413,12 @@ with pathlib.Path('/work/job-progress.log').open('w', buffering=1) as progress, 
     result = run_probe()
 print(json.dumps(result), flush=True)
 '''
-        stage = 'native-only' if public_network else 'job-only'
+        stage = 'workload-only' if workload else 'native-only' if public_network else 'job-only'
         if public_network:
             probe = probe.replace('result = run_probe()', 'import egress_probe; result = run_probe(observed=egress_probe.main())')
         payload += 'exec(' + repr((ROOT / 'scripts/forgejo_runner/host_inputs.py').read_text()) + ')\n'
         payload += 'print(json.dumps(run_image_probe(' + repr(target) + ', observe, validate_observation, ' + repr(probe)
-        payload += ", stage=" + repr(stage) + ", budget_validator=validate_job_budget, extra_files=" + repr(extra)
+        payload += ", stage=" + repr(stage) + ", budget_validator=" + budget.__name__ + ", extra_files=" + repr(extra)
         payload += ', assets=' + repr(assets) + ', asset_validator=validate_assets, asset_receiver=receive_asset'
         payload += ', worker_observer=observe_job_boundary, worker_reader=read_worker_result, after_stop=lambda t: worker_cleanup_errors(t)'
         payload += "+worker_cleanup_errors({**t,'worker':t['controller']}))))\n"
@@ -423,6 +431,8 @@ print(json.dumps(result), flush=True)
         required |= {'allowed_ipv4', 'allowed_ipv6', 'denied_ipv4', 'denied_ipv6', 'policy_immutable',
                      'alternate_network_modes', 'kernel_policy', 'controlled_peer', 'dns', 'forgejo_https',
                      'public_http', 'public_https', 'gateway_boundary', 'job_public_access'}
+    if workload:
+        required.add('job_workload')
     if (not isinstance(outcome, dict) or outcome.get('acceptance') != stage
             or type(outcome.get('exit_code')) is not int or outcome['exit_code'] not in (0, 1, 130)
             or not isinstance(outcome.get('cleanup_errors'), list)):
@@ -432,13 +442,14 @@ print(json.dumps(result), flush=True)
         if (outcome['cleanup_errors'] or outcome.get('primary_error') is not None
                 or set(result) != required or any(result[key] is not True for key in required)):
             raise ValueError('Native job experiment lacks required evidence')
-    return {**outcome, 'architecture': architecture, 'source_tree': configuration['source_tree']}
+    return {**outcome, 'architecture': architecture, 'source_tree': configuration['source_tree'],
+            **({'workload':workload} if workload else {})}
 
 
 def run(images: Path | None, target: Path | None, *, preflight_only: bool = False,
         resource_probe_only: bool = False, worker_probe_only: bool = False,
         job_probe_only: bool = False, network_probe_only: bool = False, egress_probe_only: bool = False,
-        native_probe_only: bool = False) -> int:
+        native_probe_only: bool = False, native_workload=None, suite=None) -> int:
     """Separate observational prerequisites from the unfinished containment gate."""
     if target is None:
         raise ValueError("An explicit disposable Debian host fixture descriptor is required")
@@ -452,7 +463,10 @@ def run(images: Path | None, target: Path | None, *, preflight_only: bool = Fals
     except (OSError, ValueError) as error:
         raise ValueError("Cannot load disposable host descriptor") from error
     validate_target(descriptor)
-    if native_probe_only:
+    if native_probe_only or native_workload or suite:
+        if native_workload and suite or native_probe_only and (native_workload or suite):
+            raise ValueError('Conflicting native workload selection')
+        selection = {'selector':native_workload} if native_workload else {'suite':suite} if suite else None
         if preflight_only or resource_probe_only or worker_probe_only or job_probe_only or network_probe_only or egress_probe_only:
             raise ValueError('Combined native probe cannot be mixed with isolated experiments')
         if images is None or not images.resolve().is_relative_to((ROOT / '.tmp').resolve()):
@@ -460,11 +474,11 @@ def run(images: Path | None, target: Path | None, *, preflight_only: bool = Fals
         if subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip():
             raise ValueError('Native acceptance requires a clean committed source candidate')
         tree = subprocess.check_output(['git', 'write-tree'], cwd=ROOT, text=True).strip()
-        result = inspect_native_jobs(descriptor, images, public_network=True)
+        result = inspect_native_jobs(descriptor, images, public_network=True, workload=selection)
         if (tree != result['source_tree'] or tree != subprocess.check_output(['git', 'write-tree'], cwd=ROOT, text=True).strip()
                 or subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip()):
             raise RuntimeError('Native acceptance source changed; evidence is invalid')
-        with tempfile.NamedTemporaryFile(mode='w', prefix='host-native-outcome-', suffix='.json', dir=target.parent, delete=False) as evidence:
+        with tempfile.NamedTemporaryFile(mode='w', prefix='host-native-workload-outcome-' if selection else 'host-native-outcome-', suffix='.json', dir=target.parent, delete=False) as evidence:
             json.dump(result, evidence, indent=2); evidence.write('\n')
         print(f'Combined native outcome saved to {evidence.name}')
         if result['exit_code']:

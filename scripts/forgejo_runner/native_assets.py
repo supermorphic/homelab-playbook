@@ -27,7 +27,7 @@ def asset_descriptor(path):
     return {'size': path.stat().st_size, 'sha256': digest.hexdigest()}
 
 
-def prepare(directory, descriptor, architecture):
+def prepare(directory, descriptor, architecture, *, workload=None):
     from scripts.forgejo.runtime import defaults
     from scripts.forgejo_runner.fixture import ROOT, load_candidate, RunnerRun
     from scripts.forgejo_runner.host_inputs import validate_assets
@@ -37,13 +37,21 @@ def prepare(directory, descriptor, architecture):
     candidate = load_candidate(descriptor, architecture)
     if not candidate['runner_image']:
         raise ValueError('Native job requires an immutable runner image')
+    sources = [candidate['probe_image'], candidate['runner_image']]
+    selected_mise = None
+    if workload is not None:
+        from scripts.forgejo_runner.workload import validation_script, mise_image
+        validation_script(**workload)
+        selected_mise = mise_image(descriptor, architecture)
     pins = defaults()
+    sources += [pins['forgejo_image'], pins['forgejo_postgres_image']]
+    if selected_mise:
+        sources.append(selected_mise)
     experiment = RunnerRun()
     auth = experiment.private_file(directory, 'registry-auth.json', '{"auths":{}}\n')
     assets = {}
     rows = []
-    for index, pin in enumerate([candidate['probe_image'], candidate['runner_image'],
-                                 pins['forgejo_image'], pins['forgejo_postgres_image']]):
+    for index, pin in enumerate(sources):
         cached = experiment.command([experiment.podman, 'image', 'exists', pin], check=False)
         if cached.returncode == 1:
             experiment.command([experiment.podman, 'pull', '--authfile', str(auth),
@@ -84,4 +92,4 @@ def prepare(directory, descriptor, architecture):
     assets['work/input/vendor.tar'] = asset_descriptor(path)
     validate_assets(assets, 2 * 1024**3)
     return assets, {'architecture': architecture, 'source_tree': tree, 'images': rows,
-                    'candidate': candidate}
+                    'candidate': candidate, **({'workload':workload, 'mise_image':selected_mise} if workload else {})}

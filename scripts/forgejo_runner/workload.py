@@ -14,13 +14,59 @@ def workload_lock(root: Path):
     return invocation_lock(root, SubprocessCommandRunner())
 
 
-def validation_script(selector: str) -> str:
-    if selector not in SCENARIOS:
-        raise ValueError('Unknown Molecule workload selector')
-    return '\n'.join([
-        'mise trust --yes', 'mise install --locked', 'mise run bootstrap',
-        'mise run test:molecule -- ' + shlex.quote(selector),
-    ])
+STOCK_RUNTIME_COMMANDS = (
+    'mise run test:forgejo -- compatibility', 'mise run test:forgejo -- fixture',
+    'mise run test:semaphore -- compatibility', 'mise run test:semaphore -- fixture',
+    'mise run test:semaphore -- controller',
+)
+
+
+def validation_script(selector: str | None = None, *, suite=None) -> str:
+    if suite is not None:
+        if selector is not None or suite != 'stock-runtime':
+            raise ValueError('Unknown or conflicting workload suite')
+        commands = STOCK_RUNTIME_COMMANDS
+    else:
+        if selector not in SCENARIOS:
+            raise ValueError('Unknown Molecule workload selector')
+        commands = ('mise run test:molecule -- ' + shlex.quote(selector),)
+    return '\n'.join(['mise trust --yes', 'mise install --locked', 'mise run bootstrap', *commands])
+
+
+def registry_sources(selector=None, *, suite=None):
+    validation_script(selector, suite=suite)
+    if selector:
+        return {platform.base_image for platform in SCENARIOS[selector].platforms}
+    from scripts.forgejo.runtime import defaults
+    from scripts.forgejo.fixture import SAMBA_IMAGE as forgejo_samba
+    from scripts.semaphore.fixture import SAMBA_IMAGE as semaphore_samba
+    from scripts.semaphore.test import SEMAPHORE_IMAGE, POSTGRES_IMAGE, RCLONE_IMAGE
+    from scripts.semaphore import restore
+    pins = defaults()
+    return {pins['forgejo_image'], pins['forgejo_postgres_image'], pins['forgejo_rclone_image'],
+            forgejo_samba, semaphore_samba, SEMAPHORE_IMAGE, POSTGRES_IMAGE, RCLONE_IMAGE,
+            restore.SEMAPHORE_IMAGE, restore.POSTGRES_IMAGE, restore.RCLONE_IMAGE}
+
+
+def restore_source_tree(root: Path, expected: str) -> str:
+    """Recreate only archived objects; verify modes and content before seeding."""
+    import re
+    if re.fullmatch(r'[0-9a-f]{40}', expected) is None or (root / '.git').exists():
+        raise ValueError('Invalid archived source candidate')
+    environment = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+    environment.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull,
+                       GIT_CONFIG_COUNT='2', GIT_CONFIG_KEY_0='core.hooksPath',
+                       GIT_CONFIG_VALUE_0=os.devnull, GIT_CONFIG_KEY_1='core.autocrlf',
+                       GIT_CONFIG_VALUE_1='false')
+    def git(*args):
+        return subprocess.check_output(['git', '-C', str(root), *args],
+                                       env=environment, text=True, stderr=subprocess.PIPE).strip()
+    git('init', '-q', '--object-format=sha1')
+    git('add', '--force', '--all')
+    actual = git('write-tree')
+    if actual != expected:
+        raise ValueError('Archived source does not match its declared tree')
+    return actual
 
 
 def source_tree(root: Path) -> str:
@@ -126,9 +172,11 @@ print('actual-job-runtime-passed')
     }}, sort_keys=False)
 
 
-def workflow(label: str, application, repository: dict, workspace: Path, selector: str) -> str:
+def workflow(label: str, application, repository: dict, workspace: Path, selector: str | None = None,
+             *, suite=None, clone_base=None, public_probe=False) -> str:
     import yaml
-    clone = f"http://{application.app}:3000/{application.user}/{repository['name']}.git"
+    base = clone_base or f"http://{application.app}:3000"
+    clone = f"{base}/{application.user}/{repository['name']}.git"
     script = '\n'.join([
         'set -eu',
         'podman info --format json',
@@ -140,8 +188,10 @@ def workflow(label: str, application, repository: dict, workspace: Path, selecto
         f'cd {shlex.quote(str(workspace / "source"))}',
         'git checkout --detach "$CANDIDATE_SHA"',
         'test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"',
-        validation_script(selector),
+        validation_script(selector, suite=suite),
     ])
+    if public_probe:
+        script += '\npython3 \"$TMPDIR/public-probe.py\"\n'
     return yaml.safe_dump({'name': 'repository workload', 'on': ['push'], 'jobs': {
         'first': {'runs-on': label, 'steps': [{'env': {
             'CANDIDATE_SHA': '${{ github.sha }}',
@@ -160,17 +210,24 @@ def check_workload_available(experiment, selector: str) -> None:
             raise RuntimeError('Selected Molecule fixture is already in use or cannot be inspected')
 
 
-def build_image(experiment, descriptor: Path, architecture: str) -> str:
+def mise_image(descriptor: Path, architecture: str) -> str:
     import json
     import re
-    from scripts.forgejo_runner.fixture import ROOT, load_candidate
-    candidate = load_candidate(descriptor, architecture)
     try:
         mise = json.loads(descriptor.read_text())['mise_images'][architecture]
         if re.fullmatch(r'ghcr\.io/jdx/mise@sha256:[0-9a-f]{64}', mise) is None:
             raise ValueError('Invalid Mise image')
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError('Workload fixture requires an immutable Mise image') from error
+    return mise
+
+
+def build_image(experiment, descriptor: Path, architecture: str) -> str:
+    import json
+    import re
+    from scripts.forgejo_runner.fixture import ROOT, load_candidate
+    candidate = load_candidate(descriptor, architecture)
+    mise = mise_image(descriptor, architecture)
     name = 'localhost/' + experiment.name('job-image') + ':fixture'
     if experiment.command([experiment.podman, 'image', 'exists', name], check=False).returncode != 1:
         raise RuntimeError('Workload image already exists or cannot be inspected')

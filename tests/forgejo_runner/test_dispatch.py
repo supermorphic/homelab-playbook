@@ -31,6 +31,23 @@ class DispatchTests(unittest.TestCase):
                 self.assertEqual(2, result.returncode)
                 self.assertNotIn('Traceback', result.stderr)
 
+    def test_native_workloads_require_the_explicit_host_target(self):
+        for option in (('--native-workload','forgejo/default'),('--suite','stock-runtime')):
+            with self.subTest(option=option):
+                result=self.run_cli('host-fixture',*option)
+                self.assertEqual(1,result.returncode)
+                self.assertIn('disposable',result.stderr)
+                self.assertNotIn('Traceback',result.stderr)
+        for option in ('--native-probe-only','--job-probe-only','--egress-probe-only','--preflight-only'):
+            with self.subTest(option=option):
+                result=self.run_cli('host-fixture','--native-workload','forgejo/default',option)
+                self.assertEqual(2,result.returncode)
+        for arguments in (('compatibility','--suite','stock-runtime'),
+                          ('host-fixture','--native-workload','forgejo/default','--suite','stock-runtime'),
+                          ('host-fixture','--native-workload','forgejo/default; false')):
+            with self.subTest(arguments=arguments):
+                self.assertEqual(2,self.run_cli(*arguments).returncode)
+
     def run_cli(self, *arguments):
         environment = os.environ.copy()
         environment["PATH"] = str(ROOT / ".tmp/nonexistent-runner-tools")
