@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import hashlib
 from unittest.mock import patch
 
 
@@ -40,6 +41,15 @@ class Server:
 
 class RegistrationTests(unittest.TestCase):
     generation = 'a' * 32
+
+    def test_pending_selection_skips_the_other_workers_reserved_job(self):
+        rows = [{'handle': 'first-job'}, {'handle': 'second-job'}]
+        client = module.RegistrationClient('https://forge.example', 'example/project',
+                                          'synthetic', request=lambda *a, **kw: rows)
+        first = hashlib.sha256(b'first-job').hexdigest()
+        self.assertEqual('second-job', client.pending_job('homelab-podman-amd64', excluded={first}))
+        second = hashlib.sha256(b'second-job').hexdigest()
+        self.assertIsNone(client.pending_job('homelab-podman-amd64', excluded={first, second}))
 
     def setUp(self):
         self.server = Server()

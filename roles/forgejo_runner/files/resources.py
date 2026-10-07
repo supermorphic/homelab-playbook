@@ -9,7 +9,7 @@ import stat
 import subprocess
 import time
 
-from scripts.forgejo_runner.host_resources import Resources, OwnedUnit, identity, host_capacity, image_attached, command, active_services
+from scripts.forgejo_runner.host_resources import Resources, OwnedUnit, identity, image_attached, command, active_services
 from scripts.forgejo_runner.host_worker import worker_files, worker_cleanup_errors, read_worker_result
 from scripts.forgejo_runner.host_egress import observe_configuration, dns_forward, start_gateway
 
@@ -178,12 +178,8 @@ class OwnedRuntime:
         self.persist()
 
     def capacity(self):
-        observed = host_capacity(self.state_root)
-        limits = self.config['limits']
-        if (observed['memory_available'] < limits['memory_bytes'] + 4 * 1024**3
-                or observed['disk_available'] < limits['disk_bytes'] + 4 * 1024**3
-                or limits['cpu_percent'] > observed['cpu_count'] * 50):
-            raise ValueError('Required service reserve is unavailable')
+        from pool import require_capacity
+        require_capacity(self.config)
 
     def prepare(self, generation):
         from scripts.forgejo_runner.deployment_assets import verify, validate_executable
@@ -194,7 +190,8 @@ class OwnedRuntime:
             raise ValueError('The current slot boundary or host manager is unsafe')
         self.assert_empty()
         self.capacity()
-        self.services = active_services()
+        from pool import service_baseline
+        self.services = service_baseline(self.config)
         self.generation = generation
         self.unit = OwnedUnit('forgejo-worker-' + self.config['name'] + '-' + generation + '.service',
                               self.root / 'worker.ext4')

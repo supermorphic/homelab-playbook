@@ -14,8 +14,11 @@ def slot(index=0, repository='supermorphic/homelab-playbook'):
         return {'name': name, 'uid': 2200 + offset, 'gid': 2200 + offset,
                 'subuid_start': 1000000 + offset * 65536, 'subuid_count': 65536,
                 'subgid_start': 1000000 + offset * 65536, 'subgid_count': 65536}
-    name = ('playbook', 'talos', 'career')[index]
-    return {'name': name, 'repository': repository, 'enabled': False,
+    name = ('worker-1', 'worker-2', 'worker-3')[index]
+    repositories = ['supermorphic/career-ops', 'supermorphic/homelab-playbook', 'supermorphic/homelab-talos']
+    if repository not in repositories:
+        repositories[1] = repository
+    return {'name': name, 'repositories': repositories, 'enabled': False,
             'label': 'homelab-podman-amd64',
             'state_root': '/var/lib/forgejo-runner/' + name,
             'controller': account('ci-' + name + '-ctl', index * 2 + 1),
@@ -57,9 +60,8 @@ class SlotPolicyTests(unittest.TestCase):
         cls.policy = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.policy)
 
-    def test_all_three_repositories_have_distinct_explicit_allocations(self):
-        desired = [slot(0), slot(1, 'supermorphic/homelab-talos'),
-                   slot(2, 'supermorphic/career-ops')]
+    def test_both_workers_can_serve_all_three_repositories_with_distinct_allocations(self):
+        desired = [slot(0), slot(1)]
         original = copy.deepcopy(desired)
         self.assertEqual(desired, self.policy.validate_slots(desired))
         self.assertEqual(original, desired)
@@ -93,13 +95,21 @@ class SlotPolicyTests(unittest.TestCase):
             with self.subTest(repository=repository), self.assertRaises(ValueError):
                 self.policy.validate_slots([slot(repository=repository)])
 
-    def test_duplicate_repository_cannot_share_another_slot(self):
+    def test_a_third_worker_exceeds_the_two_worker_resource_budget(self):
         with self.assertRaises(ValueError):
-            self.policy.validate_slots([slot(), slot(1)])
+            self.policy.validate_slots([slot(), slot(1), slot(2)])
+
+    def test_each_worker_requires_the_same_complete_repository_allowlist(self):
+        for repositories in ([], ['supermorphic/career-ops'], ['example/other'],
+                             slot()['repositories'] + ['supermorphic/career-ops']):
+            declaration = slot()
+            declaration['repositories'] = repositories
+            with self.subTest(repositories=repositories), self.assertRaises(ValueError):
+                self.policy.validate_slots([declaration])
 
     def test_state_root_is_owned_by_the_named_slot(self):
-        for root in ('/', '/var/lib/forgejo', '/var/lib/forgejo-runner/../playbook',
-                     '/var/lib/forgejo-runner/other', '/var/lib/forgejo-runner/playbook/'):
+        for root in ('/', '/var/lib/forgejo', '/var/lib/forgejo-runner/../worker-1',
+                     '/var/lib/forgejo-runner/other', '/var/lib/forgejo-runner/worker-1/'):
             declaration = slot()
             declaration['state_root'] = root
             with self.subTest(root=root), self.assertRaises(ValueError):

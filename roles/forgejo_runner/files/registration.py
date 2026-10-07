@@ -6,6 +6,7 @@ client uses only the supported repository runner REST endpoints.
 
 from dataclasses import dataclass, field
 import json
+import hashlib
 import re
 import time
 import urllib.error
@@ -84,7 +85,7 @@ class RegistrationClient:
                 return rows
         raise RegistrationUncertain('Runner listing exceeded its fixed page bound')
 
-    def pending_job(self, label):
+    def pending_job(self, label, *, excluded=()):
         if not isinstance(label, str) or re.fullmatch(r'[a-z][a-z0-9-]{0,47}', label) is None:
             raise ValueError('Invalid trusted runner label')
         rows = self._request(self.path + '/actions/runners/jobs?labels=' + urllib.parse.quote(label, safe=''))
@@ -97,7 +98,8 @@ class RegistrationClient:
                or any(ord(character) < 32 or ord(character) == 127 for character in row['handle'])
                for row in rows):
             raise RegistrationUncertain('Pending-job lookup lacks a usable handle')
-        return rows[0]['handle']
+        return next((row['handle'] for row in rows
+                     if hashlib.sha256(row['handle'].encode()).hexdigest() not in excluded), None)
 
     def lookup(self, repository, slot, generation):
         name = self.identity(repository, slot, generation)

@@ -175,7 +175,8 @@ def error_type(error):
 def bound_checkpoint(config, state):
     registration = state['registration']
     if registration is not None and (
-            registration['repository'] != config['repository']
+            (registration['repository'] != config['repository'] if 'repository' in config
+             else registration['repository'] not in config['repositories'])
             or registration['name'] != config['name'] + '-' + str(state['generation'])):
         raise ValueError('Checkpoint belongs to another slot or generation')
 
@@ -212,13 +213,15 @@ def cleanup_generation(config, resources, enrollment, store, state):
     return 1 if errors or state['primary_error'] else 0
 
 
-def run_slot(config, resources, enrollment, store, *, recovery_only=False):
+def run_slot(config, resources, enrollment, store, *, recovery_only=False, generation=None):
     """Run at most one job with the caller holding the per-slot admission lock.
 
     The resource backend owns external timeouts and independent host ownership
     checks. Its destroy operation must also reconcile a interrupted prepare
     whose allocation identity has not yet reached this checkpoint.
     """
+    if generation is not None and (not isinstance(generation, str) or re.fullmatch(r'[0-9a-f]{32}', generation) is None):
+        raise ValueError('Reserved generation is invalid')
     state = store.read()
     try:
         bound_checkpoint(config, state)
@@ -248,7 +251,7 @@ def run_slot(config, resources, enrollment, store, *, recovery_only=False):
     except Exception as error:
         store.write({**clean_checkpoint(), 'phase': 'quarantined', 'primary_error': error_type(error)})
         return 1
-    generation = secrets.token_hex(16)
+    generation = generation or secrets.token_hex(16)
     state = {**clean_checkpoint(), 'phase': 'preparing', 'generation': generation}
     store.write(state)
     try:

@@ -9,8 +9,9 @@ import sys
 import subprocess
 
 
-SLOT_FIELDS = {'name', 'repository', 'enabled', 'label', 'state_root',
+SLOT_FIELDS = {'name', 'repositories', 'enabled', 'label', 'state_root',
                'controller', 'worker', 'limits'}
+REPOSITORIES = {'supermorphic/career-ops', 'supermorphic/homelab-playbook', 'supermorphic/homelab-talos'}
 LIMIT_FIELDS = {'memory_bytes', 'disk_bytes', 'pids', 'cpu_percent',
                'idle_seconds', 'job_seconds'}
 LIMIT_MAXIMUMS = {'memory_bytes': 2 * 1024**3, 'disk_bytes': 24 * 1024**3,
@@ -18,8 +19,8 @@ LIMIT_MAXIMUMS = {'memory_bytes': 2 * 1024**3, 'disk_bytes': 24 * 1024**3,
 
 
 def validate_slots(slots):
-    if not isinstance(slots, list):
-        raise ValueError('Runner slots must be a list of explicit declarations')
+    if not isinstance(slots, list) or len(slots) > 2:
+        raise ValueError('Declare at most two shared worker slots')
     accounts = []
     for slot in slots:
         if not isinstance(slot, dict) or set(slot) != SLOT_FIELDS:
@@ -28,10 +29,11 @@ def validate_slots(slots):
             if (not isinstance(slot[key], str)
                     or re.fullmatch(r'[a-z][a-z0-9-]{0,47}', slot[key]) is None):
                 raise ValueError('Runner slot name and label must be bounded identifiers')
-        if (not isinstance(slot['repository'], str)
-                or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}',
-                                slot['repository']) is None):
-            raise ValueError('Runner registration requires an exact owner/repository')
+        repositories = slot['repositories']
+        if (not isinstance(repositories, list) or len(repositories) != 3
+                or any(not isinstance(repository, str) for repository in repositories)
+                or set(repositories) != REPOSITORIES):
+            raise ValueError('Each shared worker must serve the exact three allowed repositories')
         if type(slot['enabled']) is not bool:
             raise ValueError('Runner enablement must be an explicit boolean')
         if slot['state_root'] != '/var/lib/forgejo-runner/' + slot['name']:
@@ -52,9 +54,8 @@ def validate_slots(slots):
         values = [slot[key] for slot in slots]
         if len(values) != len(set(values)):
             raise ValueError('Duplicate runner slot ownership')
-    repositories = [slot['repository'].casefold() for slot in slots]
-    if len(repositories) != len(set(repositories)):
-        raise ValueError('A repository can have only one declared runner slot')
+    if len({slot['label'] for slot in slots}) > 1:
+        raise ValueError('Shared workers require the same environment label')
     # Reuse the foundation's declaration and cross-account allocation rules.
     # The owning role separately compares these declarations with live host
     # databases before provision; declaration validation never claims that check.

@@ -79,6 +79,18 @@ class SupervisorTests(unittest.TestCase):
         with self.store as store:
             return module.run_slot(self.config, self.backend, self.enrollment, store, **kwargs)
 
+    def test_reserved_generation_is_used_for_allocation_and_registration(self):
+        generations = []
+        prepare = self.backend.prepare
+        def capture(generation):
+            generations.append(generation)
+            return prepare(generation)
+        self.backend.prepare = capture
+        self.assertEqual(0, self.run_cycle(generation='d'*32))
+        self.assertEqual(['d'*32], generations)
+        with self.assertRaises(ValueError):
+            self.run_cycle(generation='invalid')
+
     def test_success_then_reuse_requires_independent_absence(self):
         self.assertEqual(0, self.run_cycle())
         self.assertFalse(self.backend.present)

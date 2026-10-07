@@ -16,6 +16,7 @@ from lifecycle import CheckpointStore, read_checkpoint, run_slot, bound_checkpoi
 from registration import RegistrationClient
 from resources import OwnedRuntime
 from verify import observe, execute
+import pool
 
 
 def private_token(path, *, authority_uid=0):
@@ -55,8 +56,14 @@ def load_configuration(path):
             or re.fullmatch(r'[a-z][a-z0-9-]{0,47}', slot['name']) is None
             or slot.get('state_root') != '/var/lib/forgejo-runner/' + slot['name']
             or path != Path(slot['state_root']) / 'config.json' or type(slot.get('enabled')) is not bool
+            or set(slot) != pool.FIELDS
+            or not isinstance(slot.get('repositories'), list) or len(slot['repositories']) != 3
+            or any(not isinstance(repo, str) for repo in slot['repositories'])
+            or set(slot['repositories']) != pool.REPOSITORIES
             or not isinstance(slot.get('limits'), dict)
-            or any(type(number) is not int or not 0 < number < 2**63 for number in slot['limits'].values())
+            or set(slot['limits']) != set(pool.LIMITS)
+            or any(type(number) is not int or not 0 < number <= pool.LIMITS[key]
+                   for key, number in slot['limits'].items())
             or re.fullmatch(r'/usr/local/libexec/forgejo-runner/[0-9a-f]{40}', value['installation']) is None
             or re.fullmatch(r'/var/lib/forgejo-runner/assets/[0-9a-f]{64}', value['assets_root']) is None):
         raise ValueError('Installed slot is outside its canonical boundaries')
@@ -64,48 +71,17 @@ def load_configuration(path):
 
 
 @contextlib.contextmanager
-def admission_lease(slot, *, recovery_only=False):
-    """NUC4 admits one qualified worker across its three repository slots."""
+def admission_lease(slot, *, authority_uid=0):
+    """Serialize queue reservations, releasing the host lock before execution."""
     root = Path(slot['state_root']).parent
-    lease = CheckpointStore(root)
+    lease = CheckpointStore(root, authority_uid=authority_uid)
     try:
         lease.__enter__()
     except BlockingIOError:
         yield False
         return
     try:
-        descriptor = os.open(root / 'slots.json', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-        with os.fdopen(descriptor, 'rb') as stream:
-            metadata = os.fstat(stream.fileno())
-            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or metadata.st_uid != 0
-                    or metadata.st_gid != 0 or stat.S_IMODE(metadata.st_mode) != 0o600):
-                raise ValueError('Host slot registry is not private and authority-owned')
-            raw = stream.read(65537)
-            if len(raw) > 65536:
-                raise ValueError('Host slot registry exceeds its fixed bound')
-        registry = json.loads(raw)
-        if (not isinstance(registry, dict) or set(registry) != {'schema', 'slots'}
-                or type(registry['schema']) is not int or registry['schema'] != 1
-                or not isinstance(registry['slots'], list) or not 1 <= len(registry['slots']) <= 3):
-            raise ValueError('Host slot registry is invalid')
-        slots = registry['slots']
-        if sum(candidate == slot for candidate in slots) != 1:
-            raise ValueError('Slot differs from its host admission registry')
-        for candidate in slots:
-            if (not isinstance(candidate, dict) or not isinstance(candidate.get('name'), str)
-                    or re.fullmatch(r'[a-z][a-z0-9-]{0,47}', candidate['name']) is None
-                    or candidate.get('state_root') != '/var/lib/forgejo-runner/' + candidate['name']):
-                raise ValueError('Host admission registry contains an unsafe slot')
-        allowed = True
-        if not recovery_only:
-            for candidate in slots:
-                if candidate == slot:
-                    continue
-                snapshot = observe(candidate)
-                if snapshot['phase'] != 'clean' or not snapshot['runtime_absent']:
-                    allowed = False
-                    break
-        yield allowed
+        yield pool.read_registry(slot, authority_uid=authority_uid)
     finally:
         lease.__exit__(None, None, None)
 
@@ -113,7 +89,7 @@ def admission_lease(slot, *, recovery_only=False):
 def restore_authority(value, raw, repository):
     slot = value['slot']
     token = raw.removesuffix('\n')
-    if (repository != slot['repository'] or not token or len(raw.encode()) > 4096
+    if (repository not in slot['repositories'] or not token or len(raw.encode()) > 4096
             or any(ord(character) < 32 or ord(character) == 127 for character in token)):
         raise ValueError('Replacement authority must match the installed repository and private input contract')
     with CheckpointStore(slot['state_root']) as store:
@@ -123,8 +99,9 @@ def restore_authority(value, raw, repository):
                          'forgejo-runner-' + slot['name'] + '.timer']).strip()
         if timer != 'inactive' or not observe(slot)['runtime_absent']:
             raise ValueError('Stop admission and dispose the owned runtime before restoring authority')
+        filename = pool.token_name(repository)
         try:
-            current = os.stat('enrollment-token', dir_fd=store.directory_fd, follow_symlinks=False)
+            current = os.stat(filename, dir_fd=store.directory_fd, follow_symlinks=False)
         except FileNotFoundError:
             pass
         else:
@@ -140,7 +117,7 @@ def restore_authority(value, raw, repository):
                 stream.write(token + '\n')
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(temporary, 'enrollment-token', src_dir_fd=store.directory_fd, dst_dir_fd=store.directory_fd)
+            os.replace(temporary, filename, src_dir_fd=store.directory_fd, dst_dir_fd=store.directory_fd)
             os.fsync(store.directory_fd)
         finally:
             try:
@@ -153,6 +130,26 @@ def restore_authority(value, raw, repository):
 class UnavailableEnrollment:
     def lookup(self, *arguments):
         raise RuntimeError('Enrollment authority is unavailable; registration reconciliation remains pending')
+
+
+def enrollment(slot, repository):
+    return RegistrationClient('https://forgejo.infra.supermorphic.com', repository,
+                              private_token(Path(slot['state_root']) / pool.token_name(repository)))
+
+
+def recovery_repository(slot, state, *, authority_uid):
+    # A recorded registration binds its own scope. An interrupted enrollment
+    # before that checkpoint instead needs its exact pre-published assignment.
+    bound_checkpoint(slot, state)
+    if state['registration'] is not None:
+        return state['registration']['repository']
+    try:
+        assignment = pool.read_assignment(slot, authority_uid=authority_uid)
+    except (OSError, ValueError):
+        return None
+    if assignment is not None and assignment['generation'] == state['generation']:
+        return assignment['repository']
+    return None
 
 
 def perform(mode, value):
@@ -172,9 +169,12 @@ def perform(mode, value):
         state = read_checkpoint(root)
         registration = state['registration']
         if registration is not None:
-            client = RegistrationClient('https://forgejo.infra.supermorphic.com', slot['repository'],
-                                        private_token(root / 'enrollment-token'))
-            found = client.lookup(slot['repository'], slot['name'], state['generation'])
+            bound_checkpoint(slot, state)
+            assignment = pool.read_assignment(slot)
+            matched = (assignment is not None and assignment['generation'] == state['generation']
+                       and assignment['repository'] == registration['repository'])
+            found = (enrollment(slot, registration['repository']).lookup(
+                registration['repository'], slot['name'], state['generation']) if matched else None)
             result['registration_verified'] = found is not None and found.id == registration['id']
             result['verified'] = result['verified'] and result['registration_verified']
         return result, 0 if result['verified'] else 1
@@ -186,29 +186,39 @@ def perform(mode, value):
         if mode == 'cycle' and state['phase'] == 'quarantined':
             return {'phase': 'quarantined'}, 1
         recovery_only = mode == 'recover' or state['phase'] != 'clean'
-        with admission_lease(slot, recovery_only=recovery_only) as admitted:
-            if not admitted:
-                return {'admission_busy': True}, 0
+        handle, generation = None, None
+        if recovery_only:
+            repository = recovery_repository(slot, state, authority_uid=store.authority_uid)
             try:
-                client = RegistrationClient('https://forgejo.infra.supermorphic.com', slot['repository'],
-                                            private_token(root / 'enrollment-token'))
+                client = enrollment(slot, repository) if repository is not None else UnavailableEnrollment()
             except (OSError, ValueError):
-                if not recovery_only:
-                    raise
                 # Trusted disposal does not depend on a working secret store.
                 # Unknown remote retirement keeps the slot quarantined.
                 client = UnavailableEnrollment()
-            handle = None
-            if not recovery_only:
-                handle = client.pending_job(slot['label'])
+        else:
+            with admission_lease(slot, authority_uid=store.authority_uid) as slots:
+                if not slots:
+                    return {'admission_busy': True}, 0
+                result = observe(slot)
+                if not result['runtime_absent'] or os.path.lexists(root / 'resources.json'):
+                    return {'phase': state['phase'], 'runtime_absent': False}, 1
+                assignments = pool.peer_assignments(slot, slots, observe, authority_uid=store.authority_uid)
+                previous = pool.read_assignment(slot, authority_uid=store.authority_uid)
+                for repository in pool.poll_order(slot, previous):
+                    client = enrollment(slot, repository)
+                    excluded = {item['job_digest'] for item in assignments if item['repository'] == repository}
+                    handle = client.pending_job(slot['label'], excluded=excluded)
+                    if handle is not None:
+                        break
                 if handle is None:
-                    # Observe idle absence too; missing metadata alone is not
-                    # proof that a prior job's processes and files are gone.
-                    result = observe(slot)
-                    return result, 0 if result['runtime_absent'] else 1
-            runtime = OwnedRuntime(slot, value['installation'], value['assets_root'], value['manifest'], handle, store)
-            code = run_slot(slot, runtime, client, store, recovery_only=recovery_only)
-            return {'phase': store.read()['phase'], 'exit_code': code}, code
+                    return result, 0
+                pool.require_capacity(slot)
+                assignment = pool.write_assignment(store, slot, repository, handle)
+                generation = assignment['generation']
+        selected = {**slot, 'repository': repository}
+        runtime = OwnedRuntime(selected, value['installation'], value['assets_root'], value['manifest'], handle, store)
+        code = run_slot(selected, runtime, client, store, recovery_only=recovery_only, generation=generation)
+        return {'phase': store.read()['phase'], 'exit_code': code}, code
 
 
 def main():

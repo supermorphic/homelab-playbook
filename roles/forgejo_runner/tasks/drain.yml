@@ -13,7 +13,7 @@
   when: item.stat.exists
   loop: "{{ forgejo_runner_current_definitions.results }}"
   loop_control:
-    label: "{{ item.item.repository }}"
+    label: "{{ item.item.name }}"
 
 - name: Drain jobs and require independently empty owned runtime
   ansible.builtin.command:
@@ -27,5 +27,5 @@
   when: item.stat.exists
   loop: "{{ forgejo_runner_current_definitions.results }}"
   loop_control:
-    label: "{{ item.item.repository }}"
+    label: "{{ item.item.name }}"
   changed_when: false

@@ -18,7 +18,7 @@ def arguments(mode, value, configuration, repository=None):
             or str(configuration) != slot['state_root'] + '/config.json'
             or re.fullmatch(r'/usr/local/libexec/forgejo-runner/[0-9a-f]{40}', installation) is None):
         raise ValueError('Installed operation is outside its canonical boundary')
-    if mode == 'restore-authority' and repository != slot.get('repository'):
+    if mode == 'restore-authority' and repository not in slot.get('repositories', []):
         raise ValueError('Replacement authority does not match the installed repository')
     entry = 'control.py' if mode in ('verify', 'restore-authority') else 'maintenance.py'
     argv = ['/usr/bin/python3', '-B', installation + '/' + entry, mode, '--config', str(configuration)]

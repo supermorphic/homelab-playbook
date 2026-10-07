@@ -14,9 +14,9 @@
 
 - name: Remove only the retired repository enrollment inputs
   ansible.builtin.file:
-    path: "{{ item.state_root }}/enrollment-token"
+    path: "{{ item.0.state_root }}/enrollment-{{ item.1 | hash('sha256') }}"
     state: absent
-  loop: "{{ forgejo_runner_slots }}"
+  loop: "{{ forgejo_runner_slots | product(forgejo_runner_repositories) | list }}"
   loop_control:
-    label: "{{ item.repository }}"
+    label: "{{ item.0.name }} / {{ item.1 }}"
   no_log: true

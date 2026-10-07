@@ -14,7 +14,13 @@ WORKTREE = Path.cwd()
 
 
 class AnsibleAssemblyTests(unittest.TestCase):
-    def test_actual_inputs_and_templates_assemble_three_scoped_slots_without_host_mutation(self):
+    def test_actual_inputs_and_templates_assemble_two_shared_workers_without_host_mutation(self):
+        self.assemble(False)
+
+    def test_enabled_workers_receive_separate_private_repository_authority(self):
+        self.assemble(True)
+
+    def assemble(self, enabled):
         scratch = ROOT / '.tmp'
         scratch.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as name:
@@ -29,13 +35,18 @@ class AnsibleAssemblyTests(unittest.TestCase):
                 (directory / asset).write_bytes(payload)
                 artifacts[asset] = {'size': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()}
             variables = {
-                'forgejo_runner_slots': [slot(), slot(1, 'supermorphic/homelab-talos'),
-                                         slot(2, 'supermorphic/career-ops')],
+                'forgejo_runner_slots': [slot(), slot(1)],
                 'forgejo_runner_asset_directory': str(directory.resolve()),
                 'forgejo_runner_source_commit': 'a'*40,
                 'forgejo_runner_asset_manifest': {'schema': 1, 'architecture': 'amd64', 'source_tree': 'b'*40,
                     'job_image_id': 'c'*64, 'sources': sources, 'registry_images': ['docker.io/library/debian:13'],
                     'artifacts': artifacts}}
+            for worker in variables['forgejo_runner_slots']:
+                worker['enabled'] = enabled
+            if enabled:
+                variables['forgejo_runner_enrollment_tokens'] = {
+                    repository: 'synthetic-' + repository.rsplit('/', 1)[1]
+                    for repository in variables['forgejo_runner_slots'][0]['repositories']}
             variables_file = directory / 'variables.json'
             variables_file.write_text(json.dumps(variables))
             result_file = directory / 'assembled.json'
@@ -62,10 +73,21 @@ class AnsibleAssemblyTests(unittest.TestCase):
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
             files = json.loads(result_file.read_text())
             configurations = [json.loads(row['content']) for row in files if row['path'].endswith('/config.json')]
-            self.assertEqual(3, len(configurations))
-            self.assertEqual({slot()['repository'], 'supermorphic/homelab-talos', 'supermorphic/career-ops'},
-                             {row['slot']['repository'] for row in configurations})
-            self.assertTrue(all(row['slot']['enabled'] is False for row in configurations))
+            self.assertEqual(2, len(configurations))
+            for row in configurations:
+                self.assertEqual(['supermorphic/career-ops', 'supermorphic/homelab-playbook',
+                                  'supermorphic/homelab-talos'], row['slot']['repositories'])
+            self.assertTrue(all(row['slot']['enabled'] is enabled for row in configurations))
             self.assertTrue(all(row['mode'] == 0o600 for row in files if row['path'].endswith('.json')))
-            self.assertEqual(3, sum(row['path'].endswith('.service') for row in files))
-            self.assertFalse(any(row['path'].endswith('/enrollment-token') for row in files))
+            self.assertEqual(2, sum(row['path'].endswith('.service') for row in files))
+            tokens = [row for row in files if '/enrollment-' in row['path']]
+            self.assertEqual(6 if enabled else 0, len(tokens))
+            if enabled:
+                for worker in variables['forgejo_runner_slots']:
+                    for repository in worker['repositories']:
+                        expected = worker['state_root'] + '/enrollment-' + hashlib.sha256(repository.encode()).hexdigest()
+                        found = [row for row in tokens if row['path'] == expected]
+                        self.assertEqual(1, len(found))
+                        self.assertEqual(0o600, found[0]['mode'])
+                        self.assertEqual('synthetic-' + repository.rsplit('/', 1)[1], found[0]['content'].strip())
+                self.assertTrue(all('synthetic-' not in row['content'] for row in files if row not in tokens))

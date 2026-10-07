@@ -11,4 +11,4 @@
     state: "{{ 'started' if item.enabled else 'stopped' }}"
   loop: "{{ forgejo_runner_slots }}"
   loop_control:
-    label: "{{ item.repository }}"
+    label: "{{ item.name }}"
