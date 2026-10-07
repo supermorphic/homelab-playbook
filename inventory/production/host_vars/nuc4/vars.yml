@@ -29,3 +29,27 @@ semaphore_rclone_remote: "nas:Semaphore/postgres"
 # Enable after the dedicated identity and controller inputs are enrolled.
 semaphore_controller_enabled: false
 semaphore_controller_identity_enabled: false
+
+# Provisioning checks these IDs for conflicts before creating the account.
+forgejo_metadata_uid: 2003
+forgejo_metadata_gid: 2003
+forgejo_metadata_timer_enabled: false
+
+# github_metadata_write: owner supermorphic; expiration none.
+# Selected GitHub repository: supermorphic/homelab-playbook.
+# Required permissions: Issues read/write, Metadata read-only.
+# Token values belong to forgejo-metadata.sops.yml; rotation follows Spec 012.
+forgejo_metadata_mappings:
+  - instance: homelab
+    source_origin: https://forgejo.infra.supermorphic.com
+    source_repo: supermorphic/homelab-playbook
+    source_id: 2
+    destination_origin: https://api.github.com
+    destination_repo: supermorphic/homelab-playbook
+    destination_id: 617199656
+    visibility: public
+    actor_id: 7303866
+    source_credential: forgejo_metadata_read
+    destination_credential: github_metadata_write
+    # Use system HTTPS trust; verify the source chain during live acceptance.
+    ca_file: ''

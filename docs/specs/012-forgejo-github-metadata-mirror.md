@@ -42,7 +42,7 @@ Alternatives considered:
 
 Each explicitly enrolled mapping binds one Forgejo HTTPS origin and repository
 to one existing GitHub repository. Pin both repositories' API identities as well
-as their owner/name paths, expected destination visibility, and the dedicated
+as their owner/name paths, expected destination visibility, and the declared
 destination actor. Reject duplicate destinations and mismatched identities.
 Repository transfers or renames require reviewed configuration changes.
 Default enrollment is empty; implementation does not discover or enroll production
@@ -55,9 +55,11 @@ GitHub repository creation, permission changes, and adoption of historical GitHu
 objects are separate operator actions.
 
 Use a non-admin Forgejo identity with selected-repository `read:issue` and
-`read:repository` token scopes. Use a separate GitHub automation identity with a
-fine-grained token restricted to destination repositories, Issues write permission,
-and repository metadata access. The automation account must also have repository
+`read:repository` token scopes. Use a dedicated GitHub metadata-mirror credential:
+a fine-grained token issued by the destination repository owner, restricted to
+explicitly selected destination repositories, with Issues write permission and
+repository metadata access. Mirrored issues and comments use that owner's identity;
+pin it as the destination actor. The token owner must also have repository
 Write access: GitHub can silently omit issue labels and milestones when the account
 lacks the required repository access, even if the token permits issue operations.
 Keep the token limited to Issues and metadata; account membership does not justify
@@ -65,12 +67,24 @@ requesting Contents write, Actions, repository administration, or source mutatio
 permission. Check effective account access during enrollment and each run, and
 prove label and milestone behavior during separately authorized live acceptance.
 
+The original design required a separate GitHub automation account. That choice
+is superseded for personally owned destinations: GitHub fine-grained tokens do
+not support repository collaborators. The owner-issued token preserves the
+repository and permission limits while sharing the owner's posting identity.
+
 The operator enrolls durable tokens in a service-owned sibling SOPS inventory file
 through [Specification 005](005-sops-age-secrets.md). Ansible handles secret tasks
 with `no_log` and installs root-only credential files. systemd `LoadCredential`
 delivers read-only runtime copies to the service. Live secret values never appear in
 arguments, environment definitions, unit text, output, status files, or test data.
 The runtime never obtains a SOPS identity or uses the operator Git credential helper.
+
+Record the GitHub token owner, selected repositories, permissions and expiration
+beside its public inventory reference. A non-expiring token records expiration as
+none; token renewal is not automatic. To rotate, create a replacement with the
+same limits, update the same credential reference in the owning SOPS file,
+provision and verify the replacement, then revoke the previous token. Preserve
+the mapping identities and service state during rotation.
 
 Use the existing trusted HTTPS path to Forgejo, including the required CA chain,
 and normal system trust for GitHub. Do not bypass certificate or hostname checks.
@@ -101,6 +115,8 @@ content inside a source body cannot define destination ownership.
 
 Labels have no Markdown body. Put a compact source identity marker in their
 description, followed by as much original description as the API permits. Use
+a single line because GitHub converts label-description newlines to spaces;
+retain read compatibility with the original newline-separated format. Use
 a deterministic name containing the source label ID and a readable source name.
 Bound the readable part to GitHub's name limit without truncating the identity.
 Preserve full original names in issue attribution. Label description truncation
@@ -119,6 +135,17 @@ Edits to owned GitHub fields are replaced by source values on reconciliation.
 Unmarked GitHub objects and human-authored comments are preserved. GitHub edits
 never become source writes. The source HTTP client supports GET only, and the
 destination client permits only the declared issue-metadata endpoints and methods.
+
+An owner-issued token shares its actor with ordinary GitHub history. Actor identity
+alone therefore does not make an unmarked issue or comment a service object.
+Generated attribution or a damaged terminal service marker identifies a
+recognizable shadow. The safety journal also retains the source identity and
+destination locator of observed issue/comment shadows. This evidence prevents a
+known shadow whose entire body is replaced or whose object is deleted from being
+silently recreated. It never authorizes adoption or updates without a valid marker.
+Preserve this evidence during attended recovery. If both this evidence and all
+service attribution and markers are lost, an object cannot be distinguished from
+ordinary owner-authored history; resolve that loss through attended recovery.
 
 ## Reconciliation and API boundaries
 

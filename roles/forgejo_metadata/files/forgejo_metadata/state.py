@@ -5,6 +5,7 @@ import fcntl
 import json
 import math
 import os
+import re
 from pathlib import Path
 import stat
 import tempfile
@@ -13,6 +14,13 @@ from .model import MirrorError, SourceKey, positive
 
 def key_string(key):
     return f'{key.instance}:{key.repository_id}:{key.kind}:{key.object_id}'
+
+def valid_ownership(identity,locator):
+    if not isinstance(identity,str) or not isinstance(locator,str): return False
+    match=re.fullmatch(r'[a-z0-9_-]{1,16}:([1-9][0-9]*):(issue|comment):([1-9][0-9]*)',identity)
+    if not match: return False
+    prefix='/issues/comments/' if match[2]=='comment' else '/issues/'
+    return re.fullmatch(re.escape(prefix)+r'[1-9][0-9]*',locator) is not None
 
 def valid_intent(key,intent):
     if not isinstance(key,str) or not isinstance(intent,dict) or set(intent)!={'key','started'}: return False
@@ -78,22 +86,32 @@ class StateStore:
             raise MirrorError('state_uninitialized_or_invalid')
         if any(not valid_intent(key,intent) for key,intent in value['pending'].items()):
             raise MirrorError('state_uninitialized_or_invalid')
+        ownership=value.get('ownership',{})
+        if not isinstance(ownership,dict) or any(not valid_ownership(k,v) for k,v in ownership.items()):
+            raise MirrorError('state_uninitialized_or_invalid')
         retries=value.get('retry_deadlines',{})
         if (not isinstance(retries,dict) or any(not isinstance(k,str) or type(v) not in (int,float)
                 or not math.isfinite(v) or v<0 for k,v in retries.items())):
             raise MirrorError('state_uninitialized_or_invalid')
         return value
     def require_initialized(self): self.load()
+    def ownership_evidence(self):
+        # Recovery must use surviving ownership before it replaces initialization.
+        try: document=read_private(self.path)
+        except (FileNotFoundError,ValueError): return {}
+        ownership=document.get('ownership',{}) if isinstance(document,dict) else {}
+        if not isinstance(ownership,dict): return {}
+        return {key:locator for key,locator in ownership.items() if valid_ownership(key,locator)}
     def bootstrap(self,mode,decision_ref):
         if mode not in ('initial','recover') or not isinstance(decision_ref,str) or not decision_ref.strip():
             raise MirrorError('initialization_decision_required')
         if self.path.is_symlink(): raise MirrorError('unsafe_state_file')
         exists=self.path.exists()
         if exists and mode=='initial': raise MirrorError('already_initialized')
-        pending={}; retries={}
+        pending={}; retries={}; ownership={}
         if exists:
             try:
-                old=self.load(allow_other_fingerprint=True); pending=old['pending']; retries=old.get('retry_deadlines',{})
+                old=self.load(allow_other_fingerprint=True); pending=old['pending']; retries=old.get('retry_deadlines',{}); ownership=old.get('ownership',{})
             except MirrorError:
                 # Preserve the bytes before explicitly attended recovery replaces them.
                 archive=self.path.with_name(self.path.name+f'.recovery-{time.time_ns()}')
@@ -106,12 +124,19 @@ class StateStore:
                     surviving=json.loads(data)
                     if isinstance(surviving,dict) and isinstance(surviving.get('pending'),dict):
                         pending={key:intent for key,intent in surviving['pending'].items() if valid_intent(key,intent)}
+                    if isinstance(surviving,dict) and isinstance(surviving.get('ownership'),dict):
+                        ownership={key:locator for key,locator in surviving['ownership'].items() if valid_ownership(key,locator)}
                 except (ValueError,UnicodeDecodeError): pass
                 with open(archive,'xb') as output:
                     os.chmod(archive,0o600); output.write(data); output.flush(); os.fsync(output.fileno())
         atomic_json(self.path,{'version':1,'fingerprint':self.fingerprint,
             'initialization':{'mode':mode,'decision_ref':decision_ref,'at':time.time()},
-            'pending':pending,'retry_deadlines':retries})
+            'pending':pending,'retry_deadlines':retries,'ownership':ownership})
+    def remember_owned(self,owned):
+        document=self.load(); ownership=document.setdefault('ownership',{})
+        updates={key_string(key):target.locator for key,target in owned.items() if key.kind in ('issue','comment')}
+        if any(ownership.get(key)!=locator for key,locator in updates.items()):
+            ownership.update(updates); atomic_json(self.path,document)
     def begin_create(self,key):
         document=self.load(); identity=key_string(key)
         if identity in document['pending']: raise MirrorError('create_outcome_unresolved')
@@ -121,7 +146,11 @@ class StateStore:
         if outcome=='unknown': return
         if outcome not in ('not_created','created') or outcome=='created' and not locator:
             raise MirrorError('invalid_create_resolution')
-        document=self.load(); document['pending'].pop(key_string(key),None); atomic_json(self.path,document)
+        document=self.load(); document['pending'].pop(key_string(key),None)
+        if outcome=='created' and key.kind in ('issue','comment'):
+            if not valid_ownership(key_string(key),locator): raise MirrorError('invalid_create_resolution')
+            document.setdefault('ownership',{})[key_string(key)]=locator
+        atomic_json(self.path,document)
     def resolve_absent(self,key,decision_ref):
         if not isinstance(decision_ref,str) or not decision_ref.strip(): raise MirrorError('resolution_decision_required')
         document=self.load()

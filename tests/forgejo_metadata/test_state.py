@@ -65,3 +65,18 @@ class StateTests(unittest.TestCase):
         value=other.load(); value['initialization']={}; self.module.atomic_json(self.path,value)
         other.bootstrap('recover','damaged-initialization')
         self.assertEqual(1,len(other.load()['pending']))
+    def test_created_ownership_evidence_survives_attended_recovery(self):
+        self.store.bootstrap('initial','test')
+        self.store.begin_create(self.key)
+        self.store.finish_create(self.key,'created','/issues/90')
+        self.store.bootstrap('recover','reenrollment')
+        self.assertEqual({'fixture:7:issue:23':'/issues/90'},self.store.load()['ownership'])
+        value=self.store.load(); value['initialization']={}
+        self.module.atomic_json(self.path,value)
+        self.store.bootstrap('recover','damaged-initialization')
+        self.assertEqual({'fixture:7:issue:23':'/issues/90'},self.store.load()['ownership'])
+    def test_invalid_ownership_evidence_does_not_enable_writes(self):
+        self.store.bootstrap('initial','test')
+        value=self.store.load(); value['ownership']={'fixture:7:issue:23':'/user'}
+        self.module.atomic_json(self.path,value)
+        with self.assertRaises(MirrorError): self.store.require_initialized()

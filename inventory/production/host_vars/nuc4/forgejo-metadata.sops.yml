@@ -1,0 +1,18 @@
+forgejo_metadata_tokens:
+    github_metadata_write: ENC[AES256_GCM,data:KAK8MfkfRqBK2ebHW8Ooy7+PuwrwT1C8/e6/CfYdbUHa81L6IjvhEpF5Eet1szonWbbA+n1vankeNF+wBZaoqSXMpcfszhjZxl12/we0cq6V1WHvEW/gHGsUVmGY,iv:B3PZ2B2D5gdLcVn3u/aD00ecLWe1VOWU3r+sqWTaUJw=,tag:8cL+BPdXW9CiYXd62KTLSw==,type:str]
+    forgejo_metadata_read: ENC[AES256_GCM,data:3QHyohQ6kANxeD+pPcfSbLs+YurHbUw8gQILH3D6iik+Ki02dLSM8A==,iv:gzqh2C59PMn6s1KZ37Bl3j2EKUvXJU1eVpkhpFIk4wU=,tag:BDX0CBFpjv0QTW5t02wB8A==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAzYlZqR0xwZVplaWNQa2FS
+            cm9ZMmtCcHIvUDdPTEtUK1JlcWxsekJGS1ZvCnEvdnY4ZUhlcjFzakk3d2pja2xU
+            dFFZRGtOMFZUQlhnTUVxRysvdHg3RWsKLS0tIEEyMFFMeWhrVGswYkdwczZyNzVL
+            RW5rOHl4aXd3MWI1QnlOdW1NOVNpMFkK5dfW9ttKWlYPavSaNaVJnL8zxnaJpgE8
+            9V7gcf+Hu4Fk75UoStTF6zlb8LPcWsTxiK1oqy81usCBmgQhnjNTVw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1ehm0ehd2v2emfuycf2p0suhg94ej29zcu96ffmh3t6afchhjd99sxc4984
+    encrypted_regex: ^(.*)$
+    lastmodified: "2026-10-07T16:28:22Z"
+    mac: ENC[AES256_GCM,data:cisnTJTYHs/A5i32fb7KKMeWtjpNNgtGQOXXYpKXe/V8kMhwai/4VIW8sx4K8+/2xD4G7ONIMiiHWCYL7tINR+9ATI91yAVcSS3epZ9NvHSQis0ChpkXG6UEV7/pbcUbwZIbj5jOZEtAv7VNKm2Gn2lMVO1VkQvwAphIHqRy88o=,iv:sq/iBO+990OLMsnCLXzVWtySzdxmVidyC4lx60/+FcE=,tag:f8+mxMamv/jb+yWh/FHqOA==,type:str]
+    version: 3.13.2

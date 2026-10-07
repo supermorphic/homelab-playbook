@@ -29,7 +29,11 @@ def credential(name):
     fd=os.open(Path(directory)/name,os.O_RDONLY|os.O_NOFOLLOW)
     with os.fdopen(fd) as stream:
         info=os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_size>4096:
+        # systemd's ACL mask can appear as group-read even with group::---.
+        acl_credential=(stat.S_IMODE(info.st_mode)==0o440 and info.st_uid==0 and info.st_gid==0
+                        and os.fstatvfs(stream.fileno()).f_flag & os.ST_RDONLY)
+        if (not stat.S_ISREG(info.st_mode) or info.st_size>4096
+            or (info.st_mode & 0o077 and not acl_credential)):
             raise MirrorError('unsafe_credential')
         token=stream.read().strip()
     if not token or any(c.isspace() for c in token): raise MirrorError('invalid_credential')
@@ -84,11 +88,12 @@ def control(request,mappings,store,fingerprint):
     if request.get('previous_writers_stopped') is not True or request.get('outcomes_resolved') is not True:
         raise MirrorError('recovery_decision_required')
     # Complete discovery must succeed for every enrollment before state changes.
+    ownership=store.ownership_evidence()
     owned={}
     for mapping in mappings:
         source,destination=clients(mapping); destination.preflight(mapping)
         if not source.inventory(mapping).complete: raise MirrorError('incomplete_inventory')
-        owned.update(discover_owned(mapping,destination.inventory(mapping)))
+        owned.update(discover_owned(mapping,destination.inventory(mapping),ownership))
     if operation.startswith('bootstrap-'):
         store.bootstrap(operation.removeprefix('bootstrap-'),request['decision_ref'])
         for target in owned.values():
