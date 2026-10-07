@@ -76,5 +76,18 @@ class LiveGuardTests(unittest.TestCase):
                     with self.module.receipt_lock(path): self.fail('Second writer acquired receipt')
             with self.module.receipt_lock(path): pass
 
+    def test_finish_clears_fixture_deadline_and_issue_assignments(self):
+        with tempfile.TemporaryDirectory() as root:
+            experiment=self.module.Experiment({'fingerprint':'a'*64,
+                'mappings':[{'source_repo':'example/project'}]},Path(root)/'receipt.json')
+            experiment.preflight=lambda: None
+            experiment.owned=lambda kind: {'id':42,'number':5}
+            sent=[]
+            experiment.mutate=lambda kind,*arguments: sent.append(arguments)
+            experiment.run('finish')
+            self.assertIn(('milestone','update','example/project','42','--due-date','9999-12-31'),sent)
+            self.assertIn(('issue','label','clear','example/project','5'),sent)
+            self.assertIn(('issue','update','example/project','5','--milestone','0'),sent)
+
 
 if __name__=='__main__': unittest.main()
