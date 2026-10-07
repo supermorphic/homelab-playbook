@@ -29,7 +29,11 @@ def credential(name):
     fd=os.open(Path(directory)/name,os.O_RDONLY|os.O_NOFOLLOW)
     with os.fdopen(fd) as stream:
         info=os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_size>4096:
+        # systemd's ACL mask can appear as group-read even with group::---.
+        acl_credential=(stat.S_IMODE(info.st_mode)==0o440 and info.st_uid==0 and info.st_gid==0
+                        and os.fstatvfs(stream.fileno()).f_flag & os.ST_RDONLY)
+        if (not stat.S_ISREG(info.st_mode) or info.st_size>4096
+            or (info.st_mode & 0o077 and not acl_credential)):
             raise MirrorError('unsafe_credential')
         token=stream.read().strip()
     if not token or any(c.isspace() for c in token): raise MirrorError('invalid_credential')

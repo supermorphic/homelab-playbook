@@ -3,7 +3,9 @@ import copy
 import importlib
 import io
 import json
+import os
 from pathlib import Path
+import stat
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -65,6 +67,27 @@ class CLITests(unittest.TestCase):
     def test_credentials_have_no_ambient_fallback(self):
         with patch.dict('os.environ',{'GITHUB_TOKEN':'synthetic-token'},clear=True):
             with self.assertRaisesRegex(Exception,'credentials_unavailable'): self.module.credential('destination')
+    def credential_with_metadata(self,mode,uid,gid,readonly):
+        path=self.root/'destination'; path.write_text('synthetic-token'); path.chmod(0o600)
+        attributes=list(path.stat()); attributes[0]=stat.S_IFREG|mode; attributes[4]=uid; attributes[5]=gid
+        filesystem=list(os.statvfs(self.root)); filesystem[8]=os.ST_RDONLY if readonly else 0
+        with patch.dict('os.environ',{'CREDENTIALS_DIRECTORY':str(self.root)}), \
+             patch.object(self.module.os,'fstat',return_value=os.stat_result(attributes)), \
+             patch.object(self.module.os,'fstatvfs',return_value=os.statvfs_result(filesystem)):
+            return self.module.credential('destination')
+    def test_root_owned_readonly_systemd_acl_credential_is_accepted(self):
+        # systemd uses an ACL mask of read-only for the service UID; group:: is empty.
+        self.assertEqual('synthetic-token',self.credential_with_metadata(0o440,0,0,True))
+    def test_acl_credential_requires_root_ownership_and_readonly_mount(self):
+        for mode,uid,gid,readonly in [(0o440,0,0,False),(0o440,2003,0,True),
+                                      (0o440,0,2003,True),(0o460,0,0,True),(0o444,0,0,True)]:
+            with self.subTest(mode=oct(mode),uid=uid,gid=gid,readonly=readonly):
+                with self.assertRaisesRegex(Exception,'unsafe_credential'):
+                    self.credential_with_metadata(mode,uid,gid,readonly)
+    def test_private_credential_file_remains_accepted(self):
+        path=self.root/'destination'; path.write_text('synthetic-token'); path.chmod(0o400)
+        with patch.dict('os.environ',{'CREDENTIALS_DIRECTORY':str(self.root)}):
+            self.assertEqual('synthetic-token',self.module.credential('destination'))
     def test_recovery_preserves_unmatched_pending_intent(self):
         from forgejo_metadata.model import SourceKey
         from forgejo_metadata.state import StateStore
