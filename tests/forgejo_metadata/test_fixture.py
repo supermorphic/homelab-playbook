@@ -40,6 +40,20 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(['fj-bug-42'],data['issues'][0]['labels']); self.assertEqual(102,data['issues'][0]['milestone'])
         self.assertEqual(1,len(data['comments'])); self.assertTrue(all(row[0]=='GET' for row in self.fixture.source_ledger))
         self.fixture.source_data['issues']=[]; self.assertEqual(0,self.apply()); self.assertEqual(1,len(self.fixture.snapshot()['issues']))
+
+    def test_tls_accepted_issue_waits_for_collection_visibility(self):
+        self.fixture.mode={'hide_new_issues_scans':1}
+        self.assertEqual(0,self.apply())
+        data=self.fixture.snapshot()
+        self.assertEqual(1,len(data['issues']))
+        self.assertEqual('closed',data['issues'][0]['state'])
+        self.assertEqual(1,len(data['comments']))
+        self.assertEqual(1,sum(method=='POST' and path.endswith('/issues') for method,path in self.fixture.writes()))
+
+    def test_tls_milestone_due_date_preserves_utc_calendar_day(self):
+        self.fixture.source_data['milestones'][0]['due_on']='2026-01-01T17:00:00-07:00'
+        self.assertEqual(0,self.apply())
+        self.assertEqual('2026-01-02T00:00:00Z',self.fixture.snapshot()['milestones'][0]['due_on'])
     def test_killed_after_accepted_post_rediscovered_without_duplicate(self):
         self.fixture.mode={'hang_after_post':True}
         process=subprocess.Popen(self.command(),env=self.environment,cwd=self.package,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

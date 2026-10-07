@@ -66,6 +66,42 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual([],self.run_mirror().errors)
         self.assertEqual(1,len(self.destination.data.labels))
         self.assertEqual({},self.store.load()['pending'])
+
+    def test_accepted_issue_waits_for_complete_inventory_visibility(self):
+        from unittest.mock import patch
+        create=self.destination.create; scan=self.destination.inventory; remaining=[0]
+        def delayed_create(projection,parent=None):
+            locator=create(projection,parent)
+            if projection.key.kind=='issue': remaining[0]=3
+            return locator
+        def delayed_scan(mapping):
+            inventory=scan(mapping)
+            if remaining[0]:
+                remaining[0]-=1; inventory.issues=[]
+            return inventory
+        self.destination.create=delayed_create; self.destination.inventory=delayed_scan
+        with patch.object(self.module.time,'sleep'):
+            result=self.run_mirror()
+        self.assertEqual([],result.errors)
+        self.assertEqual(1,len(self.destination.data.issues))
+        self.assertEqual('closed',self.destination.data.issues[0]['state'])
+        self.assertEqual({},self.store.load()['pending'])
+
+    def test_accepted_issue_invisible_beyond_bound_preserves_intent(self):
+        from unittest.mock import patch
+        scan=self.destination.inventory; scans=[0]
+        def invisible(mapping):
+            inventory=scan(mapping)
+            if self.destination.data.issues:
+                scans[0]+=1; inventory.issues=[]
+            return inventory
+        self.destination.inventory=invisible
+        with patch.object(self.module.time,'sleep'):
+            result=self.run_mirror()
+        self.assertEqual(4,scans[0])
+        self.assertIn('ownership_conflict',result.errors)
+        self.assertEqual(1,len(self.destination.data.issues))
+        self.assertTrue(self.store.load()['pending'])
     def test_budget_makes_progress_and_unmarked_human_history_survives(self):
         self.destination.data.issues.append({'id':90,'number':90,'body':'Human history','user':{'id':99}})
         for _ in range(8): self.run_mirror(1)

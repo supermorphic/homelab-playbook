@@ -168,8 +168,10 @@ and test any repository-wide comment optimization against the accepted issue set
 Reconcile labels and milestones before dependent issues, then issue comments.
 Apply title, generated body, source label membership, milestone assignment, and
 open/closed state to each owned issue. Apply comment edits as well as additions.
-Milestone changes include title, description, state, and due date; labels include
-name, color, and the bounded description. Explicitly clear removed issue labels,
+Milestone changes include title, description, state, and due date. Convert due
+timestamps to their UTC calendar date before writing; GitHub stores midnight for
+the supplied date. Labels include name, color, and the bounded description.
+Explicitly clear removed issue labels,
 milestone assignments, and milestone due dates where supported by the API.
 Compare normalized supported fields before writing. Repeated converged runs make
 no effective writes. Unrelated GitHub fields do not cause perpetual updates.

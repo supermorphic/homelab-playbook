@@ -143,6 +143,7 @@ class DestinationAPI(Client):
         endpoint=f'/issues/{parent.fields["number"]}/comments' if kind=='comment' else '/'+{'issue':'issues','label':'labels','milestone':'milestones'}[kind]
         fields=dict(projection.fields)
         if kind=='issue': fields.pop('state',None)
+        if kind=='milestone' and fields.get('due_on') is None: fields.pop('due_on',None)
         value,_=self.request('POST',endpoint,fields)
         if kind=='label': return '/labels/'+quote(value['name'],safe='')
         if kind=='comment': return '/issues/comments/'+str(value['id'])

@@ -38,6 +38,18 @@ class APITests(unittest.TestCase):
             with self.assertRaises(MirrorError):
                 self.client([(200,dict(repo,**changes),{})]).preflight(self.mapping)
 
+    def test_milestone_create_without_deadline_respects_github_date_schema(self):
+        from forgejo_metadata.identity import render_projection
+        def transport(method,url,headers,payload):
+            # GitHub's create schema permits an optional date-time string, not null.
+            if 'due_on' in payload and not isinstance(payload['due_on'],str):
+                return 422,json.dumps({'message':'invalid due_on'}).encode(),{}
+            return 201,json.dumps(dict(payload,id=101,number=1)).encode(),{}
+        client=self.api.DestinationAPI(self.mapping,'synthetic-token',transport=transport,sleep=lambda _:None)
+        for due_on in (None,'2026-12-31T00:00:00Z'):
+            projection=render_projection(self.mapping,'milestone',{'id':43,'title':'Example','description':'','state':'open','due_on':due_on})
+            self.assertEqual('/milestones/1',client.create(projection))
+
     def test_rejection_and_uncertain_creation_have_distinct_outcomes(self):
         for status,expected in [(422,'not_created'),(503,'unknown'),(429,'not_created')]:
             with self.assertRaises(self.api.APIError) as raised:

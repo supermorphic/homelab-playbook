@@ -60,6 +60,18 @@ def discover_recorded(mapping,destination,store):
     store.remember_owned(owned)
     return owned
 
+def discover_created(mapping,destination,store,key,locator):
+    # Accepted writes may become visible in complete collection reads later.
+    # Retry reads only; conflicts and the run deadline still stop immediately.
+    for delay in (0,5,15,45):
+        if delay: time.sleep(delay)
+        fresh=discover_recorded(mapping,destination,store)
+        created=fresh.get(key)
+        if created is not None:
+            if created.locator!=locator: raise MirrorError('ownership_conflict')
+            return fresh,created
+    raise MirrorError('ownership_conflict')
+
 def comment_parent(mapping,owned,parent_id,target):
     parent=owned.get(SourceKey(mapping.instance,mapping.source_id,'issue',parent_id))
     if parent is None or target and target.fields.get('_parent_id')!=parent.fields['id']:
@@ -118,9 +130,7 @@ def reconcile(mapping,source,destination,store,write_budget):
                     except APIError as error:
                         store.finish_create(projection.key,error.outcome,None)
                         raise
-                    fresh=discover_recorded(mapping,destination,store)
-                    created=fresh.get(projection.key)
-                    if created is None or created.locator!=locator: raise MirrorError('ownership_conflict')
+                    fresh,created=discover_created(mapping,destination,store,projection.key,locator)
                     if kind=='comment': parent=comment_parent(mapping,fresh,parent_id,created)
                     store.finish_create(projection.key,'created',locator)
                     target=created
