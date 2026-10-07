@@ -97,6 +97,33 @@ class NativeJobTests(unittest.TestCase):
             self.assertLessEqual(output.stat().st_size, 4096)
             self.assertEqual(0o600, output.stat().st_mode & 0o777)
 
+    def test_job_diagnostic_preserves_primary_error_before_verbose_tail(self):
+        import base64
+        module=self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            data=('download started\n[ERROR]: synthetic upstream refusal\n'+
+                  'verbose successful progress\n'*300+'secondary exception tail\n').encode()
+            (root/'synthetic123.task-0.base64').write_bytes(base64.b64encode(data))
+            output=root/'native-job-error.log'
+            module.save_job_diagnostic('synthetic123',root,output)
+            self.assertIn('[ERROR]: synthetic upstream refusal',output.read_text())
+            self.assertIn('secondary exception tail',output.read_text())
+            self.assertLessEqual(output.stat().st_size,4096)
+
+    def test_unicode_job_diagnostic_respects_byte_limit_and_remains_readable(self):
+        import base64
+        module=self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            data=('🍃'*1024).encode()
+            (root/'synthetic123.runner.log').write_bytes(data)
+            (root/'synthetic123.task-0.base64').write_bytes(base64.b64encode(data))
+            output=root/'native-job-error.log'
+            module.save_job_diagnostic('synthetic123',root,output)
+            self.assertLessEqual(output.stat().st_size,4096)
+            self.assertIn('🍃',output.read_text())
+
     def test_job_diagnostic_does_not_follow_worker_controlled_symlinks(self):
         module = self.module()
         with tempfile.TemporaryDirectory() as directory:

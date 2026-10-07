@@ -75,14 +75,22 @@ def save_job_diagnostic(run_id, directory, output):
                     if metadata.st_size > 1024**2:
                         continue
                     data = base64.b64decode(b''.join(stream.read(1024**2).split()), validate=True)
-                    data = data[-3072:]
+                    lines=data.decode(errors='replace').splitlines(keepends=True)
+                    context=[]
+                    for index,line in enumerate(lines):
+                        if any(marker in line.lower() for marker in ('[error]', 'error!', 'error:')):
+                            context.extend(lines[max(0,index-1):index+3])
+                            if len(''.join(context).encode()) >= 1024:
+                                break
+                    data=(''.join(context).encode()[:1024]+b'\n'+data[-2048:]) if context else data[-3072:]
                 records.append(data.decode(errors='replace'))
         except (OSError, ValueError, EOFError):
             continue
     fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'w') as stream:
         os.fchmod(stream.fileno(), 0o600)
-        stream.write('\n'.join(records)[-4096:])
+        bounded='\n'.join(records).encode()[-4096:].decode(errors='ignore')
+        stream.write(bounded)
 
 
 def seed_native_source(experiment, image, root, tree, application, repository):
