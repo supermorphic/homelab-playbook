@@ -64,14 +64,22 @@ class NativeAssetTests(unittest.TestCase):
                 'runner_images': {'amd64': store.references[1]},
                 **({'mise_images': {'amd64':store.references[4]}} if workload else {}),
             }))
+            def public_helper(directory, architecture):
+                self.assertEqual('amd64', architecture)
+                path = directory / 'netavark.tar'
+                path.write_bytes(b'verified public helper archive')
+                return path
             with patch('scripts.forgejo.runtime.defaults', return_value={
                     'forgejo_image': store.references[2],
                     'forgejo_postgres_image': store.references[3]}), \
-                    patch.object(RunnerRun, 'command', side_effect=store.command):
+                    patch.object(RunnerRun, 'command', side_effect=store.command), \
+                    patch('scripts.forgejo_runner.native_tools.prepare_archive', side_effect=public_helper):
                 assets, configuration = module.prepare(directory, descriptor, 'amd64', **({'workload':workload} if workload else {}))
             self.assertEqual([row['id'] for row in configuration['images']],
                              [str(index+1)*64 for index in range(5 if workload else 4)])
-            self.assertEqual(len(assets), 7 if workload else 6)
+            self.assertEqual(len(assets), 8 if workload else 7)
+            self.assertEqual(module.asset_descriptor(directory / 'netavark.tar'),
+                             assets['work/input/netavark.tar'])
             for index in range(5 if workload else 4):
                 self.assertEqual((directory / f'image-{index}.oci').read_bytes(),
                                  b'public OCI asset')

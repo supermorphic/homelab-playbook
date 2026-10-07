@@ -225,7 +225,7 @@ def run_resource_probe(target, observe, validate, probe_source):
 def run_image_probe(target, observe, validate, probe_source, *, stage='resources-only',
                     budget_validator=validate_probe_budget, extra_files=None, worker_observer=None,
                     worker_reader=None, after_stop=None, assets=None,
-                    asset_validator=None, asset_receiver=None):
+                    asset_validator=None, asset_receiver=None, asset_installer=None):
     """Fixed trusted experiments share the same image ownership and disposal path."""
     if stage not in ('resources-only', 'worker-only', 'job-only', 'network-only', 'egress-only', 'native-only', 'workload-only'):
         raise ValueError('Unknown host experiment')
@@ -366,7 +366,9 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
         probe.write_text(probe_source)
         probe.chmod(0o444)
         resources.record_file(probe)
-        for relative, content in {**owned_files, **(assets or {})}.items():
+        if set(owned_files) & set(assets or {}):
+            raise ValueError('Trusted image files conflict with transferred assets')
+        for relative, content in {**(assets or {}), **owned_files}.items():
             if relative.startswith('/') or '..' in Path(relative).parts:
                 raise ValueError('Invalid trusted experiment file')
             path = staging / relative
@@ -387,6 +389,14 @@ def run_image_probe(target, observe, validate, probe_source, *, stage='resources
                 continue
             if isinstance(content, tuple):
                 kind, destination = content
+                if kind == 'native-network-helper':
+                    if (relative != 'etc/runner-tools/netavark'
+                            or destination != 'work/input/netavark.tar'
+                            or destination not in (assets or {}) or asset_installer is None):
+                        raise ValueError('Invalid trusted native network helper installation')
+                    asset_installer(staging / destination, path)
+                    resources.record_file(path)
+                    continue
                 if kind != 'link' or not (path.parent / destination).resolve(strict=True).is_relative_to(staging.resolve()):
                     raise ValueError('Trusted image link leaves the allocation')
                 path.symlink_to(destination)

@@ -230,6 +230,22 @@ class HostWorkerTests(unittest.TestCase):
         self.assertEqual('/work/graph', storage['rootless_storage_path'])
         self.assertEqual('/work/graph', storage['graphroot'])
 
+    def test_native_network_helper_is_selected_only_in_the_private_image(self):
+        import tomllib
+        files = self.worker.worker_files(self.target(), 'trusted launcher', network_helper=True)
+        configuration = tomllib.loads(files['etc/containers/containers.conf'])
+        self.assertEqual(['/etc/runner-tools', '/usr/lib/podman', '/usr/libexec/podman'],
+                         configuration['engine']['helper_binaries_dir'])
+        self.assertEqual('nftables', configuration['network']['firewall_driver'])
+        self.assertEqual(('native-network-helper', 'work/input/netavark.tar'),
+                         files['etc/runner-tools/netavark'])
+        self.assertIs(True, json.loads(files['worker.json'])['native_network_helper'])
+        ordinary = self.worker.worker_files(self.target(), 'trusted launcher')
+        self.assertNotIn('etc/runner-tools/netavark', ordinary)
+        for value in ('yes', 1, None):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.worker.worker_files(self.target(), 'trusted launcher', network_helper=value)
+
     def test_offline_fixture_has_private_network_files_without_external_resolvers(self):
         files = self.worker.worker_files(self.target(), 'trusted launcher')
         self.assertEqual(['127.0.0.1 localhost', '::1 localhost'], files.get('etc/hosts', '').splitlines())
@@ -302,6 +318,21 @@ class HostWorkerTests(unittest.TestCase):
                  patch.object(worker_launch.subprocess, 'run', side_effect=AssertionError('Setup began before PID isolation')), \
                  self.assertRaises(ValueError):
                 worker_launch.main()
+
+    def test_launcher_checks_native_helper_before_mounts_or_worker_admission(self):
+        from scripts.forgejo_runner import native_tools, worker_launch
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'worker.json').write_text(json.dumps({
+                'worker': self.target()['worker'], 'native_network_helper': True}))
+            with patch.object(worker_launch, 'Path', side_effect=lambda p: root / p.lstrip('/')), \
+                 patch.object(worker_launch.os, 'geteuid', return_value=0), \
+                 patch.object(worker_launch.os, 'getpid', return_value=1), \
+                 patch.object(native_tools, 'verify_version', side_effect=ValueError('Wrong helper')) as verify, \
+                 patch.object(worker_launch.subprocess, 'run', side_effect=AssertionError('Setup began before helper verification')), \
+                 self.assertRaises(ValueError):
+                worker_launch.main()
+            verify.assert_called_once_with()
 
     def test_cleanup_observes_subordinate_processes_without_signalling_them(self):
         with tempfile.TemporaryDirectory() as directory:

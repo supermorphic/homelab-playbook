@@ -389,7 +389,8 @@ def inspect_native_jobs(target: dict, images: Path, *, public_network=False, wor
         extra = worker_files(target, (ROOT / 'scripts/forgejo_runner/worker_launch.py').read_text(),
                              oci_assets=[image['asset'] for image in configuration['images']],
                              registry_images=sorted(registry_sources(**workload)) if workload else (),
-                             storage_driver='overlay' if workload else 'vfs')
+                             storage_driver='overlay' if workload else 'vfs', network_helper=True)
+        extra['native_tools.py'] = (ROOT / 'scripts/forgejo_runner/native_tools.py').read_text()
         extra['offline_probe.py'] = (ROOT / 'scripts/forgejo_runner/worker_probe.py').read_text()
         extra['job.json'] = json.dumps(configuration)
         if public_network:
@@ -418,9 +419,10 @@ print(json.dumps(result), flush=True)
         if public_network:
             probe = probe.replace('result = run_probe()', 'import egress_probe; result = run_probe(observed=egress_probe.main())')
         payload += 'exec(' + repr((ROOT / 'scripts/forgejo_runner/host_inputs.py').read_text()) + ')\n'
+        payload += 'exec(' + repr((ROOT / 'scripts/forgejo_runner/native_tools.py').read_text()) + ')\n'
         payload += 'print(json.dumps(run_image_probe(' + repr(target) + ', observe, validate_observation, ' + repr(probe)
         payload += ", stage=" + repr(stage) + ", budget_validator=" + budget.__name__ + ", extra_files=" + repr(extra)
-        payload += ', assets=' + repr(assets) + ', asset_validator=validate_assets, asset_receiver=receive_asset'
+        payload += ', assets=' + repr(assets) + ', asset_validator=validate_assets, asset_receiver=receive_asset, asset_installer=install_archive'
         payload += ', worker_observer=observe_job_boundary, worker_reader=read_worker_result, after_stop=lambda t: worker_cleanup_errors(t)'
         payload += "+worker_cleanup_errors({**t,'worker':t['controller']}))))\n"
         outcome = ssh_observation(target, payload, timeout=target['limits']['job_seconds'] + 600,

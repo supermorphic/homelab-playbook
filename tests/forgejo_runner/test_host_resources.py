@@ -244,6 +244,12 @@ class HostResourceTests(unittest.TestCase):
     def test_worker_default_target_references_loadable_probe_unit(self):
         self.check_resource_stage(worker_stage=True, worker_unit=True)
 
+    def test_native_helper_is_installed_after_transfer_and_removed_with_owned_image(self):
+        self.check_resource_stage(worker_stage=True, worker_unit=True, native_helper=True)
+
+    def test_native_helper_rejects_a_different_archive_path(self):
+        self.check_resource_stage(worker_stage=True, worker_unit=True, native_helper=True, invalid_helper=True)
+
     def test_worker_process_cleanup_failure_preserves_its_image(self):
         self.check_resource_stage(worker_stage=True, worker_cleanup_failure=True)
 
@@ -264,7 +270,8 @@ class HostResourceTests(unittest.TestCase):
 
     def check_resource_stage(self, *, lost_start=False, image_busy=False,
                              small_destination=False, destination_shrunk=False, launch_failed=False,
-                             worker_stage=False, worker_unit=False, worker_cleanup_failure=False):
+                             worker_stage=False, worker_unit=False, worker_cleanup_failure=False,
+                             native_helper=False, invalid_helper=False):
         import json
         from types import SimpleNamespace
         with tempfile.TemporaryDirectory() as directory:
@@ -399,8 +406,26 @@ class HostResourceTests(unittest.TestCase):
                  patch.object(self.module, 'image_attached', return_value=image_busy):
                 if worker_stage:
                     from scripts.forgejo_runner.host_worker import worker_files
-                    extra = (worker_files(target, 'synthetic trusted launcher') if worker_unit
+                    extra = (worker_files(target, 'synthetic trusted launcher', network_helper=native_helper) if worker_unit
                              else {'worker-launch.py': 'synthetic trusted launcher'})
+                    installs = []
+                    def install(archive, executable):
+                        self.assertEqual(b'public archive', archive.read_bytes())
+                        self.assertEqual('netavark', executable.name)
+                        self.assertEqual('runner-tools', executable.parent.name)
+                        executable.write_bytes(b'verified helper')
+                        executable.chmod(0o555)
+                        installs.append(executable)
+                    asset_options = {}
+                    if native_helper:
+                        asset_options = {
+                            'assets': {'work/input/netavark.tar': {'size': 14, 'sha256': 'a' * 64}},
+                            'asset_validator': lambda *args: None,
+                            'asset_receiver': lambda stream, path, descriptor: path.write_bytes(b'public archive'),
+                            'asset_installer': install,
+                        }
+                        if invalid_helper:
+                            extra['etc/runner-tools/netavark'] = ('native-network-helper', 'work/input/source.tar')
                     def after_stop(target):
                         self.assertEqual('inactive', state['ActiveState'])
                         self.assertTrue((Path(target['state_root']) / 'worker.ext4').is_file())
@@ -408,15 +433,18 @@ class HostResourceTests(unittest.TestCase):
                     result = self.module.run_image_probe(target, lambda _: {}, lambda *a, **k: None,
                         'synthetic trusted probe', stage='worker-only',
                         extra_files=extra,
-                        worker_observer=lambda t, observed, unit: observed, after_stop=after_stop)
+                        worker_observer=lambda t, observed, unit: observed, after_stop=after_stop,
+                        **asset_options)
+                    if native_helper:
+                        self.assertEqual(0 if invalid_helper else 1, len(installs))
                 else:
                     result = self.module.run_resource_probe(target, lambda _: {}, lambda *a, **k: None,
                                                             'synthetic trusted probe')
-            failed = lost_start or image_busy or small_destination or destination_shrunk or launch_failed or worker_cleanup_failure
+            failed = lost_start or image_busy or small_destination or destination_shrunk or launch_failed or worker_cleanup_failure or invalid_helper
             self.assertEqual(1 if failed else 0, result['exit_code'], result)
             self.assertNotIn('synthetic private startup diagnostic', str(result))
             self.assertEqual(image_busy or small_destination or worker_cleanup_failure, parent.exists())
-            if small_destination or destination_shrunk:
+            if small_destination or destination_shrunk or invalid_helper:
                 self.assertEqual('not-found', state['LoadState'], 'Unsafe capacity must prevent unit startup')
             else:
                 self.assertEqual('inactive', state['ActiveState'])

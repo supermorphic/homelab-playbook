@@ -31,6 +31,7 @@ def prepare(directory, descriptor, architecture, *, workload=None):
     from scripts.forgejo.runtime import defaults
     from scripts.forgejo_runner.fixture import ROOT, load_candidate, RunnerRun
     from scripts.forgejo_runner.host_inputs import validate_assets
+    from scripts.forgejo_runner.native_tools import prepare_archive
     from scripts.forgejo_runner.workload import source_tree
     if architecture != 'amd64':
         raise ValueError('Native job experiment currently requires amd64')
@@ -90,6 +91,8 @@ def prepare(directory, descriptor, architecture, *, workload=None):
                 archive.add(source, arcname=package.__name__ + '/' + str(source.relative_to(root)), recursive=False)
     path.chmod(0o600)
     assets['work/input/vendor.tar'] = asset_descriptor(path)
+    path = prepare_archive(directory, architecture)
+    assets['work/input/netavark.tar'] = asset_descriptor(path)
     validate_assets(assets, 2 * 1024**3)
     return assets, {'architecture': architecture, 'source_tree': tree, 'images': rows,
                     'candidate': candidate, **({'workload':workload, 'mise_image':selected_mise} if workload else {})}

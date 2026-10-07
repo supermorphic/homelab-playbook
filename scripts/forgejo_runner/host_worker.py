@@ -94,10 +94,12 @@ def validate_process_boundary(target, records, outer, host_net, host_userns, hos
         raise ValueError('Worker and subordinate container observations are required')
 
 
-def worker_files(target, launcher, *, oci_assets=(), registry_images=(), storage_driver='vfs'):
+def worker_files(target, launcher, *, oci_assets=(), registry_images=(), storage_driver='vfs', network_helper=False):
     """Private image NSS records authorize only the declared unused ID ranges."""
     if storage_driver not in ('vfs', 'overlay'):
         raise ValueError('Unknown owned worker storage driver')
+    if type(network_helper) is not bool:
+        raise ValueError('Invalid native network helper selection')
     worker = target['worker']
     user, uid, gid = worker['user'], worker['uid'], worker['gid']
     if (len(oci_assets) > 5 or len(set(oci_assets)) != len(oci_assets)
@@ -141,6 +143,14 @@ def worker_files(target, launcher, *, oci_assets=(), registry_images=(), storage
     }
     if storage_driver == 'overlay':
         files['etc/containers/storage.conf'] += '[storage.options.overlay]\nmount_program=""\n'
+    if network_helper:
+        configuration = json.loads(files['worker.json'])
+        configuration['native_network_helper'] = True
+        files['worker.json'] = json.dumps(configuration)
+        files['etc/containers/containers.conf'] += (
+            'helper_binaries_dir=["/etc/runner-tools","/usr/lib/podman","/usr/libexec/podman"]\n'
+            '[network]\nfirewall_driver="nftables"\n')
+        files['etc/runner-tools/netavark'] = ('native-network-helper', 'work/input/netavark.tar')
     if oci_assets:
         policy = json.loads(files['etc/containers/policy.json'])
         policy['transports']['oci-archive'] = {
