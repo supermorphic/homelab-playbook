@@ -16,6 +16,10 @@ forgejo_helper_root: /usr/local/libexec/forgejo
 forgejo_quadlet_root: "/etc/containers/systemd/users/{{ forgejo_foundation_account.uid | default(0) }}"
 forgejo_user_unit_root: /var/lib/svc-forgejo/.config/systemd/user
 forgejo_health_timeout_seconds: 60
+# Activation remains an attended service action after runner acceptance.
+forgejo_actions_enabled: false
+forgejo_actions_log_retention_days: 7
+forgejo_actions_artifact_retention_days: 7
 forgejo_backup_timeout_seconds: 1800
 forgejo_recovery_timeout_seconds: 300
 forgejo_transfer_timeout: 2h

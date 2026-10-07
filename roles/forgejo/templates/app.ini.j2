@@ -44,7 +44,17 @@ JWT_SIGNING_ALGORITHM = HS256
 JWT_SECRET_URI = file:/etc/gitea/oauth2-jwt-secret
 
 [actions]
-ENABLED = false
+ENABLED = {{ (forgejo_actions_enabled | default(false)) | string | lower }}
+LOG_RETENTION_DAYS = {{ forgejo_actions_log_retention_days | default(7) }}
+ARTIFACT_RETENTION_DAYS = {{ forgejo_actions_artifact_retention_days | default(7) }}
+
+[storage.actions_log]
+STORAGE_TYPE = local
+PATH = /var/lib/gitea/data/actions_log
+
+[storage.artifacts]
+STORAGE_TYPE = local
+PATH = /var/lib/gitea/data/actions_artifacts
 
 [packages]
 ENABLED = false
