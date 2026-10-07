@@ -11,6 +11,17 @@ SCRIPT = ROOT / "scripts/forgejo_runner/test.py"
 
 
 class DispatchTests(unittest.TestCase):
+    def test_workload_dispatch_accepts_each_current_molecule_scenario(self):
+        from scripts.molecule import SCENARIOS
+        for selector in SCENARIOS:
+            for arguments in (('host-fixture', '--native-workload', selector),
+                              ('compatibility', '--workload', selector)):
+                with self.subTest(arguments=arguments):
+                    result = self.run_cli(*arguments)
+                    self.assertEqual(1, result.returncode)
+                    self.assertNotIn('invalid choice', result.stderr)
+                    self.assertNotIn('Traceback', result.stderr)
+
     def test_public_egress_requires_explicit_disposable_target(self):
         result = self.run_cli('host-fixture', '--egress-probe-only')
         self.assertEqual(1, result.returncode)

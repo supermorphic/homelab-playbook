@@ -8,6 +8,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+from scripts.molecule import SCENARIOS
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -30,13 +31,11 @@ def main(argv: list[str] | None = None) -> int:
                         help='Bounded public DNS/download and controlled denial test on the native host')
     parser.add_argument('--native-probe-only', action='store_true',
                         help='Combined real-job and public-network acceptance in the bounded native worker')
-    parser.add_argument('--native-workload', choices=('forgejo/default','system_maintenance/default',
-                        'system_maintenance/baseline','semaphore/default','reverse_proxy/default'),
+    parser.add_argument('--native-workload', choices=tuple(SCENARIOS),
                         help='Run a named Molecule scenario in the bounded native worker')
     parser.add_argument('--suite', choices=('stock-runtime',),
                         help='Run the five stock runtime checks in the bounded native worker')
-    parser.add_argument("--workload", choices=("forgejo/default", "system_maintenance/default",
-                        "system_maintenance/baseline", "semaphore/default", "reverse_proxy/default"),
+    parser.add_argument("--workload", choices=tuple(SCENARIOS),
                         help="Run a staged repository Molecule candidate in a real Forgejo job")
     parser.add_argument("--controller-failure", action="store_true",
                         help="Exercise forced controller failure during compatibility probes")
