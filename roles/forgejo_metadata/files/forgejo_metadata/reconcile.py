@@ -131,7 +131,7 @@ def reconcile(mapping,source,destination,store,write_budget):
             except (MirrorError,KeyError,TypeError,ValueError) as error:
                 result.errors.append(str(error) if isinstance(error,MirrorError) else 'invalid_source_or_response')
                 if isinstance(error,APIError) and error.retry_at: store.defer(error.retry_at,error.retry_key)
-                if isinstance(error,MirrorError) and str(error)=='run_timeout': return result
+                if isinstance(error,MirrorError) and str(error) in ('run_timeout','ownership_conflict'): return result
         if any(intent['key']['instance']==mapping.instance and intent['key']['repository_id']==mapping.source_id for intent in store.load()['pending'].values()): result.errors.append('create_outcome_unresolved')
         if not result.errors and not result.backlog: result.converged_at=time.time()
     except MirrorError as error:

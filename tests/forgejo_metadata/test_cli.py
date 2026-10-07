@@ -110,3 +110,34 @@ class CLITests(unittest.TestCase):
         self.assertEqual(1,self.run_cli('apply'))
         status=json.loads((self.root/'status.json').read_text())
         self.assertIsNone(status['mappings'][0]['last_converged'])
+
+    def test_ownership_conflict_stops_mapping_but_independent_mapping_converges(self):
+        from forgejo_metadata.state import StateStore
+        document=json.loads(self.config.read_text()); other=copy.deepcopy(document['mappings'][0])
+        other.update(instance='other',source_id=8,destination_id=10,
+            source_repo='example/other',destination_repo='example/other-recovery',
+            source_credential='other_source',destination_credential='other_destination')
+        document['mappings'].append(other); self.config.write_text(json.dumps(document))
+        store=StateStore(self.root/'state.json',enrollment_fingerprint(load_config(document)))
+        store.bootstrap('initial','fixture-only')
+        independent=FakeDestination()
+        def clients(mapping): return self.source,self.destination if mapping.instance=='fixture' else independent
+        with contextlib.redirect_stdout(self.output),patch.object(self.module,'clients',side_effect=clients):
+            self.assertEqual(0,self.module.main(['--config',str(self.config),'apply']))
+            previous=json.loads((self.root/'status.json').read_text())['mappings'][0]['last_converged']
+            self.destination.writes=[]; independent.writes=[]
+            comment=self.destination.data.comments[103].pop()
+            self.destination.data.issues.append({'id':900,'number':900,'body':'Human issue','user':{'id':77}})
+            self.destination.data.comments[900]=[comment]
+            self.source.data.issues.append(dict(self.source.data.issues[0],id=25,number=6,title='Later issue'))
+            before=copy.deepcopy(self.destination.data)
+            self.assertEqual(1,self.module.main(['--config',str(self.config),'apply']))
+        self.assertEqual([],self.destination.writes)
+        self.assertEqual(before,self.destination.data)
+        self.assertEqual(['Example issue','Later issue'],[row['title'] for row in independent.data.issues])
+        status=json.loads((self.root/'status.json').read_text())
+        failed,succeeded=status['mappings']
+        self.assertEqual({'ownership_conflict':1},failed['errors'])
+        self.assertEqual(0,failed['writes']); self.assertEqual(previous,failed['last_converged'])
+        self.assertEqual({},succeeded['errors']); self.assertEqual(0,succeeded['backlog'])
+        self.assertTrue(succeeded['last_converged'])
