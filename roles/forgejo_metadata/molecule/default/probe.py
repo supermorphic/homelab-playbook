@@ -61,7 +61,7 @@ def main():
     assert settings['NoNewPrivileges']=='yes' and settings['PrivateTmp']=='yes'
     assert settings['MemoryMax']=='268435456' and settings['TasksMax']=='32',settings
     assert run('systemctl','show','forgejo-metadata.timer','--property=Persistent','--value')=='yes'
-    assert '*:00/15:00' in Path('/etc/systemd/system/forgejo-metadata.timer').read_text()
+    assert 'OnCalendar=*-*-* 02:00:00' in run('systemctl','show','forgejo-metadata.timer','--property=TimersCalendar','--value')
     assert (ROOT/'state.json').read_bytes()==(FIXTURE/'state-baseline.json').read_bytes()
     assert json.loads((ROOT/'state.json').read_text())['pending']['fixture:7:issue:999']['key']['object_id']==999
     (ROOT/'state.json').unlink()
