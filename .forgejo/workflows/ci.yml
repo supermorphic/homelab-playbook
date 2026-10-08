@@ -45,7 +45,14 @@ jobs:
       - name: Verify candidate revision
         env:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            test "$(git rev-parse refs/remotes/origin/main)" = "$PR_BASE_SHA"
+            git merge-base --is-ancestor "$PR_BASE_SHA" "$CANDIDATE_SHA"
+          fi
       - name: Install locked tools
         run: |
           mise trust --yes
@@ -87,7 +94,14 @@ jobs:
       - name: Verify candidate revision
         env:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            test "$(git rev-parse refs/remotes/origin/main)" = "$PR_BASE_SHA"
+            git merge-base --is-ancestor "$PR_BASE_SHA" "$CANDIDATE_SHA"
+          fi
       - name: Install locked tools
         run: |
           mise trust --yes
@@ -146,7 +160,14 @@ jobs:
       - name: Verify candidate revision
         env:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            test "$(git rev-parse refs/remotes/origin/main)" = "$PR_BASE_SHA"
+            git merge-base --is-ancestor "$PR_BASE_SHA" "$CANDIDATE_SHA"
+          fi
       - name: Install locked tools
         run: |
           mise trust --yes
@@ -174,7 +195,7 @@ jobs:
     timeout-minutes: 75
     strategy:
       fail-fast: false
-      max-parallel: 2
+      # Forgejo 15 matrix concurrency is bounded by runner-pool admission.
       matrix: ${{ fromJSON(needs.classify.outputs.molecule_matrix) }}
     steps:
       - name: Check out repository
@@ -186,7 +207,14 @@ jobs:
       - name: Verify candidate revision
         env:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            test "$(git rev-parse refs/remotes/origin/main)" = "$PR_BASE_SHA"
+            git merge-base --is-ancestor "$PR_BASE_SHA" "$CANDIDATE_SHA"
+          fi
       - name: Install locked tools
         run: |
           mise trust --yes
@@ -233,7 +261,14 @@ jobs:
       - name: Verify candidate revision
         env:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            test "$(git rev-parse refs/remotes/origin/main)" = "$PR_BASE_SHA"
+            git merge-base --is-ancestor "$PR_BASE_SHA" "$CANDIDATE_SHA"
+          fi
       - name: Install locked tools
         run: |
           mise trust --yes

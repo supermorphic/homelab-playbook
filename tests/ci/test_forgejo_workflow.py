@@ -79,12 +79,23 @@ class ForgejoWorkflowTests(unittest.TestCase):
                     "${{ github.event.pull_request.head.sha || github.sha }}",
                     verify["env"]["CANDIDATE_SHA"],
                 )
+                self.assertEqual(
+                    "${{ github.event_name }}", verify["env"]["EVENT_NAME"]
+                )
+                self.assertEqual(
+                    "${{ github.event.pull_request.base.sha }}",
+                    verify["env"]["PR_BASE_SHA"],
+                )
                 for sha, expected in [(candidate, 0), ("0" * 40, 1), ("", 1)]:
                     with self.subTest(job=name, candidate=sha):
                         result = subprocess.run(
                             ["bash", "-e", "-o", "pipefail", "-c", verify["run"]],
                             cwd=root,
-                            env={**os.environ, "CANDIDATE_SHA": sha},
+                            env={
+                                **os.environ,
+                                "CANDIDATE_SHA": sha,
+                                "EVENT_NAME": "workflow_dispatch",
+                            },
                             capture_output=True,
                         )
                         self.assertEqual(expected, result.returncode)
@@ -98,7 +109,6 @@ class ForgejoWorkflowTests(unittest.TestCase):
         self.assertEqual(
             "${{ fromJSON(needs.classify.outputs.molecule_matrix) }}", matrix["matrix"]
         )
-        self.assertLessEqual(int(matrix["max-parallel"]), 2)
         gate = self.jobs["merge-gate"]
         self.assertEqual("always()", gate["if"])
         self.assertEqual(
@@ -136,6 +146,109 @@ class ForgejoWorkflowTests(unittest.TestCase):
             "mise run test:forgejo-metadata",
         ):
             self.assertIn(command, runs)
+
+    def test_pr_candidate_must_include_the_current_target(self):
+        fixture = TemporaryGitRepository()
+        self.addCleanup(fixture.cleanup)
+        base = fixture.initialize_fixture()
+        fixture.write("README.md", "candidate\n")
+        candidate = fixture.commit_all("Candidate")
+        target = subprocess.check_output(
+            ["git", "-C", str(fixture.root), "rev-parse", "--abbrev-ref", "HEAD"],
+            text=True,
+        ).strip()
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(fixture.root),
+                "update-ref",
+                "refs/remotes/origin/main",
+                base,
+            ],
+            check=True,
+        )
+        for job in self.jobs.values():
+            verify = job["steps"][1]
+            env = {
+                **os.environ,
+                "EVENT_NAME": "pull_request",
+                "CANDIDATE_SHA": candidate,
+                "PR_BASE_SHA": base,
+            }
+
+            def run():
+                return subprocess.run(
+                    ["bash", "-e", "-o", "pipefail", "-c", verify["run"]],
+                    cwd=fixture.root,
+                    env=env,
+                    capture_output=True,
+                ).returncode
+
+            self.assertEqual(0, run())
+            # The fetched target advanced while this event was queued.
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(fixture.root),
+                    "update-ref",
+                    "refs/remotes/origin/main",
+                    candidate,
+                ],
+                check=True,
+            )
+            self.assertNotEqual(0, run())
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(fixture.root),
+                    "update-ref",
+                    "refs/remotes/origin/main",
+                    base,
+                ],
+                check=True,
+            )
+            # A target commit on a different branch is not in the PR head.
+            subprocess.run(
+                ["git", "-C", str(fixture.root), "checkout", "--detach", base],
+                check=True,
+                capture_output=True,
+            )
+            fixture.write("README.md", "target changes\n")
+            advanced = fixture.commit_all("Target advances")
+            subprocess.run(
+                ["git", "-C", str(fixture.root), "checkout", target],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(fixture.root),
+                    "update-ref",
+                    "refs/remotes/origin/main",
+                    advanced,
+                ],
+                check=True,
+            )
+            env["PR_BASE_SHA"] = advanced
+            self.assertNotEqual(0, run())
+            env["PR_BASE_SHA"] = ""
+            self.assertNotEqual(0, run())
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(fixture.root),
+                    "update-ref",
+                    "refs/remotes/origin/main",
+                    base,
+                ],
+                check=True,
+            )
 
     def test_classifier_and_gate_execute_for_pr_manual_and_scheduled_events(self):
         fixture = TemporaryGitRepository()
@@ -221,22 +334,40 @@ class ForgejoWorkflowTests(unittest.TestCase):
                         "success" if depth in ("molecule", "full") else "skipped"
                     ),
                 }
-                for conclusion, expected in [
-                    ("success", 0),
-                    ("failure", 1),
-                    ("cancelled", 1),
-                    ("skipped", 1),
-                    ("", 1),
-                ]:
-                    gate_env["FAST_RESULT"] = conclusion
-                    result = subprocess.run(
-                        ["bash", "-e", "-o", "pipefail", "-c", command(gate["run"])],
-                        cwd=fixture.root,
-                        env=gate_env,
-                        capture_output=True,
-                        text=True,
+                required = [
+                    key
+                    for key in (
+                        "CLASSIFY_RESULT",
+                        "FAST_RESULT",
+                        "ANSIBLE_RESULT",
+                        "MOLECULE_RESULT",
                     )
-                    self.assertEqual(expected, result.returncode, result.stderr)
+                    if gate_env[key] == "success"
+                ]
+                for key in required:
+                    for conclusion, expected in [
+                        ("success", 0),
+                        ("failure", 1),
+                        ("cancelled", 1),
+                        ("skipped", 1),
+                        ("", 1),
+                    ]:
+                        with self.subTest(job=key, conclusion=conclusion):
+                            result = subprocess.run(
+                                [
+                                    "bash",
+                                    "-e",
+                                    "-o",
+                                    "pipefail",
+                                    "-c",
+                                    command(gate["run"]),
+                                ],
+                                cwd=fixture.root,
+                                env={**gate_env, key: conclusion},
+                                capture_output=True,
+                                text=True,
+                            )
+                            self.assertEqual(expected, result.returncode, result.stderr)
             base = candidate
 
 
