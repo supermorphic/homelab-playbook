@@ -50,8 +50,13 @@ class Client:
             if parsed.scheme:
                 if parsed.scheme!='https' or parsed.netloc!=urlsplit(self.origin).netloc or parsed.username or parsed.fragment:
                     raise APIError('pagination_boundary','not_created')
-                url=path; suffix=parsed.path.removeprefix(self.prefix)
-                if not parsed.path.startswith(self.prefix+'/'): raise APIError('pagination_boundary','not_created')
+                prefix=self.prefix
+                # GitHub pagination can use its canonical numeric repository path.
+                numeric_prefix=f'/repositories/{self.mapping.destination_id}'
+                if not self.source and method=='GET' and parsed.path.startswith(numeric_prefix+'/'):
+                    prefix=numeric_prefix
+                if not parsed.path.startswith(prefix+'/'): raise APIError('pagination_boundary','not_created')
+                url=path; suffix=parsed.path.removeprefix(prefix)
             else:
                 if not path.startswith('/') and path!='': raise APIError('endpoint_refused','not_created')
                 suffix=parsed.path; url=self.origin+self.prefix+path

@@ -31,6 +31,41 @@ class APITests(unittest.TestCase):
             with self.assertRaises(MirrorError): client.pages('/issues')
             self.assertEqual(1,len(self.calls)); self.calls=[]
 
+    def test_github_pagination_uses_pinned_numeric_repository_paths(self):
+        for endpoint in ('issues','issues/comments','labels','milestones'):
+            with self.subTest(endpoint=endpoint):
+                self.calls=[]
+                next_url=f'https://api.github.com/repositories/9/{endpoint}?page=2'
+                client=self.client([(200,[{'id':1}],{'Link':f'<{next_url}>; rel="next"'}),
+                                    (200,[{'id':2}],{})])
+                self.assertEqual([{'id':1},{'id':2}],client.pages('/'+endpoint))
+                self.assertEqual(['GET','GET'],[call[0] for call in self.calls])
+                self.assertEqual(next_url,self.calls[1][1])
+
+    def test_numeric_pagination_rejects_other_repository_and_origin(self):
+        for next_url in ('https://api.github.com/repositories/10/issues?page=2',
+                         'https://api.github.com/repositories/90/issues?page=2',
+                         'https://foreign.example/repositories/9/issues?page=2',
+                         'https://synthetic-user@api.github.com/repositories/9/issues?page=2',
+                         'http://api.github.com/repositories/9/issues?page=2',
+                         'https://api.github.com/repositories/9/git/refs?page=2',
+                         'https://api.github.com/repositories/9/issues?page=2#fragment'):
+            with self.subTest(next_url=next_url):
+                self.calls=[]
+                client=self.client([(200,[{'id':1}],{'Link':f'<{next_url}>; rel="next"'})])
+                with self.assertRaises(MirrorError): client.pages('/issues')
+                self.assertEqual(1,len(self.calls))
+
+    def test_numeric_repository_paths_allow_only_destination_reads(self):
+        for source,method,path in (
+            (False,'PATCH','https://api.github.com/repositories/9/issues/1'),
+            (False,'POST','https://api.github.com/repositories/9/issues'),
+            (True,'GET','https://forgejo.example.test/api/v1/repositories/7/issues')):
+            with self.subTest(source=source,method=method):
+                self.calls=[]
+                with self.assertRaises(MirrorError): self.client([],source).request(method,path)
+                self.assertEqual([],self.calls)
+
     def test_permissions_and_pinned_identity_are_checked(self):
         repo={'id':9,'visibility':'public','full_name':'example/recovery','permissions':{'push':True}}
         self.client([(200,repo,{}),(200,{'id':11},{})]).preflight(self.mapping)
