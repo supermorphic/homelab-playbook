@@ -47,7 +47,11 @@ def recover(value, *, command=execute, control=perform):
         if (status or observed.get('phase') != 'clean'
                 or not observed.get('runtime_absent') or not observed.get('verified')):
             raise ValueError('Owned recovery is unverified; preserve supervisor failure state')
-        command(['systemctl', 'reset-failed', '--', name + '.service'])
+        active = command(['systemctl', 'show', '--property=ActiveState', '--value', name + '.service'])
+        if active == 'failed':
+            command(['systemctl', 'reset-failed', '--', name + '.service'])
+        elif active != 'inactive':
+            raise ValueError('Recovered supervisor is not stopped; preserve failure state')
     return result, code
 
 
