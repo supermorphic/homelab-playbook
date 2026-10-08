@@ -154,7 +154,7 @@ class OwnedRuntime:
     def persist(self):
         value = validate_receipt(self.config, self.generation, self.receipt())
         destination = self.state_root / 'resources.json'
-        temporary = self.state_root / '.resources-' + self.generation
+        temporary = self.state_root / ('.resources-' + self.generation)
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         try:
             with os.fdopen(descriptor, 'w') as stream:
