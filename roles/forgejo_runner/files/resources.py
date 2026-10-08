@@ -223,7 +223,10 @@ class OwnedRuntime:
             if name in ('work', 'controller'):
                 account = self.config['worker' if name == 'work' else 'controller']
                 os.chown(directory, account['uid'], account['gid'])
-                directory.chmod(0o700)
+                # Trusted setup has no DAC override. It must traverse /work
+                # to write its own readiness file and bind the user runtime.
+                # Search grants neither listing nor access to private job data.
+                directory.chmod(0o701 if name == 'work' else 0o700)
             self.record(directory)
         for name in ('bin', 'sbin', 'lib', 'lib64'):
             path = staging / name
