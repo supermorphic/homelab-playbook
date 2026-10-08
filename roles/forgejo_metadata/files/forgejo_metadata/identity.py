@@ -30,8 +30,10 @@ def render_projection(mapping, kind: str, source: dict) -> Projection:
         raise MirrorError('invalid_source_object')
     key=SourceKey(mapping.instance,mapping.source_id,kind,source['id'])
     if kind=='label':
-        suffix=f"-{source['id']}"
-        name='fj-'+source['name'][:50-len(suffix)-3]+suffix
+        name=source.get('name')
+        if (not isinstance(name,str) or not 1<=len(name)<=50 or name!=name.strip()
+                or name in ('.','..') or any(ord(c)<32 or ord(c)==127 for c in name)):
+            raise MirrorError('unsupported_label_name')
         identity=marker(key)
         if len(identity)>100: raise MirrorError('projection_limit')
         text=' '.join((source.get('description') or '').split())

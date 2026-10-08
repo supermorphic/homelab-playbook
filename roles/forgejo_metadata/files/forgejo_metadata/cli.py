@@ -8,6 +8,8 @@ import signal
 import stat
 import time
 from .api import SourceAPI, DestinationAPI
+from .api import APIError
+from .labels import build_adoption_plan, adopt_labels
 from .model import MirrorError, SourceKey, load_config, enrollment_fingerprint, positive
 from .reconcile import reconcile, discover_owned
 from .state import StateStore, atomic_json, operation_lock, read_private
@@ -77,14 +79,21 @@ def apply(mappings,store,root,budget,deadline_at):
     return 0 if success else 1
 
 
-def control(request,mappings,store,fingerprint):
-    operations=('bootstrap-initial','bootstrap-recover','resolve-absent','manual-apply')
+def control(request,mappings,store,fingerprint,budget=100):
+    operations=('bootstrap-initial','bootstrap-recover','resolve-absent','manual-apply','adopt-labels')
     operation=request.get('operation')
     if (operation not in operations or request.get('fingerprint')!=fingerprint
         or request.get('confirmation')!=f'{operation}:{fingerprint}'
         or not isinstance(request.get('decision_ref'),str) or not request['decision_ref'].strip()):
         raise MirrorError('invalid_control_confirmation')
     if operation=='manual-apply': return True
+    if operation=='adopt-labels':
+        if request.get('previous_writers_stopped') is not True: raise MirrorError('adoption_requires_stopped_writers')
+        try: writes=adopt_labels(mappings,store,clients,request.get('plan_digest'),request['decision_ref'],budget)
+        except APIError as error:
+            if error.retry_at: store.defer(error.retry_at,error.retry_key)
+            raise
+        print(json.dumps({'adopted_labels':writes})); return False
     if request.get('previous_writers_stopped') is not True or request.get('outcomes_resolved') is not True:
         raise MirrorError('recovery_decision_required')
     # Complete discovery must succeed for every enrollment before state changes.
@@ -98,6 +107,7 @@ def control(request,mappings,store,fingerprint):
         store.bootstrap(operation.removeprefix('bootstrap-'),request['decision_ref'])
         for target in owned.values():
             store.finish_create(target.key,'created',target.locator)
+        store.remember_owned(owned)
     else:
         try: key=SourceKey(**request['key'])
         except (KeyError,TypeError): raise MirrorError('invalid_resolution_key') from None
@@ -114,10 +124,11 @@ def main(argv=None):
     parser.add_argument('--config',required=True)
     sub=parser.add_subparsers(dest='mode',required=True)
     sub.add_parser('plan',help='Print public enrollment and its confirmation fingerprint without changing state.')
+    sub.add_parser('labels-plan',help='Read APIs and list exact label adoption pairs, conflicts and review digest without changing safety state.')
     sub.add_parser('apply',help='Reconcile enrolled destination metadata (writes).')
     sub.add_parser('check',help='Observe initialization and convergence status without repairs.')
     attended=sub.add_parser('control',help='Execute a root-owned, attended request.')
-    attended.add_argument('--request',required=True,help='Root-owned JSON: operation, fingerprint, decision_ref, confirmation=operation:fingerprint. Bootstrap and resolve require previous_writers_stopped=true and outcomes_resolved=true; resolve adds the exact SourceKey as key.')
+    attended.add_argument('--request',required=True,help='Root-owned JSON: operation, fingerprint, decision_ref, confirmation=operation:fingerprint. Bootstrap and resolve require previous_writers_stopped=true and outcomes_resolved=true; resolve adds the exact SourceKey as key. adopt-labels requires previous_writers_stopped=true and the reviewed labels-plan digest as plan_digest.')
     args=parser.parse_args(argv)
     previous_handler=None
     try:
@@ -148,11 +159,14 @@ def main(argv=None):
         def deadline(signum,frame): raise MirrorError('run_timeout')
         deadline_at=time.monotonic()+timeout
         previous_handler=signal.signal(signal.SIGALRM,deadline); signal.alarm(timeout)
+        if args.mode=='labels-plan':
+            print(json.dumps(build_adoption_plan(mappings,store,clients),sort_keys=True))
+            return 0
         with operation_lock(root/'operation.lock'):
             if args.mode=='control':
                 request=trusted_request(args.request)
                 if not isinstance(request,dict): raise MirrorError('invalid_control_request')
-                if not control(request,mappings,store,fingerprint): return 0
+                if not control(request,mappings,store,fingerprint,budget): return 0
             return apply(mappings,store,root,budget,deadline_at)
     except MirrorError as error: print(str(error)); return 1
     except (OSError,ValueError,KeyError,TypeError): print('invalid_runtime_input_or_response'); return 1

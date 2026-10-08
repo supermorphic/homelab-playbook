@@ -17,10 +17,15 @@ def key_string(key):
 
 def valid_ownership(identity,locator):
     if not isinstance(identity,str) or not isinstance(locator,str): return False
-    match=re.fullmatch(r'[a-z0-9_-]{1,16}:([1-9][0-9]*):(issue|comment):([1-9][0-9]*)',identity)
+    match=re.fullmatch(r'[a-z0-9_-]{1,16}:([1-9][0-9]*):(issue|comment|label):([1-9][0-9]*)',identity)
     if not match: return False
-    prefix='/issues/comments/' if match[2]=='comment' else '/issues/'
+    prefix={'comment':'/issues/comments/','issue':'/issues/','label':'/labels/'}[match[2]]
     return re.fullmatch(re.escape(prefix)+r'[1-9][0-9]*',locator) is not None
+
+def ownership_locator(target):
+    if target.key.kind!='label': return target.locator
+    if not positive(target.fields.get('id')): raise MirrorError('invalid_destination_label')
+    return '/labels/'+str(target.fields['id'])
 
 def valid_intent(key,intent):
     if not isinstance(key,str) or not isinstance(intent,dict) or set(intent)!={'key','started'}: return False
@@ -134,13 +139,17 @@ class StateStore:
             'pending':pending,'retry_deadlines':retries,'ownership':ownership})
     def remember_owned(self,owned):
         document=self.load(); ownership=document.setdefault('ownership',{})
-        updates={key_string(key):target.locator for key,target in owned.items() if key.kind in ('issue','comment')}
+        updates={key_string(key):ownership_locator(target) for key,target in owned.items() if key.kind in ('issue','comment','label')}
         if any(ownership.get(key)!=locator for key,locator in updates.items()):
             ownership.update(updates); atomic_json(self.path,document)
     def begin_create(self,key):
         document=self.load(); identity=key_string(key)
         if identity in document['pending']: raise MirrorError('create_outcome_unresolved')
         document['pending'][identity]={'key':asdict(key),'started':time.time()}
+        atomic_json(self.path,document)
+    def record_adoption(self,digest,decision_ref,writes):
+        document=self.load()
+        document['last_label_adoption']={'digest':digest,'decision_ref':decision_ref,'writes':writes,'at':time.time()}
         atomic_json(self.path,document)
     def finish_create(self,key,outcome,locator):
         if outcome=='unknown': return

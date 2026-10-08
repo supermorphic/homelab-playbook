@@ -1,401 +1,278 @@
 # Specification 012: Forgejo to GitHub issue metadata mirror
 
-Issue: [#75](https://forgejo.infra.supermorphic.com/supermorphic/homelab-playbook/issues/75)
-
-Status: implementation prepared; production enrollment and live acceptance remain separate operator actions.
+Issues: [#75](https://forgejo.infra.supermorphic.com/supermorphic/homelab-playbook/issues/75),
+[#89](https://forgejo.infra.supermorphic.com/supermorphic/homelab-playbook/issues/89)
 
 ## Purpose and authority
 
 Keep an independently searchable GitHub copy of Forgejo issues, comments,
 labels, milestones, and open/closed state. Forgejo remains authoritative.
 Run on NUC #4 through workstation-managed Ansible, independently of Semaphore,
-Actions, runners, n8n, and Kubernetes. Existing native Git mirroring remains
-responsible for commits, branches, and tags.
+Actions, runners, n8n, and Kubernetes. Native Git mirroring owns commits, branches,
+and tags.
 
-This is a reconstruction copy. Full Forgejo backups still own PRs, reviews,
-attachments, exact application identities, settings, authentication, and Actions
-history. [Specification 010](010-forgejo-service.md) owns those backups and native
-Git mirroring; issues #58 and #9 own collaboration cutover and broader recovery.
-This service neither changes repository authority nor promotes GitHub on failure.
+This is a reconstruction copy. Full Forgejo backups own PRs, reviews, attachments,
+exact application identities, settings, authentication, and Actions history.
+[Specification 010](010-forgejo-service.md) owns backups and native Git mirroring;
+issues #58 and #9 own collaboration cutover and broader recovery. This service
+neither changes repository authority nor promotes GitHub on failure.
 
-## Selected implementation and alternatives
+## Architecture and alternatives
 
-Use a repository-owned Python standard-library executable and a separate Ansible
-role. Install it on Debian as a host-native helper. A system-level oneshot unit
-runs as a dedicated non-login account, separate from `svc-forgejo`. A persistent
-calendar timer follows native Git push mirroring's nightly 02:00 cadence in the
-host's timezone and catches up after downtime. There is no listener, webhook,
-container, or application database.
+Use a repository-owned host service and a separate Ansible role on Debian.
+A systemd oneshot service runs as a dedicated non-login account,
+separate from Forgejo. A persistent nightly timer catches up after downtime.
+There is no listener, webhook, container, or application database. Periodic
+comparison repairs missed runs and edits without an event-delivery dependency.
 
 Alternatives considered:
 
-- Adopting Gitea Mirror adds a web application, database, and Git replication.
-  Its documented GitHub destination supports code replication, while issue
-  metadata requires a GitHub source. It does not provide the requested operation.
-- Forgesync demonstrates attribution and durable marker discovery and synchronizes
-  collaboration in both directions. Its writes back into Forgejo conflict with
-  this service's read-only source. Review its patterns without copying implementation
-  or licenses.
-- Event forwarding needs ingress and reliable event delivery. Periodic comparison
-  directly repairs missed runs and edits with fewer operating dependencies.
+- Gitea Mirror adds an application, database, and Git replication. Its GitHub
+  destination supports code replication; issue metadata requires a GitHub source.
+- Forgesync demonstrates attribution and marker discovery, but its writes back
+  into Forgejo conflict with the read-only source boundary. Its marker identities
+  are not interchangeable with this service's stable API identities.
+- Event forwarding requires ingress and reliable delivery without removing the
+  need to repair missed events.
 
 ## Enrollment and protected inputs
 
-Each explicitly enrolled mapping binds one Forgejo HTTPS origin and repository
-to one existing GitHub repository. Pin both repositories' API identities as well
-as their owner/name paths, expected destination visibility, and the declared
-destination actor. Reject duplicate destinations and mismatched identities.
-Repository transfers or renames require reviewed configuration changes.
-Default enrollment is empty; implementation does not discover or enroll production
-repositories automatically.
+Each explicitly enrolled mapping binds one Forgejo HTTPS repository to one existing
+GitHub repository. Pin repository API identities, owner/name paths, destination
+visibility, and destination actor. Reject duplicate destinations, identity
+mismatches, and visibility drift. Repository transfers, renames, and changed source
+identities require reviewed re-enrollment; repositories are never enrolled by
+discovery.
 
-Enrollment authorizes publication of the selected source issue history into the
-declared destination visibility. A private source requires explicit operator
-review before publication to a public destination. Stop on visibility drift.
-GitHub repository creation, permission changes, and adoption of historical GitHub
-objects are separate operator actions.
+Enrollment authorizes publication of the selected source history to the declared
+visibility. A private source needs explicit review before publication to a public
+destination. Repository creation, permission changes, and adoption of historical
+GitHub objects are separate operator actions.
 
-Use a non-admin Forgejo identity with selected-repository `read:issue` and
-`read:repository` token scopes. Use a dedicated GitHub metadata-mirror credential:
-a fine-grained token issued by the destination repository owner, restricted to
-explicitly selected destination repositories, with Issues write permission and
-repository metadata access. Mirrored issues and comments use that owner's identity;
-pin it as the destination actor. The token owner must also have repository
-Write access: GitHub can silently omit issue labels and milestones when the account
-lacks the required repository access, even if the token permits issue operations.
-Keep the token limited to Issues and metadata; account membership does not justify
-requesting Contents write, Actions, repository administration, or source mutation
-permission. Check effective account access during enrollment and each run, and
-prove label and milestone behavior during separately authorized live acceptance.
+Use a non-admin Forgejo identity with read-only issue and repository access to the
+selected repositories. The GitHub credential is an owner-issued fine-grained token
+limited to the selected destinations, Issues write permission, and repository
+metadata access. Pin the owner as destination actor. The owner also needs repository
+Write access: token permissions alone do not prove that label and milestone
+assignments will be accepted. Check effective access and prove those assignments
+during live acceptance. Do not request Contents, Actions, administration, or source
+mutation permissions.
 
-The original design required a separate GitHub automation account. That choice
-is superseded for personally owned destinations: GitHub fine-grained tokens do
-not support repository collaborators. The owner-issued token preserves the
-repository and permission limits while sharing the owner's posting identity.
+The original separate GitHub automation-account design is historical: fine-grained
+tokens do not support repository collaborators for personally owned destinations.
+The owner-issued token preserves the repository and permission limits while
+sharing the owner's posting identity.
 
-The operator enrolls durable tokens in a service-owned sibling SOPS inventory file
-through [Specification 005](005-sops-age-secrets.md). Ansible handles secret tasks
-with `no_log` and installs root-only credential files. systemd `LoadCredential`
-delivers read-only runtime copies to the service. Live secret values never appear in
-arguments, environment definitions, unit text, output, status files, or test data.
-The runtime never obtains a SOPS identity or uses the operator Git credential helper.
+[Specification 005](005-sops-age-secrets.md) owns token encryption and identity
+recovery. Tokens remain in service-owned protected inventory and reach the isolated
+runtime through systemd credentials. They never enter arguments, environment
+definitions, output, or status. The runtime has no SOPS identity or operator Git
+credentials. Record public token ownership, scope, and expiration metadata. Renewal
+is attended. Rotation preserves scope, mapping identities, and safety state; verify
+the replacement before revoking its predecessor.
 
-Record the GitHub token owner, selected repositories, permissions and expiration
-beside its public inventory reference. A non-expiring token records expiration as
-none; token renewal is not automatic. To rotate, create a replacement with the
-same limits, update the same credential reference in the owning SOPS file,
-provision and verify the replacement, then revoke the previous token. Preserve
-the mapping identities and service state during rotation.
-
-Use the existing trusted HTTPS path to Forgejo, including the required CA chain,
-and normal system trust for GitHub. Do not bypass certificate or hostname checks.
-Accept only configured HTTPS origins. Reject redirects and pagination links that
-leave the selected API origin or repository boundary; never forward authorization
-to an unexpected host. Read-only source URLs from API content are attribution,
-not instructions to fetch attachments or arbitrary resources.
+Use trusted HTTPS with certificate and hostname checks. Confine requests and
+pagination to the configured API origin and repository; never forward authorization
+through redirects or to another host. Source URLs are attribution, not instructions
+to fetch attachments or arbitrary resources.
 
 ## Durable identity and destination ownership
 
-Identity consists of a stable configured source-instance key, numeric Forgejo
-repository ID, object kind, and numeric object ID. Issue numbers and titles are
-display information, not mapping keys. Preserve the instance key across host
-rebuilds. A restored source with changed object identities requires reviewed
-re-enrollment rather than guessing correspondence.
+Identity is the stable source-instance key, numeric Forgejo repository ID, object
+kind, and numeric object ID. Issue numbers, titles, and names are display values.
+Preserve the instance key across rebuilds; changed source identities require
+reviewed re-enrollment rather than guessed correspondence.
 
-Append a versioned machine-readable marker with fixed-order `key=value` fields
-to the generated issue/comment body and milestone description. Keep a separate
-service namespace: Forgesync identifies repositories by host and path and issues
-by their displayed number, so its markers are not interchangeable with these
-stable API identities. The runtime defines the exact encoding; keep it compact
-enough to preserve complete label identities within GitHub's description limit.
-A generated footer identifies the source repository,
-original issue number, author and creation time where available, and source URL.
-Do not impersonate users or imply that GitHub timestamps are original timestamps.
-Parse only the canonical terminal marker, outside source text, so marker-like
-content inside a source body cannot define destination ownership.
+Versioned markers identify destination objects. Generated attribution preserves
+the source repository, issue number, author, creation time, and URL where available
+without impersonating users or presenting GitHub timestamps as original timestamps.
+Only the canonical service marker outside source text can establish ownership;
+marker-like content in a source body cannot do so.
 
-Labels have no Markdown body. Put a compact source identity marker in their
-description, followed by as much original description as the API permits. Use
-a single line because GitHub converts label-description newlines to spaces;
-retain read compatibility with the original newline-separated format. Use
-a deterministic name containing the source label ID and a readable source name.
-Bound the readable part to GitHub's name limit without truncating the identity.
-Preserve full original names in issue attribution. Label description truncation
-is an explicit reconstruction limitation; full backups preserve exact values.
-Milestones likewise use a readable title with a source-ID suffix so pre-existing
-destination names do not become implicit matches.
+Labels preserve original Forgejo names and colors. Their descriptions carry the
+complete identity marker and as much source description as the destination permits.
+Reject names that cannot be represented exactly rather than substituting or
+truncating them. Description truncation remains a reconstruction limitation covered
+by full backups. Milestones retain a readable title with a source-ID suffix to avoid
+implicit matches with pre-existing destination objects.
 
-Only update objects carrying an unambiguous marker for the enrolled source.
-For issues and comments, also require the declared automation actor as creator.
-Reserved names alone do not authorize adoption of a label or milestone.
-Duplicate, malformed, conflicting, or missing ownership markers on recognizable
-service objects stop that mapping with an actionable conflict. Do not silently
-take over or merge historical GitHub issues, comments, labels, or milestones.
+Ordinary synchronization updates only objects with an unambiguous marker for the
+enrolled source. Issues and comments also require the declared actor as creator.
+Actor identity or a matching name alone never authorizes adoption. Preserve
+unmarked GitHub history and human comments. Replace edits to owned fields with
+source values; GitHub edits never become source writes.
 
-Edits to owned GitHub fields are replaced by source values on reconciliation.
-Unmarked GitHub objects and human-authored comments are preserved. GitHub edits
-never become source writes. The source HTTP client supports GET only, and the
-destination client permits only the declared issue-metadata endpoints and methods.
-
-An owner-issued token shares its actor with ordinary GitHub history. Actor identity
-alone therefore does not make an unmarked issue or comment a service object.
-Generated attribution or a damaged terminal service marker identifies a
-recognizable shadow. The safety journal also retains the source identity and
-destination locator of observed issue/comment shadows. This evidence prevents a
-known shadow whose entire body is replaced or whose object is deleted from being
-silently recreated. It never authorizes adoption or updates without a valid marker.
-Preserve this evidence during attended recovery. If both this evidence and all
-service attribution and markers are lost, an object cannot be distinguished from
-ordinary owner-authored history; resolve that loss through attended recovery.
+The safety journal retains evidence of observed issue/comment shadows and numeric
+GitHub label IDs, so label ownership survives renames. Missing or damaged markers,
+duplicate ownership, or an absent recorded shadow stop the mapping rather than permit
+recreation or takeover. Recorded labels also reject replacement by another numeric
+ID even when the name matches. Malformed label markers are conflicts regardless of
+name. Preserve surviving evidence through upgrades and recovery alongside
+initialization and unresolved creates. Evidence alone never authorizes a write
+without a valid marker. If all ownership evidence and recognizable service attribution
+are lost, ordinary owner-authored history cannot be distinguished from a shadow;
+attended recovery must resolve that uncertainty.
 
 ## Reconciliation and API boundaries
 
-Every run acquires the service operation lock and validates configuration,
-repository identities, destination actor and visibility before any writes.
-Build complete paginated inventories of source issues, labels, and milestones,
-and destination shadows. Read all states, including closed issues and milestones.
-Never treat an incomplete page sequence or an API error as an empty collection.
-Bound response sizes, page counts, execution time, and per-run mutation requests,
-including rejected requests; reaching
-a discovery limit is failure, not a partial inventory accepted as complete.
+Before writes, validate enrollment, repository identities, actor, visibility, and
+safety state. Build complete inventories, including closed objects; exclude PRs and
+review content even where APIs mix them with issues or comments. Incomplete
+pagination, API errors, or discovery limits must not become empty or partial
+inventories accepted as complete. Bound discovery, execution, and mutation requests.
 
-Request Forgejo issues with `type=issues` and additionally reject records carrying
-PR metadata. GitHub also mixes PRs into issue lists; exclude them before marker
-discovery or mutation. Fetch source comments only for accepted issues, using the
-installed API's issue-comment listing contract. Do not assume every Forgejo list
-endpoint has identical pagination parameters. Filter non-issue comment records
-and test any repository-wide comment optimization against the accepted issue set.
+Reconcile labels and milestones before dependent issues, then comments. Create
+missing labels under their original names; ordinary synchronization never adopts
+unmarked collisions. Rename marked labels in place, retaining their numeric GitHub
+IDs. An occupied desired name stops the mapping before changing that label.
 
-Reconcile labels and milestones before dependent issues, then issue comments.
-Apply title, generated body, source label membership, milestone assignment, and
-open/closed state to each owned issue. Apply comment edits as well as additions.
-Milestone changes include title, description, state, and due date. Convert due
-timestamps to their UTC calendar date before writing; GitHub stores midnight for
-the supplied date. Labels include name, color, and the bounded description.
-Explicitly clear removed issue labels,
-milestone assignments, and milestone due dates where supported by the API.
-Compare normalized supported fields before writing. Repeated converged runs make
-no effective writes. Unrelated GitHub fields do not cause perpetual updates.
-Read back every created or updated object and compare all supported fields with
-the intended source projection, including labels, milestone assignment and cleared
-values. A successful HTTP response or matching marker alone is insufficient.
-Report silently ignored or mismatched fields as failed reconciliation; do not
-advance last-converged evidence. That evidence describes the source data observed
-by the run, not an atomic snapshot across both services.
+Copy supported source fields and assignments, including closure, reopening,
+comment edits, and removed optional values. Preserve milestone due dates as UTC
+calendar dates. Compare normalized supported values so converged objects need no
+writes and unrelated destination fields do not cause repeated updates. Read back
+all supported values after each write: a successful response or matching marker
+does not prove convergence when an API silently drops an assignment or other field.
 
-Do not delete any destination object because it disappears from the source.
-Retain formerly mirrored issues, comments, labels, and milestones. Removing a
-label from an existing source issue changes that issue's membership; it does not
-delete the label object or unrelated history. No recovery-only inference closes
-an issue that is simply missing from the source.
+Never delete a destination object because it disappears from Forgejo, or infer
+closure solely from absence. Removing a source issue's label changes its membership,
+not the retained label or unrelated history.
 
-Full inventory comparison is the initial implementation. Avoid relying on issue
-update timestamps to discover comment edits or label changes. A bounded run may
-leave valid work for the next timer invocation and reports that backlog explicitly.
-Use deterministic ordering and skip converged objects so historical backfill makes
-progress across runs. Failure in one mapping must not prevent independent mappings
-from being examined, but the overall command fails if any mapping fails.
+Use full comparison rather than relying on issue timestamps to discover comment
+or label changes. Deterministic progress and skipped converged objects let bounded
+backfill continue across runs. Independent mappings can progress after another
+fails, but any failure makes the overall run fail. Partial work and backlog never
+advance last-converged evidence, which describes observed source data rather than
+an atomic snapshot across both services.
 
-Make API requests serially and pace destination writes. Respect GitHub primary
-and secondary rate limits and `Retry-After`. A bounded backoff or deferred retry
-must remain visible; it is not successful convergence. Do not log API payloads,
-authorization headers, raw error bodies, or source issue text. Report mapping,
-operation, sanitized error class, counts, and timestamps instead.
+Pace serial requests and respect primary and secondary rate limits. Persist retry
+deadlines by credential so restarts cannot bypass throttling and independent
+credentials can progress. Report sanitized operation results and convergence
+freshness; never log credentials, API payloads, raw error bodies, or source content.
+Freshness must account for the nightly schedule, clock changes, and bounded run time.
 
 ## Interrupted creation and rebuild safety
 
-Markers must be part of the original create request, not added by a later patch.
-Before each create, rediscover destination ownership and atomically record a small
-pending-create intent in the durable service state document. The intent contains
-identity and operation metadata, not credentials or issue content. Flush the file
-and its directory before sending the request. Retire the intent when discovery
-finds exactly one correctly owned object; read-back of all supported fields must
-still pass before reporting convergence. A field mismatch becomes repair work for
-that existing object, never another create.
+Creation includes the ownership marker and requires a durable pending intent
+recorded before sending the request. The journal contains identity and operation
+evidence, never credentials or issue content. Journal transitions preserve uncertainty
+across interruption. Rediscovery of exactly one correctly owned object resolves its
+intent; mismatched supported fields become repair work on that object, never another
+create.
 
-Distinguish confirmed non-creation from an unknown outcome. A validated API
-rejection that guarantees no object was created, or a transport failure proven
-to occur before sending the request, retires the intent as rejected. A later run
-may retry after correcting the cause and respecting any retry deadline. Persist
-that transition atomically; a crash before persistence remains conservative.
-Do not classify all non-success responses as definite rejection. Timeout, lost
-response, malformed success response, ambiguous server error, and an interrupted
-request retain the unresolved intent. Offline tests must cover both paths.
+Proven non-creation can retire an intent and permit a later retry after repair and
+any retry deadline. Lost responses, timeouts, malformed success, ambiguous errors,
+and interrupted requests retain uncertainty. An unresolved intent blocks another
+create for that identity while independent work can continue. Resolve an absent
+shadow only after establishing that the prior request cannot still complete and
+recording an attended decision.
 
-After a crash or uncertain HTTP outcome, rediscover the marker. An existing shadow
-completes the intent and normal reconciliation continues without another create.
-An unresolved intent blocks another POST for that identity. Do not blindly retry
-creation after a timeout or ambiguous server error. Other independent work may
-continue; report the unresolved operation as failure.
+Initialization binds the enrolled identities and actor. Missing, corrupt,
+incompatible, or mismatched state permits observation but blocks all destination
+writes. Provisioning and timer invocations never initialize it implicitly or
+discard surviving ownership and pending-create evidence.
 
-The state document contains both initialization evidence and pending intents, so
-loss of the file also removes permission to mutate destinations. Bind initialization
-to the enrolled source/destination identities and destination actor. Missing,
-corrupt, incompatible, or mismatched state permits read-only discovery but blocks
-all destination writes. Provisioning and timer invocations never initialize it
-implicitly. An empty pending list in an otherwise valid initialized document is
-distinct from a missing document.
+Initial enrollment requires confirmation that no previous writer or unresolved
+create exists. Recovery requires stopped writers, preserved available state, and
+complete marker discovery. Lost state additionally requires an explicit decision
+that earlier create outcomes are resolved. Bind attended decisions to the exact
+enrollment and operation; a confirmation value records execution intent, not
+authorization.
 
-An attended bootstrap explicitly selects initial enrollment or recovery. Initial
-enrollment requires operator confirmation that no earlier writer or unresolved
-create exists for those mappings. Recovery requires stopping previous writers,
-preserving any available state, and rediscovering destination markers. Preserve
-unresolved intents when state survives. If state is lost, require an explicit
-operator decision that earlier create outcomes have been resolved before writing
-new initialization evidence. Confirmation binds the exact mappings and operation;
-it is not authorization. Record the selected mode and decision reference without
-secrets or issue content. Changes to the bound enrollment identities invalidate
-initialization until reviewed re-enrollment; ordinary provisioning must preserve
-existing state.
-
-This document is a safety journal, not an authoritative mapping database. A fresh
-installation reconstructs ordinary mappings from API markers after attended
-initialization. REST creation cannot promise exactly-once delivery when both the
-response and local uncertainty evidence are lost. Resolve an absent shadow only
-after confirming no prior request can still complete; record that decision before
-permitting another create. Discovery of an existing shadow can resolve an intent
-automatically; clearing an unresolved absent shadow requires an attended decision.
-
-The same principle applies when a marker is removed or ownership becomes ambiguous:
-stop and repair the identified object through an explicitly authorized operation.
-Do not manufacture a replacement based on a title match.
+The journal is safety evidence, not an authoritative mapping database. After
+attended initialization, markers reconstruct ordinary mappings without a database
+restore. Exactly-once REST creation cannot be guaranteed when both response and
+uncertainty evidence are lost. Ownership conflicts require repair of the identified
+object, never a replacement inferred from its title.
 
 ## Host lifecycle and observation
 
-The service role owns a locked non-login account with an explicit inventory UID/GID,
-private state, root-owned executable/configuration, systemd units, and credentials.
-Do not allocate subordinate IDs, Podman storage, linger, or access to Forgejo data.
-Validate existing identity ownership and refuse incompatible accounts instead of
-renumbering them. The account receives no SSH keys, sudo authority, or unrelated
-supplementary groups.
+Isolate the service from Forgejo data and unrelated privileges. Keep executable,
+configuration, and credentials administrator-owned and state private to the service.
+Refuse incompatible account ownership rather than renumbering existing identities.
+The service needs no SSH access, sudo, container identity allocation, or unrelated
+groups. Bound resources and filesystem access; account separation alone does not
+restrict the HTTPS network access the APIs require.
 
-systemd owns timeout, persistent scheduling, process termination, and observable
-exit status. The single oneshot unit plus a nonblocking filesystem lock prevents
-overlap with manual invocation. Use filesystem protection, no new privileges,
-private temporary storage, and bounded memory/tasks. Network access remains
-necessary for the two HTTPS APIs; do not claim account separation alone restricts
-egress. Persist retry deadlines by credential so restarting the process cannot bypass
-throttling and independently credentialed mappings can still progress. Publish
-sanitized per-mapping status atomically, including last attempted
-run, last converged run, backlog, and unresolved creates. A partial run does not
-advance last-converged evidence. Verification checks freshness separately from
-the last exit status. The freshness window must cover the next nightly run,
-the longer day at the autumn clock change, and the bounded run duration.
+Scheduled and attended operations share mutual exclusion, time bounds, and observable
+exit status. Verification observes installed definitions, isolation, scheduling,
+and existing convergence evidence without starting synchronization or repairing
+state. Provisioning, observation, and mutation remain distinct; use the canonical
+`mise run playbook` interface and its target guards. Production enrollment does not
+authorize staging.
 
-Expose provision and observational verify through `mise run playbook`, preserving
-its dependency, inventory, connection, and task-selection guards. Support production
-only until staging has separately approved inputs. Provision installs
-the service definitions; starting an enrolled timer is an external publication action requiring
-explicit authorization for its mappings. Verification observes installed definitions,
-ownership, timer state, and existing status without synchronizing metadata.
-Manual reconciliation uses the same executable and lock as the timer.
-
-Recovery prerequisites are a GitHub checkout of this repository, the workstation
-toolchain, independent SOPS identity recovery, restored enrolled credentials,
-source availability, and the preserved source-instance key. Reinstall through the
-canonical playbook path after separately authorizing the target. Stop the timer
-before investigating ownership or pending-create failures. Preserve its safety
-journal, inspect the identified GitHub object, resolve uncertain outcomes, and
-restart only after an authorized repair. Missing state requires the attended
-recovery bootstrap; copying configuration or rerunning provision cannot enable
-writes. No separate mapping database restore is needed for normal marker discovery.
+Recovery must remain usable independently of the running service. Prerequisites
+are a repository checkout, workstation toolchain, independent SOPS identity
+recovery, restored scoped credentials, source availability, and the preserved
+instance key. Keep synchronization stopped while preserving the journal,
+investigating ownership and unknown outcomes, and performing authorized repairs.
+Reinstallation cannot substitute for attended initialization or acceptance.
 
 ## Attended operation and recovery
 
-The `forgejo_metadata` inventory group and its UID/GID, protected tokens and
-repository mappings require a separately authorized enrollment change. The
-playbooks do not add a production host or select repositories themselves. All
-commands below require the operator's direction for the exact host and action;
-replace `<host>` with that selected target. A confirmation fingerprint is an
-execution-intent guard, not permission to publish.
+### Original-name label cutover
 
-1. After authorizing installation, run
-   `mise run playbook -- forgejo-metadata provision production --limit <host>`.
-   Keep the timer disabled during initial enrollment or recovery. Provisioning
-   preserves existing initialization and pending creates; it does not initialize
-   replication. Use `verify` to observe current definitions and replication
-   evidence. A missing initialization or convergence status is pending acceptance
-   and returns failure.
-2. Run `mise run playbook -- forgejo-metadata plan production --limit <host>`.
-   It reports the installed public enrollment and its fingerprint without API
-   writes or changes to safety state. Review the destination visibility, repository
-   identities and automation actor before forming an attended request. Exact
-   request syntax is defined by the installed runtime's `control --help`.
-   Supply the request as `forgejo_metadata_request` in a private, uncommitted
-   JSON extra-vars file under `.tmp/`; it contains no tokens or issue content.
-3. For initial enrollment, select `bootstrap-initial` only after establishing
-   that no earlier writer or uncertain create exists. For recovery, stop previous
-   writers, preserve available safety state and resolve earlier outcomes before
-   selecting `bootstrap-recover`. Record a retrievable non-secret decision
-   reference. Bind the operation and confirmation to the reported fingerprint.
-   Submit with `mise run playbook -- forgejo-metadata bootstrap production
-   --limit <host> -e @.tmp/metadata-control.json`. The control unit discovers all
-   destination markers before changing initialization. It preserves surviving
-   unresolved intents and archives invalid prior state for investigation.
-4. After separately authorizing backfill, select `manual-apply` in a bound request
-   and run `mise run playbook -- forgejo-metadata apply production --limit <host>
-   -e @.tmp/metadata-control.json`. The root submission helper holds its own lock
-   until the fixed control unit finishes and then removes its transient request.
-   The control unit and timer use the same service operation lock. A successful
-   bootstrap alone is not replication acceptance.
-5. Run `mise run playbook -- forgejo-metadata verify production --limit <host>`
-   to observe the installed definitions, isolated account, timer selection and
-   existing convergence status. It does not start a unit or repair state. Backlog,
-   read-back errors, unresolved creates or stale convergence require investigation.
-   Enable the declared timer through a separately authorized provision action
-   only after the exact mappings and supported live behavior have been accepted.
+Exact source and destination name, color, and description equality proposes an
+adoption pair; it grants no ownership. An observational plan identifies the enrolled
+repositories, source identities, destination numeric IDs, intended values, and
+conflicts without changing destinations, safety state, scheduling, or convergence
+evidence. Case variants, ambiguous names, conflicting markers or journal evidence,
+unsupported names, and uncertain creates at proposed candidates require resolution.
 
-For an unresolved create, keep previous writers stopped and inspect the identified
-shadow. Ordinary complete discovery resolves an existing correctly owned marker.
-If no shadow exists, establish that the earlier request cannot still complete
-before authorizing `resolve-absent` for that exact source key. Record the decision
-and submit with `mise run playbook -- forgejo-metadata resolve production
---limit <host> -e @.tmp/metadata-control.json`; the control repeats complete marker
-discovery before clearing the selected intent. It does not itself create a shadow.
-Invalid or missing safety state requires recovery bootstrap, even if the last
-status file reports earlier convergence. Ownership conflicts require a separately
-authorized repair of the identified object; a title match never permits adoption.
+Explicit authorization binds the reviewed set and its observed fields and IDs.
+Recheck that set immediately before each write and reject changes since review.
+Adoption adds generated markers to existing labels, verifies their fields and
+unchanged IDs, and records ownership. It creates no labels, merges no objects, and
+preserves historical issue assignments. Subsequent source changes affect those
+labels wherever historical GitHub issues use them.
 
-## Acceptance and delivery gates
+Keep synchronization paused and previous writers stopped through label preparation,
+deployment, and adoption. Deployment alone grants no adoption authority, and manual
+label preparation is a separate operator action.
 
-The design was reviewed before implementation. Keep implementation plans uncommitted
-under `.tmp/`. Production credentials, identity allocation, repository enrollment,
-deployment, initial backfill, and live acceptance require separate operator actions.
+After interruption, preserve the journal and review a fresh plan. Valid owned labels
+need no repeat adoption; remaining pairs need fresh authorization. Missing or invalid
+initialization still requires attended recovery. Separately authorize reconciliation
+to restore mirrored issue membership, verify original names and convergence, then
+authorize scheduling to resume.
 
-Offline behavior tests use API doubles and disposable HTTP fixtures with synthetic
-identities and credentials. An independent expected-data oracle must demonstrate:
+### Enrollment and recovery
 
-- Historical issues, comments, labels, milestones and state converge once.
-- Source edits, added/edited comments, assignments, closure and reopening converge.
-- PR records and review content never enter the reconciliation path.
-- The source receives no mutation, including after destination-only edits.
-- Existing unmarked GitHub history and human comments remain intact.
-- Unchanged runs make no writes; a clean restart rediscovers all existing shadows.
-- Accepted creates followed by lost responses or interruption recover by marker;
-  unknown outcomes block duplicate POSTs until resolved.
-- Confirmed non-creation can retry after repair; ambiguous errors retain intents.
-- Missing, corrupt or identity-mismatched state prevents writes until attended
-  initialization; provisioning preserves existing initialization and intents.
-- Successful responses with dropped labels, milestones or other supported fields
-  fail read-back and do not advance last-converged evidence.
-- Missing source objects retain their recovery shadows; incomplete pagination,
-  duplicate markers, permission failures and visibility drift fail safely.
-- Rate limits, destination outage, time budgets and backlog remain observable.
-- Tokens and source content remain absent from diagnostics and status artifacts.
+Installation, identity allocation, scoped credentials, repository enrollment,
+initialization, backfill, and scheduling each require the appropriate operator
+authorization. Keep scheduling disabled while reviewing enrollment and performing
+initialization or recovery. Review repository identities, actor, and visibility
+before any publication; initialization alone does not establish replication
+acceptance.
 
-A disposable Debian systemd scenario verifies provisioning twice, protected
-credential delivery, account isolation, locking, timeout, timer persistence, and
-observational verification. Register the new bounded test workflow and impact
-selection with the repository classifier. Run the required `mise run ci:changed`
-before implementation completion. Prose is reviewed and mechanically linted,
-not tested for prescribed phrases.
+Stop previous writers before resolving ownership or creation conflicts. Earlier
+convergence cannot authorize writes when safety state is missing or invalid.
+Resume scheduling only after uncertain outcomes and conflicts are resolved and
+convergence is verified.
 
-Separately authorized live acceptance uses exact source/destination repositories
-and confirms initial backfill, repeat-run behavior, supported edits, PR exclusion,
-read-only source permissions, timer execution, and independent GitHub search.
-Offline evidence never substitutes for live acceptance or repository authority
-cutover. Record detailed evidence in established evidence stores rather than this
-specification.
+## Acceptance requirements
+
+Offline validation must demonstrate:
+
+- Historical metadata and supported edits converge; unchanged runs make no writes.
+- PRs and reviews are excluded, the source remains read-only, and unrelated GitHub
+  history survives destination-only edits and missing source objects.
+- Markers rediscover objects after restart; original-name labels retain numeric
+  identity through rename and adoption, and collisions or stale adoption plans fail.
+- Accepted creates with lost responses recover without duplicates; proven
+  non-creation can retry, while unknown outcomes remain blocked until resolved.
+- Missing or invalid initialization blocks writes, and provisioning and recovery
+  preserve surviving ownership and uncertainty evidence.
+- Incomplete discovery, dropped fields, identity or visibility drift, permission
+  failures, outages, rate limits, and exhausted budgets remain observable failures.
+- Credential isolation, mutual exclusion, bounded execution, persistent scheduling,
+  and observational verification hold in the installed host service; diagnostics
+  expose neither tokens nor source content.
+
+Separately authorized live acceptance for exact enrolled repositories must confirm
+backfill, repeated runs, supported edits and assignments, PR exclusion, read-only
+source access, scheduled execution, and independent GitHub search. Offline evidence
+does not establish live acceptance or change repository authority. Keep execution
+evidence outside this design record.
 
 ## Upstream references
 
