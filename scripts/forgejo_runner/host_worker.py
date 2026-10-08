@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import struct
 
 
 def validate_worker_budget(target, capacity=None):
@@ -179,17 +180,32 @@ def worker_files(target, launcher, *, oci_assets=(), registry_images=(), storage
     return files
 
 
-def validate_runtime_mount(target, source, runtime, work_device, filesystem):
+def validate_runtime_mount(target, source, runtime, work_device, filesystem, *,
+                           controller_uid=None, access_acl=None):
     worker = target['worker']
+    mode = 0o700
+    if controller_uid is not None:
+        if (type(controller_uid) is not int or not 1000 <= controller_uid < 2**32 - 1
+                or controller_uid == worker['uid']):
+            raise ValueError('Runtime access requires a distinct paired controller')
+        # Linux POSIX access ACL xattr, version 2. The mask appears in stat's
+        # group bits even though the owning group has no access. Accept only
+        # the paired controller's search grant, with no additional identities.
+        entries = ((1, 7, 0xffffffff), (2, 1, controller_uid),
+                   (4, 0, 0xffffffff), (16, 1, 0xffffffff), (32, 0, 0xffffffff))
+        expected = struct.pack('<I', 2) + b''.join(struct.pack('<HHI', *entry) for entry in entries)
+        if access_acl != expected:
+            raise ValueError('Runtime ACL differs from the paired-controller contract')
+        mode = 0o710
     if ((source.st_dev, source.st_ino) != (runtime.st_dev, runtime.st_ino)
             or runtime.st_dev != work_device
             or runtime.st_uid != worker['uid'] or runtime.st_gid != worker['gid']
-            or not stat.S_ISDIR(runtime.st_mode) or stat.S_IMODE(runtime.st_mode) != 0o700
+            or not stat.S_ISDIR(runtime.st_mode) or stat.S_IMODE(runtime.st_mode) != mode
             or filesystem.f_blocks * filesystem.f_frsize > target['limits']['disk_bytes']):
         raise ValueError('Worker runtime directory is outside its owned bounded storage')
 
 
-def validate_runtime_storage(target, root, work):
+def validate_runtime_storage(target, root, work, *, controller_uid=None):
     """Read mount identity through pinned process and directory descriptors."""
     descriptors = []
     try:
@@ -200,14 +216,16 @@ def validate_runtime_storage(target, root, work):
         for name in ('run', 'user', str(target['worker']['uid'])):
             parent = os.open(name, flags, dir_fd=parent)
             descriptors.append(parent)
+        access_acl = os.getxattr(parent, 'system.posix_acl_access') if controller_uid is not None else None
         validate_runtime_mount(target, os.fstat(source), os.fstat(parent),
-                               os.fstat(work).st_dev, os.fstatvfs(parent))
+                               os.fstat(work).st_dev, os.fstatvfs(parent),
+                               controller_uid=controller_uid, access_acl=access_acl)
     finally:
         for descriptor in reversed(descriptors):
             os.close(descriptor)
 
 
-def read_worker_result(target, unit, proc=Path('/proc')):
+def read_worker_result(target, unit, proc=Path('/proc'), *, controller_uid=None):
     """Pin the manager's proc directory; never follow paths provided by a worker."""
     pid = unit.get('MainPID', '0')
     empty = {'observations': None, 'diagnostic': ''}
@@ -251,7 +269,7 @@ def read_worker_result(target, unit, proc=Path('/proc')):
         except ValueError:
             observation = None  # A bounded single write is still in progress.
         if observation is not None:
-            validate_runtime_storage(target, root, work)
+            validate_runtime_storage(target, root, work, controller_uid=controller_uid)
         diagnostic = contents['probe-error.log']
         if diagnostic:
             diagnostic = (contents['native-job-error.log'] + '\n' + contents['native-error.log']

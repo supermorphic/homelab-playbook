@@ -341,7 +341,8 @@ class OwnedRuntime:
             observed = self.unit.observe()
             if observed.get('InvocationID') != self.unit.invocation or observed.get('ActiveState') != 'active':
                 raise ValueError('Runtime stopped during admission preparation')
-            report = read_worker_result(self.target(), observed)
+            report = read_worker_result(self.target(), observed,
+                                        controller_uid=self.config['controller']['uid'])
             if report['diagnostic']:
                 raise RuntimeError('Owned worker startup failed')
             if report['observations'] is not None:
