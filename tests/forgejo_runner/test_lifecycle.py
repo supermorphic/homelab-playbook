@@ -22,7 +22,7 @@ class CheckpointTests(unittest.TestCase):
                 'allocation': {'device': 1, 'inode': 2, 'uid': 0, 'gid': 0,
                                'mode': 0o100600, 'nlink': 1, 'invocation': 'b'*32},
                 'registration': {'id': 7, 'name': 'playbook-'+'a'*32,
-                                 'repository': 'supermorphic/homelab-playbook'},
+                                 'scope': 'user:supermorphic'},
                 'primary_error': None, 'cleanup_errors': []}
 
     def store(self, root):

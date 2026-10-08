@@ -1,5 +1,5 @@
 ---
-- name: Stop all repository polling before explicit recovery
+- name: Stop all shared owner polling before explicit recovery
   ansible.builtin.systemd_service:
     name: "forgejo-runner-{{ item.name }}.timer"
     state: stopped
@@ -36,7 +36,7 @@
     stdin: "{{ forgejo_runner_enrollment_tokens[item.1] }}"
     stdin_add_newline: false
   when: item.1 in forgejo_runner_enrollment_tokens
-  loop: "{{ forgejo_runner_slots | product(forgejo_runner_repositories) | list }}"
+  loop: "{{ forgejo_runner_slots | product([forgejo_runner_scope]) | list }}"
   changed_when: true
   no_log: true
 

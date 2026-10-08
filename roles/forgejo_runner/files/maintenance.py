@@ -1,4 +1,4 @@
-"""Attended bounded drain and explicit recovery of installed repository slots."""
+"""Attended bounded drain and explicit recovery of installed shared worker slots."""
 
 import argparse
 import json

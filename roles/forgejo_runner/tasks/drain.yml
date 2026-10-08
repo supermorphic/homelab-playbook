@@ -6,7 +6,7 @@
   loop: "{{ forgejo_runner_slots }}"
   register: forgejo_runner_current_definitions
 
-- name: Stop all installed repository polling before waiting for a job
+- name: Stop all installed shared owner polling before waiting for a job
   ansible.builtin.systemd_service:
     name: "forgejo-runner-{{ item.item.name }}.timer"
     state: stopped

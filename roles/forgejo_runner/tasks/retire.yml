@@ -12,11 +12,11 @@
 - name: Publish disabled slots with their retained identity reservations
   ansible.builtin.import_tasks: main.yml
 
-- name: Remove only the retired repository enrollment inputs
+- name: Remove only the retired owner enrollment inputs
   ansible.builtin.file:
     path: "{{ item.0.state_root }}/enrollment-{{ item.1 | hash('sha256') }}"
     state: absent
-  loop: "{{ forgejo_runner_slots | product(forgejo_runner_repositories) | list }}"
+  loop: "{{ forgejo_runner_slots | product([forgejo_runner_scope]) | list }}"
   loop_control:
     label: "{{ item.0.name }} / {{ item.1 }}"
   no_log: true

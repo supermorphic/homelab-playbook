@@ -1,4 +1,4 @@
-"""Validate explicit repository slots before provisioning any host resources."""
+"""Validate explicit owner-scoped slots before provisioning any host resources."""
 
 import importlib.util
 from pathlib import Path
@@ -9,9 +9,9 @@ import sys
 import subprocess
 
 
-SLOT_FIELDS = {'name', 'repositories', 'enabled', 'label', 'state_root',
+SLOT_FIELDS = {'name', 'scope', 'enabled', 'label', 'state_root',
                'controller', 'worker', 'limits'}
-REPOSITORIES = {'supermorphic/career-ops', 'supermorphic/homelab-playbook', 'supermorphic/homelab-talos'}
+SCOPES = {'user:supermorphic', 'organization:supermorphic'}
 LIMIT_FIELDS = {'memory_bytes', 'disk_bytes', 'pids', 'cpu_percent',
                'idle_seconds', 'job_seconds'}
 LIMIT_MAXIMUMS = {'memory_bytes': 2 * 1024**3, 'disk_bytes': 24 * 1024**3,
@@ -29,11 +29,8 @@ def validate_slots(slots):
             if (not isinstance(slot[key], str)
                     or re.fullmatch(r'[a-z][a-z0-9-]{0,47}', slot[key]) is None):
                 raise ValueError('Runner slot name and label must be bounded identifiers')
-        repositories = slot['repositories']
-        if (not isinstance(repositories, list) or len(repositories) != 3
-                or any(not isinstance(repository, str) for repository in repositories)
-                or set(repositories) != REPOSITORIES):
-            raise ValueError('Each shared worker must serve the exact three allowed repositories')
+        if not isinstance(slot['scope'], str) or slot['scope'] not in SCOPES:
+            raise ValueError('Workers must serve the declared supermorphic user or organization scope')
         if type(slot['enabled']) is not bool:
             raise ValueError('Runner enablement must be an explicit boolean')
         if slot['state_root'] != '/var/lib/forgejo-runner/' + slot['name']:
@@ -54,6 +51,8 @@ def validate_slots(slots):
         values = [slot[key] for slot in slots]
         if len(values) != len(set(values)):
             raise ValueError('Duplicate runner slot ownership')
+    if len({slot['scope'] for slot in slots}) > 1:
+        raise ValueError('Shared workers require the same owner scope')
     if len({slot['label'] for slot in slots}) > 1:
         raise ValueError('Shared workers require the same environment label')
     # Reuse the foundation's declaration and cross-account allocation rules.

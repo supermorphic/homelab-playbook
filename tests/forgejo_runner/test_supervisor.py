@@ -48,13 +48,13 @@ class Enrollment:
         self.events, self.backend = events, backend
         self.present = None
 
-    def enroll(self, repository, slot, generation):
+    def enroll(self, scope, slot, generation):
         self.events.append('enroll')
         self.present = type('Registration', (), {'id': 7, 'name': slot+'-'+generation,
-                                               'repository': repository})()
+                                               'scope': scope})()
         return self.present
 
-    def lookup(self, repository, slot, generation):
+    def lookup(self, scope, slot, generation):
         return self.present
 
     def retire(self, registration):
@@ -72,7 +72,7 @@ class SupervisorTests(unittest.TestCase):
         self.events = []
         self.backend = Backend(self.events)
         self.enrollment = Enrollment(self.events, self.backend)
-        self.config = {'name': 'playbook', 'repository': 'example/project'}
+        self.config = {'name': 'playbook', 'scope': 'user:example'}
         self.store = module.CheckpointStore(Path(self.directory.name), authority_uid=os.getuid())
 
     def run_cycle(self, **kwargs):
@@ -143,12 +143,12 @@ class SupervisorTests(unittest.TestCase):
     def test_restart_cleans_recorded_generation_before_admission(self):
         generation = 'a'*32
         self.backend.present = True
-        registration = self.enrollment.enroll('example/project', 'playbook', generation)
+        registration = self.enrollment.enroll('user:example', 'playbook', generation)
         with self.store as store:
             store.write({'phase': 'running', 'generation': generation,
                          'allocation': self.backend.identity,
                          'registration': {'id': registration.id, 'name': registration.name,
-                                          'repository': registration.repository},
+                                          'scope': registration.scope},
                          'primary_error': None, 'cleanup_errors': []})
         self.events.clear()
         self.assertEqual(0, self.run_cycle())
@@ -159,7 +159,7 @@ class SupervisorTests(unittest.TestCase):
         with self.store as store:
             state = module.clean_checkpoint()
             state.update(phase='quarantined', generation='a'*32,
-                         registration={'id': 7, 'name': 'other-'+'a'*32, 'repository': 'other/project'})
+                         registration={'id': 7, 'name': 'other-'+'a'*32, 'scope': 'user:other'})
             store.write(state)
         self.assertEqual(1, self.run_cycle(recovery_only=True))
         self.assertEqual([], self.events)

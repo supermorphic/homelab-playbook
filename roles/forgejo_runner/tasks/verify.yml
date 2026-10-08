@@ -4,8 +4,8 @@
     that:
       - forgejo_runner_slots | forgejo_runner_validate_slots == forgejo_runner_slots
       - forgejo_runner_slots | length == 2
-      - forgejo_runner_slots[0].repositories | sort == forgejo_runner_repositories | sort
-      - forgejo_runner_slots[1].repositories | sort == forgejo_runner_repositories | sort
+      - forgejo_runner_slots[0].scope == forgejo_runner_scope
+      - forgejo_runner_slots[1].scope == forgejo_runner_scope
       - forgejo_runner_source_commit is match('^[0-9a-f]{40}$')
       - forgejo_runner_helper_root == '/usr/local/libexec/forgejo-runner/' ~ forgejo_runner_source_commit
     fail_msg: Standalone verification requires the reviewed two-worker pool declarations

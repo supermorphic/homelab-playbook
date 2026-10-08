@@ -9,20 +9,19 @@ spec.loader.exec_module(module)
 
 
 class DispatchTests(unittest.TestCase):
-    def test_private_authority_can_be_restored_for_each_allowed_repository(self):
-        repositories = ['supermorphic/career-ops', 'supermorphic/homelab-playbook', 'supermorphic/homelab-talos']
-        value = {'installation': '/usr/local/libexec/forgejo-runner/' + 'a'*40,
-                 'slot': {'name': 'worker-1', 'repositories': repositories,
-                          'state_root': '/var/lib/forgejo-runner/worker-1'}}
-        for repository in repositories:
-            argv = module.arguments('restore-authority', value, value['slot']['state_root'] + '/config.json', repository)
-            self.assertEqual(['--repository', repository], argv[-2:])
-        with self.assertRaises(ValueError):
-            module.arguments('restore-authority', value, value['slot']['state_root'] + '/config.json', 'example/other')
+    def test_private_authority_can_be_restored_for_each_allowed_scope(self):
+        for scope in ('user:supermorphic', 'organization:supermorphic'):
+            value = {'installation': '/usr/local/libexec/forgejo-runner/' + 'a'*40,
+                     'slot': {'name': 'worker-1', 'scope': scope,
+                              'state_root': '/var/lib/forgejo-runner/worker-1'}}
+            argv = module.arguments('restore-authority', value, value['slot']['state_root'] + '/config.json', scope)
+            self.assertEqual(['--scope', scope], argv[-2:])
+            with self.assertRaises(ValueError):
+                module.arguments('restore-authority', value, value['slot']['state_root'] + '/config.json', 'user:other')
 
     def test_updates_and_verification_use_the_current_installed_revision(self):
         value = {'installation': '/usr/local/libexec/forgejo-runner/' + 'a'*40,
-                 'slot': {'name': 'playbook', 'state_root': '/var/lib/forgejo-runner/playbook'}}
+                     'slot': {'name': 'playbook', 'state_root': '/var/lib/forgejo-runner/playbook'}}
         argv = module.arguments('drain', value, '/var/lib/forgejo-runner/playbook/config.json')
         self.assertEqual('/usr/local/libexec/forgejo-runner/' + 'a'*40 + '/maintenance.py', argv[2])
         self.assertEqual('drain', argv[3])
@@ -31,7 +30,7 @@ class DispatchTests(unittest.TestCase):
 
     def test_installed_metadata_cannot_redirect_an_administrator_command(self):
         value = {'installation': '/tmp/worker',
-                 'slot': {'name': 'playbook', 'state_root': '/var/lib/forgejo-runner/playbook'}}
+                     'slot': {'name': 'playbook', 'state_root': '/var/lib/forgejo-runner/playbook'}}
         with self.assertRaises(ValueError):
             module.arguments('drain', value, '/var/lib/forgejo-runner/playbook/config.json')
         value['installation'] = '/usr/local/libexec/forgejo-runner/' + 'a'*40

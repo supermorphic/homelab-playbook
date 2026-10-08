@@ -39,13 +39,13 @@ def validate_checkpoint(value):
             raise ValueError('Invalid owned runtime identity')
     registration = value['registration']
     if registration is not None:
-        if (not isinstance(registration, dict) or set(registration) != {'id', 'name', 'repository'}
+        if (not isinstance(registration, dict) or set(registration) != {'id', 'name', 'scope'}
                 or type(registration['id']) is not int or not 0 < registration['id'] < 2**63
                 or not isinstance(registration['name'], str)
                 or re.fullmatch(r'[a-z][a-z0-9-]{0,99}', registration['name']) is None
-                or not isinstance(registration['repository'], str)
-                or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}',
-                                registration['repository']) is None):
+                or not isinstance(registration['scope'], str)
+                or re.fullmatch(r'(user|organization):[A-Za-z0-9][A-Za-z0-9_.-]{0,99}',
+                                registration['scope']) is None):
             raise ValueError('Invalid scoped registration identity')
     if value['phase'] in ('registered', 'running') and (
             generation is None or allocation is None or registration is None):
@@ -175,8 +175,7 @@ def error_type(error):
 def bound_checkpoint(config, state):
     registration = state['registration']
     if registration is not None and (
-            (registration['repository'] != config['repository'] if 'repository' in config
-             else registration['repository'] not in config['repositories'])
+            registration['scope'] != config['scope']
             or registration['name'] != config['name'] + '-' + str(state['generation'])):
         raise ValueError('Checkpoint belongs to another slot or generation')
 
@@ -187,7 +186,7 @@ def cleanup_generation(config, resources, enrollment, store, state):
     store.write(state)
     errors = []
     try:
-        registration = enrollment.lookup(config['repository'], config['name'], state['generation'])
+        registration = enrollment.lookup(config['scope'], config['name'], state['generation'])
         if registration is not None:
             expected = state['registration']
             if expected is not None and registration.id != expected['id']:
@@ -257,9 +256,9 @@ def run_slot(config, resources, enrollment, store, *, recovery_only=False, gener
     try:
         state['allocation'] = resources.prepare(generation)
         store.write(state)
-        registration = enrollment.enroll(config['repository'], config['name'], generation)
+        registration = enrollment.enroll(config['scope'], config['name'], generation)
         state.update(phase='registered', registration={
-            'id': registration.id, 'name': registration.name, 'repository': registration.repository})
+            'id': registration.id, 'name': registration.name, 'scope': registration.scope})
         store.write(state)
         state['phase'] = 'running'
         store.write(state)

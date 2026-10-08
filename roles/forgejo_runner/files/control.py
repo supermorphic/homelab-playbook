@@ -57,9 +57,7 @@ def load_configuration(path):
             or slot.get('state_root') != '/var/lib/forgejo-runner/' + slot['name']
             or path != Path(slot['state_root']) / 'config.json' or type(slot.get('enabled')) is not bool
             or set(slot) != pool.FIELDS
-            or not isinstance(slot.get('repositories'), list) or len(slot['repositories']) != 3
-            or any(not isinstance(repo, str) for repo in slot['repositories'])
-            or set(slot['repositories']) != pool.REPOSITORIES
+            or not isinstance(slot.get('scope'), str) or slot['scope'] not in pool.SCOPES
             or not isinstance(slot.get('limits'), dict)
             or set(slot['limits']) != set(pool.LIMITS)
             or any(type(number) is not int or not 0 < number <= pool.LIMITS[key]
@@ -86,12 +84,12 @@ def admission_lease(slot, *, authority_uid=0):
         lease.__exit__(None, None, None)
 
 
-def restore_authority(value, raw, repository):
+def restore_authority(value, raw, scope):
     slot = value['slot']
     token = raw.removesuffix('\n')
-    if (repository not in slot['repositories'] or not token or len(raw.encode()) > 4096
+    if (scope != slot['scope'] or not token or len(raw.encode()) > 4096
             or any(ord(character) < 32 or ord(character) == 127 for character in token)):
-        raise ValueError('Replacement authority must match the installed repository and private input contract')
+        raise ValueError('Replacement authority must match the installed scope and private input contract')
     with CheckpointStore(slot['state_root']) as store:
         state = store.read()
         bound_checkpoint(slot, state)
@@ -99,7 +97,7 @@ def restore_authority(value, raw, repository):
                          'forgejo-runner-' + slot['name'] + '.timer']).strip()
         if timer != 'inactive' or not observe(slot)['runtime_absent']:
             raise ValueError('Stop admission and dispose the owned runtime before restoring authority')
-        filename = pool.token_name(repository)
+        filename = pool.token_name(scope)
         try:
             current = os.stat(filename, dir_fd=store.directory_fd, follow_symlinks=False)
         except FileNotFoundError:
@@ -132,23 +130,23 @@ class UnavailableEnrollment:
         raise RuntimeError('Enrollment authority is unavailable; registration reconciliation remains pending')
 
 
-def enrollment(slot, repository):
-    return RegistrationClient('https://forgejo.infra.supermorphic.com', repository,
-                              private_token(Path(slot['state_root']) / pool.token_name(repository)))
+def enrollment(slot, scope):
+    return RegistrationClient('https://forgejo.infra.supermorphic.com', scope,
+                              private_token(Path(slot['state_root']) / pool.token_name(scope)))
 
 
-def recovery_repository(slot, state, *, authority_uid):
+def recovery_scope(slot, state, *, authority_uid):
     # A recorded registration binds its own scope. An interrupted enrollment
     # before that checkpoint instead needs its exact pre-published assignment.
     bound_checkpoint(slot, state)
     if state['registration'] is not None:
-        return state['registration']['repository']
+        return state['registration']['scope']
     try:
         assignment = pool.read_assignment(slot, authority_uid=authority_uid)
     except (OSError, ValueError):
         return None
     if assignment is not None and assignment['generation'] == state['generation']:
-        return assignment['repository']
+        return assignment['scope']
     return None
 
 
@@ -172,9 +170,9 @@ def perform(mode, value):
             bound_checkpoint(slot, state)
             assignment = pool.read_assignment(slot)
             matched = (assignment is not None and assignment['generation'] == state['generation']
-                       and assignment['repository'] == registration['repository'])
-            found = (enrollment(slot, registration['repository']).lookup(
-                registration['repository'], slot['name'], state['generation']) if matched else None)
+                       and assignment['scope'] == registration['scope'])
+            found = (enrollment(slot, registration['scope']).lookup(
+                registration['scope'], slot['name'], state['generation']) if matched else None)
             result['registration_verified'] = found is not None and found.id == registration['id']
             result['verified'] = result['verified'] and result['registration_verified']
         return result, 0 if result['verified'] else 1
@@ -188,9 +186,9 @@ def perform(mode, value):
         recovery_only = mode == 'recover' or state['phase'] != 'clean'
         handle, generation = None, None
         if recovery_only:
-            repository = recovery_repository(slot, state, authority_uid=store.authority_uid)
+            scope = recovery_scope(slot, state, authority_uid=store.authority_uid)
             try:
-                client = enrollment(slot, repository) if repository is not None else UnavailableEnrollment()
+                client = enrollment(slot, scope) if scope is not None else UnavailableEnrollment()
             except (OSError, ValueError):
                 # Trusted disposal does not depend on a working secret store.
                 # Unknown remote retirement keeps the slot quarantined.
@@ -203,21 +201,17 @@ def perform(mode, value):
                 if not result['runtime_absent'] or os.path.lexists(root / 'resources.json'):
                     return {'phase': state['phase'], 'runtime_absent': False}, 1
                 assignments = pool.peer_assignments(slot, slots, observe, authority_uid=store.authority_uid)
-                previous = pool.read_assignment(slot, authority_uid=store.authority_uid)
-                for repository in pool.poll_order(slot, previous):
-                    client = enrollment(slot, repository)
-                    excluded = {item['job_digest'] for item in assignments if item['repository'] == repository}
-                    handle = client.pending_job(slot['label'], excluded=excluded)
-                    if handle is not None:
-                        break
+                scope = slot['scope']
+                client = enrollment(slot, scope)
+                excluded = {item['job_digest'] for item in assignments}
+                handle = client.pending_job(slot['label'], excluded=excluded)
                 if handle is None:
                     return result, 0
                 pool.require_capacity(slot)
-                assignment = pool.write_assignment(store, slot, repository, handle)
+                assignment = pool.write_assignment(store, slot, scope, handle)
                 generation = assignment['generation']
-        selected = {**slot, 'repository': repository}
-        runtime = OwnedRuntime(selected, value['installation'], value['assets_root'], value['manifest'], handle, store)
-        code = run_slot(selected, runtime, client, store, recovery_only=recovery_only, generation=generation)
+        runtime = OwnedRuntime(slot, value['installation'], value['assets_root'], value['manifest'], handle, store)
+        code = run_slot(slot, runtime, client, store, recovery_only=recovery_only, generation=generation)
         return {'phase': store.read()['phase'], 'exit_code': code}, code
 
 
@@ -225,14 +219,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('mode', choices=('cycle', 'verify', 'inspect', 'recover', 'restore-authority'))
     parser.add_argument('--config', required=True, type=Path)
-    parser.add_argument('--repository', help='Exact installed scope required when restoring private authority from stdin')
+    parser.add_argument('--scope', help='Exact installed scope required when restoring private authority from stdin')
     arguments = parser.parse_args()
     if os.geteuid() != 0:
         parser.error('This installed helper requires administrator authority')
     try:
         value = load_configuration(arguments.config)
         if arguments.mode == 'restore-authority':
-            result, code = restore_authority(value, sys.stdin.read(4097), arguments.repository), 0
+            result, code = restore_authority(value, sys.stdin.read(4097), arguments.scope), 0
         else:
             result, code = perform(arguments.mode, value)
     except Exception as error:

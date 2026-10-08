@@ -4,7 +4,7 @@
     daemon_reload: true
   when: forgejo_runner_deployment_changed
 
-- name: Reconcile repository queue polling
+- name: Reconcile shared owner queue polling
   ansible.builtin.systemd_service:
     name: "forgejo-runner-{{ item.name }}.timer"
     enabled: "{{ item.enabled }}"

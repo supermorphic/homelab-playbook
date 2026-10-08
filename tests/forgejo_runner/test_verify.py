@@ -50,7 +50,7 @@ class VerificationTests(unittest.TestCase):
             allocation = {'device': 1, 'inode': 2, 'uid': 0, 'gid': 0, 'mode': 0o100600,
                           'nlink': 1, 'invocation': 'b'*32}
             state = {'phase': 'running', 'generation': 'a'*32, 'allocation': allocation,
-                     'registration': {'id': 1, 'name': 'playbook-'+'a'*32, 'repository': 'example/project'},
+                     'registration': {'id': 1, 'name': 'playbook-'+'a'*32, 'scope': 'user:example'},
                      'primary_error': None, 'cleanup_errors': []}
             with lifecycle.CheckpointStore(root, authority_uid=os.getuid()) as store:
                 store.write(state)

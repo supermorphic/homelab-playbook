@@ -17,7 +17,7 @@ class AnsibleAssemblyTests(unittest.TestCase):
     def test_actual_inputs_and_templates_assemble_two_shared_workers_without_host_mutation(self):
         self.assemble(False)
 
-    def test_enabled_workers_receive_separate_private_repository_authority(self):
+    def test_enabled_workers_receive_private_shared_owner_authority(self):
         self.assemble(True)
 
     def assemble(self, enabled):
@@ -45,8 +45,7 @@ class AnsibleAssemblyTests(unittest.TestCase):
                 worker['enabled'] = enabled
             if enabled:
                 variables['forgejo_runner_enrollment_tokens'] = {
-                    repository: 'synthetic-' + repository.rsplit('/', 1)[1]
-                    for repository in variables['forgejo_runner_slots'][0]['repositories']}
+                    'user:supermorphic': 'synthetic-owner-authority'}
             variables_file = directory / 'variables.json'
             variables_file.write_text(json.dumps(variables))
             result_file = directory / 'assembled.json'
@@ -75,19 +74,17 @@ class AnsibleAssemblyTests(unittest.TestCase):
             configurations = [json.loads(row['content']) for row in files if row['path'].endswith('/config.json')]
             self.assertEqual(2, len(configurations))
             for row in configurations:
-                self.assertEqual(['supermorphic/career-ops', 'supermorphic/homelab-playbook',
-                                  'supermorphic/homelab-talos'], row['slot']['repositories'])
+                self.assertEqual('user:supermorphic', row['slot']['scope'])
             self.assertTrue(all(row['slot']['enabled'] is enabled for row in configurations))
             self.assertTrue(all(row['mode'] == 0o600 for row in files if row['path'].endswith('.json')))
             self.assertEqual(2, sum(row['path'].endswith('.service') for row in files))
             tokens = [row for row in files if '/enrollment-' in row['path']]
-            self.assertEqual(6 if enabled else 0, len(tokens))
+            self.assertEqual(2 if enabled else 0, len(tokens))
             if enabled:
                 for worker in variables['forgejo_runner_slots']:
-                    for repository in worker['repositories']:
-                        expected = worker['state_root'] + '/enrollment-' + hashlib.sha256(repository.encode()).hexdigest()
-                        found = [row for row in tokens if row['path'] == expected]
-                        self.assertEqual(1, len(found))
-                        self.assertEqual(0o600, found[0]['mode'])
-                        self.assertEqual('synthetic-' + repository.rsplit('/', 1)[1], found[0]['content'].strip())
+                    expected = worker['state_root'] + '/enrollment-' + hashlib.sha256(b'user:supermorphic').hexdigest()
+                    found = [row for row in tokens if row['path'] == expected]
+                    self.assertEqual(1, len(found))
+                    self.assertEqual(0o600, found[0]['mode'])
+                    self.assertEqual('synthetic-owner-authority', found[0]['content'].strip())
                 self.assertTrue(all('synthetic-' not in row['content'] for row in files if row not in tokens))

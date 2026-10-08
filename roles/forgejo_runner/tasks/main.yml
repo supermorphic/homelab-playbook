@@ -17,7 +17,7 @@
 - name: Publish the guarded deployment
   ansible.builtin.import_tasks: configuration.yml
 
-- name: Reconcile repository supervisors
+- name: Reconcile shared worker supervisors
   ansible.builtin.import_tasks: services.yml
 
 - name: Verify runners without repair or enrollment

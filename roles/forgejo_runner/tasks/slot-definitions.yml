@@ -11,14 +11,14 @@
           'mode': 420, 'content': lookup('template', 'supervisor.timer.j2')}] }}
   no_log: true
 
-- name: Render protected enrollment input for the declared repository
+- name: Render protected enrollment input for the declared owner scope
   ansible.builtin.set_fact:
     forgejo_runner_rendered_files: >-
       {{ forgejo_runner_rendered_files + [
-         {'path': forgejo_runner_slot.state_root ~ '/enrollment-' ~ (forgejo_runner_token_repository | hash('sha256')), 'mode': 384,
+         {'path': forgejo_runner_slot.state_root ~ '/enrollment-' ~ (forgejo_runner_token_scope | hash('sha256')), 'mode': 384,
           'content': lookup('template', 'enrollment-token.j2')}] }}
-  loop: "{{ forgejo_runner_repositories }}"
+  loop: "{{ [forgejo_runner_scope] }}"
   loop_control:
-    loop_var: forgejo_runner_token_repository
-  when: forgejo_runner_token_repository in forgejo_runner_enrollment_tokens
+    loop_var: forgejo_runner_token_scope
+  when: forgejo_runner_token_scope in forgejo_runner_enrollment_tokens
   no_log: true

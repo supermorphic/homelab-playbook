@@ -12,10 +12,10 @@ import stat
 from lifecycle import private_directory, verify_file, read_checkpoint
 
 
-REPOSITORIES = {'supermorphic/career-ops', 'supermorphic/homelab-playbook', 'supermorphic/homelab-talos'}
+SCOPES = {'user:supermorphic', 'organization:supermorphic'}
 LIMITS = {'memory_bytes': 2 * 1024**3, 'disk_bytes': 24 * 1024**3,
           'pids': 768, 'cpu_percent': 200, 'idle_seconds': 300, 'job_seconds': 10800}
-FIELDS = {'name', 'repositories', 'enabled', 'label', 'state_root', 'controller', 'worker', 'limits'}
+FIELDS = {'name', 'scope', 'enabled', 'label', 'state_root', 'controller', 'worker', 'limits'}
 
 
 def read_json(root, name, maximum, *, authority_uid=0):
@@ -48,47 +48,45 @@ def read_registry(slot, *, authority_uid=0):
                 or type(candidate['enabled']) is not bool
                 or not isinstance(candidate['label'], str)
                 or re.fullmatch(r'[a-z][a-z0-9-]{0,47}', candidate['label']) is None
-                or not isinstance(candidate['repositories'], list)
-                or len(candidate['repositories']) != 3
-                or any(not isinstance(repo, str) for repo in candidate['repositories'])
-                or set(candidate['repositories']) != REPOSITORIES
+                or not isinstance(candidate['scope'], str) or candidate['scope'] not in SCOPES
                 or not isinstance(candidate['limits'], dict) or set(candidate['limits']) != set(LIMITS)
                 or any(type(number) is not int or not 0 < number <= LIMITS[key]
                        for key, number in candidate['limits'].items())
                 or any(not isinstance(candidate[kind], dict) for kind in ('controller', 'worker'))):
             raise ValueError('Host worker declaration is outside its qualified boundary')
-    declared = {key: value for key, value in slot.items() if key != 'repository'}
+    declared = slot
     if (sum(candidate == declared for candidate in slots) != 1
             or len({candidate['name'] for candidate in slots}) != 2
-            or len({candidate['label'] for candidate in slots}) != 1):
+            or len({candidate['label'] for candidate in slots}) != 1
+            or len({candidate['scope'] for candidate in slots}) != 1):
         raise ValueError('Worker differs from its shared host registry')
     return slots
 
 
-def token_name(repository):
-    if repository not in REPOSITORIES:
-        raise ValueError('Enrollment scope is outside the repository allowlist')
-    return 'enrollment-' + hashlib.sha256(repository.encode()).hexdigest()
+def token_name(scope):
+    if scope not in SCOPES:
+        raise ValueError('Enrollment scope is outside the declared owner boundary')
+    return 'enrollment-' + hashlib.sha256(scope.encode()).hexdigest()
 
 
 def read_assignment(slot, *, authority_uid=0):
     value = read_json(slot['state_root'], 'assignment.json', 4096, authority_uid=authority_uid)
     if value is not None and (
-            not isinstance(value, dict) or set(value) != {'repository', 'job_digest', 'generation'}
-            or value['repository'] not in slot['repositories']
+            not isinstance(value, dict) or set(value) != {'scope', 'job_digest', 'generation'}
+            or value['scope'] != slot['scope']
             or not isinstance(value['job_digest'], str) or re.fullmatch(r'[0-9a-f]{64}', value['job_digest']) is None
             or not isinstance(value['generation'], str) or re.fullmatch(r'[0-9a-f]{32}', value['generation']) is None):
         raise ValueError('Worker assignment has invalid scope or generation')
     return value
 
 
-def write_assignment(store, slot, repository, handle):
-    if (repository not in slot['repositories'] or store.read()['phase'] != 'clean'
+def write_assignment(store, slot, scope, handle):
+    if (scope != slot['scope'] or store.read()['phase'] != 'clean'
             or not isinstance(handle, str) or not 1 <= len(handle) <= 4096
             or any(ord(character) < 32 or ord(character) == 127 for character in handle)):
         raise ValueError('Assignment requires an empty worker and an allowed queued job')
     read_assignment(slot, authority_uid=store.authority_uid)
-    value = {'repository': repository, 'job_digest': hashlib.sha256(handle.encode()).hexdigest(),
+    value = {'scope': scope, 'job_digest': hashlib.sha256(handle.encode()).hexdigest(),
              'generation': secrets.token_hex(16)}
     name = '.assignment-' + secrets.token_hex(16)
     descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
@@ -147,14 +145,6 @@ def peer_assignments(slot, slots, observer, *, authority_uid=0):
             if assignment is not None:
                 result.append(assignment)
     return result
-
-
-def poll_order(slot, previous):
-    repositories = slot['repositories']
-    if previous is None:
-        return repositories
-    start = (repositories.index(previous['repository']) + 1) % len(repositories)
-    return repositories[start:] + repositories[:start]
 
 
 def validate_capacity(slot, slots, observed, *, peer_anon_bytes, peer_disk_bytes=0):

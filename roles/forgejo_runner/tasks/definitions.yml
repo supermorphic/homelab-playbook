@@ -9,7 +9,7 @@
         {{ (forgejo_runner_slots | map(attribute='worker') | list)
            + (forgejo_runner_slots | map(attribute='controller') | list) }}
 
-- name: Assemble repository configuration and service comparisons
+- name: Assemble shared worker configuration and service comparisons
   ansible.builtin.include_tasks: slot-definitions.yml
   loop: "{{ forgejo_runner_slots }}"
   loop_control:

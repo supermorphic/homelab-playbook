@@ -35,16 +35,16 @@ class SharedPoolTests(unittest.TestCase):
 
     def test_assignment_is_private_durable_and_contains_no_pending_handle(self):
         with lifecycle.CheckpointStore(self.slots[0]['state_root'], authority_uid=os.getuid()) as store:
-            self.pool.write_assignment(store, self.slots[0], 'supermorphic/career-ops', 'sensitive-job-handle')
+            self.pool.write_assignment(store, self.slots[0], 'user:supermorphic', 'sensitive-job-handle')
         result = self.pool.read_assignment(self.slots[0], authority_uid=os.getuid())
-        self.assertEqual('supermorphic/career-ops', result['repository'])
+        self.assertEqual('user:supermorphic', result['scope'])
         self.assertEqual(64, len(result['job_digest']))
         path = Path(self.slots[0]['state_root']) / 'assignment.json'
         self.assertNotIn('sensitive-job-handle', path.read_text())
         self.assertEqual(0o600, path.stat().st_mode & 0o777)
         with lifecycle.CheckpointStore(self.slots[0]['state_root'], authority_uid=os.getuid()) as store:
             with self.assertRaises(ValueError):
-                self.pool.write_assignment(store, self.slots[0], 'example/unapproved', 'other-job')
+                self.pool.write_assignment(store, self.slots[0], 'user:other', 'other-job')
         self.assertEqual(result, self.pool.read_assignment(self.slots[0], authority_uid=os.getuid()))
 
     def test_registry_rejects_a_third_worker_or_changed_declaration(self):
@@ -73,16 +73,9 @@ class SharedPoolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.pool.validate_capacity(self.slots[0], self.slots, observed, peer_anon_bytes=100*1024**3)
 
-    def test_polling_advances_after_the_previous_repository_without_a_repository_quota(self):
-        allowed = self.slots[0]['repositories']
-        self.assertEqual(allowed, self.pool.poll_order(self.slots[0], None))
-        previous = {'repository': 'supermorphic/career-ops', 'job_digest': 'a'*64}
-        self.assertEqual(['supermorphic/homelab-playbook', 'supermorphic/homelab-talos',
-                          'supermorphic/career-ops'], self.pool.poll_order(self.slots[0], previous))
-
     def test_assignment_cannot_be_read_through_a_link_or_with_public_permissions(self):
         path = Path(self.slots[0]['state_root']) / 'assignment.json'
-        path.write_text(json.dumps({'repository': 'supermorphic/career-ops', 'job_digest': 'a'*64}))
+        path.write_text(json.dumps({'scope': 'user:supermorphic', 'job_digest': 'a'*64}))
         path.chmod(0o644)
         with self.assertRaises(ValueError):
             self.pool.read_assignment(self.slots[0], authority_uid=os.getuid())
@@ -104,11 +97,12 @@ class SharedPoolTests(unittest.TestCase):
         def request(path, *, method='GET', payload=None):
             with api_lock:
                 if path.endswith('/jobs?labels=homelab-podman-amd64'):
-                    return [{'handle': 'job-one'}, {'handle': 'job-two'}]
+                    return [{'handle': 'job-one', 'owner_id': 1, 'repo_id': 902},
+                            {'handle': 'job-two', 'owner_id': 1, 'repo_id': 902}]
                 if '/actions/runners' not in path:
-                    return {'id': 1}
+                    return {'id': 1, 'login': 'supermorphic'}
                 if method == 'POST':
-                    row = {**payload, 'id': len(registrations)+1, 'repo_id': 1,
+                    row = {**payload, 'id': len(registrations)+1, 'repo_id': 0, 'owner_id': 1,
                            'uuid': 'synthetic-uuid', 'token': 'synthetic-token'}
                     registrations[row['id']] = row
                     return row
@@ -116,8 +110,8 @@ class SharedPoolTests(unittest.TestCase):
                     registrations.pop(int(path.rsplit('/', 1)[1]))
                     return None
                 return list(registrations.values())
-        def client(url, repository, token):
-            return RegistrationClient(url, repository, token, request=request)
+        def client(url, scope, token):
+            return RegistrationClient(url, scope, token, request=request)
         def store(path, **kwargs):
             return lifecycle.CheckpointStore(path, authority_uid=os.getuid())
         class Runtime(Backend):
@@ -125,7 +119,7 @@ class SharedPoolTests(unittest.TestCase):
                 super().__init__([])
                 self.handle, self.selected = handle, selected
             def run(self, registration):
-                executed.append((self.handle, registration.repository))
+                executed.append((self.handle, registration.scope))
                 first_running.set()
                 both_running.wait(timeout=5)
         values = [{'slot': item, 'installation': 'synthetic', 'assets_root': 'synthetic', 'manifest': {}}
@@ -141,8 +135,8 @@ class SharedPoolTests(unittest.TestCase):
             self.assertTrue(first_running.wait(timeout=5), 'First worker never entered its job')
             second = executor.submit(control.perform, 'cycle', values[1])
             self.assertEqual([0, 0], [first.result()[1], second.result()[1]])
-        self.assertCountEqual([('job-one', 'supermorphic/career-ops'),
-                               ('job-two', 'supermorphic/career-ops')], executed)
+        self.assertCountEqual([('job-one', 'user:supermorphic'),
+                               ('job-two', 'user:supermorphic')], executed)
         self.assertEqual({}, registrations)
         for item in self.slots:
             self.assertEqual('clean', lifecycle.read_checkpoint(item['state_root'], authority_uid=os.getuid())['phase'])
@@ -150,7 +144,7 @@ class SharedPoolTests(unittest.TestCase):
     def test_nonclean_peer_requires_matching_assignment_before_new_admission(self):
         peer = self.slots[1]
         with lifecycle.CheckpointStore(peer['state_root'], authority_uid=os.getuid()) as store:
-            assignment = self.pool.write_assignment(store, peer, 'supermorphic/career-ops', 'reserved-job')
+            assignment = self.pool.write_assignment(store, peer, 'user:supermorphic', 'reserved-job')
             store.write({**lifecycle.clean_checkpoint(), 'phase': 'preparing', 'generation': 'b'*32})
         with self.assertRaises(ValueError):
             self.pool.peer_assignments(self.slots[0], self.slots,
@@ -173,39 +167,40 @@ class SharedPoolTests(unittest.TestCase):
     def test_assignment_excludes_a_job_before_the_preparing_checkpoint_is_written(self):
         peer = self.slots[1]
         with lifecycle.CheckpointStore(peer['state_root'], authority_uid=os.getuid()) as store:
-            assignment = self.pool.write_assignment(store, peer, 'supermorphic/career-ops', 'job-before-prepare')
+            assignment = self.pool.write_assignment(store, peer, 'user:supermorphic', 'job-before-prepare')
             self.assertEqual('clean', store.read()['phase'])
             self.assertEqual([assignment], self.pool.peer_assignments(self.slots[0], self.slots,
                 lambda item: {'runtime_absent': True}, authority_uid=os.getuid()))
         self.assertEqual([], self.pool.peer_assignments(self.slots[0], self.slots,
             lambda item: {'runtime_absent': True}, authority_uid=os.getuid()))
 
-    def test_idle_cycle_checks_all_repositories_without_allocation_or_assignment(self):
+    def test_idle_cycle_checks_the_owner_queue_without_allocation_or_assignment(self):
         value = {'slot': self.slots[0]}
         polled = []
-        def client(url, repository, token):
+        def client(url, scope, token):
             def request(path, **kwargs):
-                polled.append(repository)
-                return []
-            return RegistrationClient(url, repository, token, request=request)
+                polled.append(path)
+                return {'id': 1, 'login': 'supermorphic'} if path == '/user' else []
+            return RegistrationClient(url, scope, token, request=request)
         with patch.object(control, 'CheckpointStore', lambda path, **kw:
                 lifecycle.CheckpointStore(path, authority_uid=os.getuid())), \
                 patch.object(control, 'observe', return_value={'runtime_absent': True, 'verified': True}), \
                 patch.object(control, 'private_token', return_value='synthetic-token'), \
                 patch.object(control, 'RegistrationClient', side_effect=client):
             self.assertEqual(0, control.perform('cycle', value)[1])
-        self.assertEqual(['supermorphic/career-ops', 'supermorphic/homelab-playbook',
-                          'supermorphic/homelab-talos'], polled)
+        self.assertEqual(['/user', '/user/actions/runners/jobs?labels=homelab-podman-amd64'], polled)
         self.assertFalse((Path(self.slots[0]['state_root']) / 'assignment.json').exists())
         self.assertFalse((Path(self.slots[0]['state_root']) / 'state.json').exists())
 
     def test_inspection_rejects_registration_bound_to_a_different_assignment(self):
         selected = self.slots[0]
         with lifecycle.CheckpointStore(selected['state_root'], authority_uid=os.getuid()) as store:
-            assignment = self.pool.write_assignment(store, selected, 'supermorphic/career-ops', 'pending-job')
+            assignment = self.pool.write_assignment(store, selected, 'user:supermorphic', 'pending-job')
             store.write({**lifecycle.clean_checkpoint(), 'phase': 'running', 'generation': assignment['generation'],
                 'allocation': Backend([]).identity, 'registration': {'id': 1,
-                'name': selected['name'] + '-' + assignment['generation'], 'repository': 'supermorphic/homelab-talos'}})
+                'name': selected['name'] + '-' + assignment['generation'], 'scope': 'user:supermorphic'}})
+        assignment_path = Path(selected['state_root']) / 'assignment.json'
+        assignment_path.write_text(json.dumps({**assignment, 'generation': 'b'*32}))
         original = self.pool.read_assignment
         with patch.object(control, 'observe', return_value={'runtime_absent': False, 'verified': True}), \
                 patch.object(control, 'read_checkpoint', side_effect=lambda path:

@@ -1,7 +1,7 @@
-"""Bounded, repository-scoped ephemeral runner enrollment and reconciliation.
+"""Bounded, owner-scoped ephemeral runner enrollment and reconciliation.
 
 Runner management is absent from the configured teacli action commands. This
-client uses only the supported repository runner REST endpoints.
+client uses the supported user and organization runner REST endpoints.
 """
 
 from dataclasses import dataclass, field
@@ -22,25 +22,26 @@ class RegistrationUncertain(RuntimeError):
 class Registration:
     id: int
     name: str
-    repository: str
+    scope: str
     generation: str
     uuid: str | None = field(default=None, repr=False)
     token: str | None = field(default=None, repr=False)
 
 
 class RegistrationClient:
-    def __init__(self, url, repository, token, *, request=None):
+    def __init__(self, url, scope, token, *, request=None):
         parsed = urllib.parse.urlsplit(url)
         if (parsed.scheme != 'https' or not parsed.hostname or parsed.username is not None
                 or parsed.password is not None or parsed.query or parsed.fragment
                 or parsed.path not in ('', '/')
-                or not isinstance(repository, str)
-                or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}', repository) is None
+                or not isinstance(scope, str)
+                or re.fullmatch(r'(user|organization):[A-Za-z0-9][A-Za-z0-9_.-]{0,99}', scope) is None
                 or not isinstance(token, str) or not token or '\r' in token or '\n' in token):
-            raise ValueError('Invalid repository enrollment configuration')
-        self.url, self.repository, self._token = url.rstrip('/'), repository, token
+            raise ValueError('Invalid scope enrollment configuration')
+        self.url, self.scope, self._token = url.rstrip('/'), scope, token
         self._request = request or self.request
-        self.path = '/repos/' + repository
+        self.kind, self.owner = scope.split(':', 1)
+        self.path = '/user' if self.kind == 'user' else '/orgs/' + self.owner
 
     def request(self, path, *, method='GET', payload=None):
         class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -62,8 +63,16 @@ class RegistrationClient:
         except (OSError, ValueError):
             raise RegistrationUncertain('Runner API did not return usable evidence') from None
 
-    def identity(self, repository, slot, generation):
-        if (repository != self.repository or not isinstance(slot, str)
+    def owner_identity(self):
+        owner = self._request(self.path)
+        field = 'login' if self.kind == 'user' else 'username'
+        if (not isinstance(owner, dict) or owner.get(field) != self.owner
+                or type(owner.get('id')) is not int or owner['id'] <= 0):
+            raise RegistrationUncertain('Authenticated runner authority does not match the declared owner')
+        return owner['id']
+
+    def identity(self, scope, slot, generation):
+        if (scope != self.scope or not isinstance(slot, str)
                 or re.fullmatch(r'[a-z][a-z0-9-]{0,47}', slot) is None
                 or not isinstance(generation, str) or re.fullmatch(r'[0-9a-f]{32}', generation) is None):
             raise ValueError('Invalid trusted runner identity')
@@ -88,12 +97,17 @@ class RegistrationClient:
     def pending_job(self, label, *, excluded=()):
         if not isinstance(label, str) or re.fullmatch(r'[a-z][a-z0-9-]{0,47}', label) is None:
             raise ValueError('Invalid trusted runner label')
+        owner_id = self.owner_identity()
         rows = self._request(self.path + '/actions/runners/jobs?labels=' + urllib.parse.quote(label, safe=''))
+        if rows is None:
+            return None
         if not isinstance(rows, list) or len(rows) > 1000:
             raise RegistrationUncertain('Pending-job lookup is invalid or exceeds its bound')
         if not rows:
             return None
-        if any(not isinstance(row, dict) or not isinstance(row.get('handle'), str)
+        if any(not isinstance(row, dict) or type(row.get('owner_id')) is not int
+               or row['owner_id'] != owner_id or type(row.get('repo_id')) is not int
+               or row['repo_id'] <= 0 or not isinstance(row.get('handle'), str)
                or not 1 <= len(row['handle']) <= 4096
                or any(ord(character) < 32 or ord(character) == 127 for character in row['handle'])
                for row in rows):
@@ -101,11 +115,9 @@ class RegistrationClient:
         return next((row['handle'] for row in rows
                      if hashlib.sha256(row['handle'].encode()).hexdigest() not in excluded), None)
 
-    def lookup(self, repository, slot, generation):
-        name = self.identity(repository, slot, generation)
-        repo = self._request(self.path)
-        if not isinstance(repo, dict) or type(repo.get('id')) is not int or repo['id'] <= 0:
-            raise RegistrationUncertain('Repository identity is invalid')
+    def lookup(self, scope, slot, generation):
+        name = self.identity(scope, slot, generation)
+        owner_id = self.owner_identity()
         matches = [row for row in self.rows() if row.get('name') == name]
         if not matches:
             return None
@@ -113,14 +125,16 @@ class RegistrationClient:
             raise RegistrationUncertain('Runner identity is ambiguous')
         row = matches[0]
         if (row.get('description') != 'forgejo-runner:' + generation
-                or row.get('repo_id') != repo['id'] or row.get('ephemeral') is not True
+                or type(row.get('owner_id')) is not int or row['owner_id'] != owner_id
+                or type(row.get('repo_id')) is not int or row['repo_id'] != 0
+                or row.get('ephemeral') is not True
                 or type(row.get('id')) is not int or row['id'] <= 0):
             raise RegistrationUncertain('Runner ownership does not match')
-        return Registration(row['id'], name, repository, generation)
+        return Registration(row['id'], name, scope, generation)
 
-    def enroll(self, repository, slot, generation):
-        name = self.identity(repository, slot, generation)
-        if self.lookup(repository, slot, generation) is not None:
+    def enroll(self, scope, slot, generation):
+        name = self.identity(scope, slot, generation)
+        if self.lookup(scope, slot, generation) is not None:
             raise RegistrationUncertain('Existing runner must be retired before admission')
         try:
             result = self._request(self.path + '/actions/runners', method='POST', payload={
@@ -129,15 +143,15 @@ class RegistrationClient:
                     or any(not isinstance(result.get(key), str) or not result[key]
                            for key in ('uuid', 'token'))):
                 raise RegistrationUncertain('Enrollment response is invalid')
-            observed = self.lookup(repository, slot, generation)
+            observed = self.lookup(scope, slot, generation)
             if observed is None or observed.id != result['id']:
                 raise RegistrationUncertain('Enrollment identity was not independently observed')
-            return Registration(observed.id, name, repository, generation, result['uuid'], result['token'])
+            return Registration(observed.id, name, scope, generation, result['uuid'], result['token'])
         except Exception:
             # A successful POST can lose its reply. Reconcile once, never retry
             # creation. Any inability to prove retirement blocks this generation.
             try:
-                uncertain = self.lookup(repository, slot, generation)
+                uncertain = self.lookup(scope, slot, generation)
                 if uncertain is not None:
                     self.retire(uncertain)
             except Exception:
@@ -145,17 +159,17 @@ class RegistrationClient:
             raise RegistrationUncertain('Enrollment did not complete; no creation retry was attempted') from None
 
     def retire(self, registration):
-        if not isinstance(registration, Registration) or registration.repository != self.repository:
+        if not isinstance(registration, Registration) or registration.scope != self.scope:
             raise ValueError('Retirement requires a trusted scoped identity')
         suffix = '-' + registration.generation
         if not registration.name.endswith(suffix):
             raise ValueError('Retirement generation does not match')
         slot = registration.name[:-len(suffix)]
-        observed = self.lookup(registration.repository, slot, registration.generation)
+        observed = self.lookup(registration.scope, slot, registration.generation)
         if observed is None:
             return
         if observed.id != registration.id:
             raise RegistrationUncertain('Retirement identity changed')
         self._request(self.path + '/actions/runners/' + str(registration.id), method='DELETE')
-        if self.lookup(registration.repository, slot, registration.generation) is not None:
+        if self.lookup(registration.scope, slot, registration.generation) is not None:
             raise RegistrationUncertain('Retirement was not independently observed')
