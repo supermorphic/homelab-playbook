@@ -2,6 +2,9 @@ import importlib.util
 from pathlib import Path
 import unittest
 import tempfile
+import json
+import stat
+from unittest.mock import patch
 
 source = Path(__file__).parents[2] / 'roles/forgejo_runner/files/resources.py'
 spec = importlib.util.spec_from_file_location('deployed_resources', source)
@@ -10,6 +13,30 @@ spec.loader.exec_module(module)
 
 
 class ResourceContractTests(unittest.TestCase):
+    def test_persist_publishes_a_private_receipt_and_replaces_it_without_leftovers(self):
+        expected = {'schema': 1, 'generation': 'a'*32,
+                    'unit': 'forgejo-worker-playbook-'+'a'*32+'.service',
+                    'invocation': None,
+                    'resources': [{'path': '.', 'identity': [1, 3, 0, 0, 0o40700, 0],
+                                   'parent_identity': [1, 4, 0, 0, 0o40700, 0]}]}
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = module.OwnedRuntime(self.target(), directory, directory, {}, None, None)
+            runtime.state_root = Path(directory).resolve()
+            runtime.generation = 'a'*32
+            # Supply trusted root-owned metadata without requiring local root.
+            # Receipt validation and all filesystem publication remain real.
+            with patch.object(runtime, 'receipt', return_value=expected):
+                for invocation in (None, 'b'*32):
+                    expected['invocation'] = invocation
+                    try:
+                        runtime.persist()
+                    except TypeError as error:
+                        self.fail(f'Receipt publication failed: {error}')
+                    destination = runtime.state_root / 'resources.json'
+                    self.assertEqual(expected, json.loads(destination.read_text()))
+                    self.assertEqual(0o600, stat.S_IMODE(destination.stat().st_mode))
+                    self.assertEqual([destination], list(runtime.state_root.iterdir()))
+
     def test_interrupted_removal_resumes_only_after_proving_absence(self):
         from scripts.forgejo_runner.host_resources import Resources
         with tempfile.TemporaryDirectory() as directory:
