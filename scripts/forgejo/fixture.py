@@ -26,6 +26,21 @@ def seed_content():
             'lfs': b'independent Forgejo LFS fixture\n'}
 
 
+def seed_actions_data(client):
+    contents = {
+        'actions_log': b'independent Forgejo Actions log fixture\n',
+        'actions_artifacts': b'independent Forgejo Actions artifact fixture\n',
+    }
+    expected = {}
+    for name, content in contents.items():
+        directory = '/var/lib/gitea/data/' + name
+        client.command(['/bin/sh', '-ec',
+                        'umask 077; mkdir -p ' + directory + '; cat > ' + directory + '/recovery-fixture'],
+                       input_text=content.decode())
+        expected[name] = hashlib.sha256(content).hexdigest()
+    return expected
+
+
 def assert_refs(expected, actual):
     if expected != actual:
         raise RuntimeError('Git refs differ from independently recorded revisions')
@@ -270,7 +285,8 @@ def seed(application, client, credential):
         'comment': {'id': comment['id'], 'body': 'Independent comment body'},
         'pull_request': {'id': pull['number'], 'title': 'Independent recovery PR', 'head': head},
         'attachment': {'id': attachment['id'], 'sha256': hashlib.sha256(content['attachment']).hexdigest()},
-        'lfs': {'sha256': oid, 'size': len(content['lfs']), 'path': 'fixture-lfs.bin'}}
+        'lfs': {'sha256': oid, 'size': len(content['lfs']), 'path': 'fixture-lfs.bin'},
+        'actions_data': seed_actions_data(client)}
 
 
 def run():
@@ -364,5 +380,5 @@ def run():
     if error or cleanup:
         print(json.dumps({'operation_error': error, 'cleanup_errors': cleanup}))
         return 1
-    print('Forgejo dump/files, SMB backlog, exact isolated application restore and owned cleanup passed')
+    print('Forgejo dump/files, Actions data, SMB backlog, exact isolated application restore and owned cleanup passed')
     return 0

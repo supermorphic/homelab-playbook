@@ -2,10 +2,12 @@
 from dataclasses import replace
 import importlib
 import io
+import hashlib
 import json
 from pathlib import Path
 import tarfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import test_archive as fixtures
@@ -55,6 +57,41 @@ class RestoreTests(unittest.TestCase):
     def test_valid_archive_and_matching_settings_are_accepted_without_mutation(self):
         self.assertEqual(self.fixture.manifest, self.preflight())
         self.assertFalse(self.destination.exists())
+
+    def test_actions_restore_checks_both_retained_content_hashes(self):
+        contents = {'actions_log': b'independent log\n',
+                    'actions_artifacts': b'independent artifact\n'}
+        expected = {'actions_data': {name: hashlib.sha256(value).hexdigest()
+                                    for name, value in contents.items()}}
+        files = {'/var/lib/gitea/data/' + name + '/recovery-fixture': value
+                 for name, value in contents.items()}
+
+        class FileClient:
+            def command(self, argv):
+                content = files.get(argv[1])
+                return SimpleNamespace(stdout='' if content is None else
+                                       hashlib.sha256(content).hexdigest() + '  ' + argv[1])
+
+        self.restore.assert_actions_data(FileClient(), expected)
+        for path in files:
+            original = files[path]
+            files[path] = b'changed independent content\n'
+            with self.subTest(path=path), self.assertRaises(RuntimeError):
+                self.restore.assert_actions_data(FileClient(), expected)
+            files[path] = original
+        files.pop('/var/lib/gitea/data/actions_log/recovery-fixture')
+        with self.assertRaises(RuntimeError):
+            self.restore.assert_actions_data(FileClient(), expected)
+
+    def test_actions_oracle_rejects_incomplete_or_unsafe_expectations(self):
+        for values in ({'actions_log': 'a' * 64},
+                       {'actions_log': 'not-a-hash', 'actions_artifacts': 'b' * 64},
+                       {'actions_log': 'a' * 64, '../private': 'b' * 64}):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                self.restore.assert_actions_data(None, {'actions_data': values})
+
+    def test_legacy_restore_oracle_does_not_require_new_fixture_data(self):
+        self.restore.assert_actions_data(None, {})
 
     def test_missing_complete_is_rejected_before_destination_creation(self):
         (self.path / 'COMPLETE').unlink()
