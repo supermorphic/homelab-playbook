@@ -1,0 +1,17 @@
+forgejo_runner_enrollment_tokens:
+    user:supermorphic: ENC[AES256_GCM,data:Byk7+3ofadle6/PYuly0PnuNtgyQXvrZ80k4d4Cmqy3Y0tJ8J31S9g==,iv:NTlh4eYTossesMqfp2I5X9WlI5Rli8UoQtWY+LHOjGg=,tag:Nku+iTsRwlOA+zCp1PboQQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSAyTUo1TTE1VHJRMnlCazlH
+            enBUZkJjWjFXb2R0YXcvMHh2U1lqVzhzYkZ3CjVqVmx3dzRUbXVhZVJaOWkzdFd1
+            djFuUUs3RUFnM3RCUTlGUzRHLzdJUTQKLS0tIE1PWDB1UUhzK3daYUNBcFBvanRk
+            WlRHMWJVa2VVSnJTTVVBbGRRM25pK1kKOGa12JaWhMmRtf1MeDGzsQYF29XzdBZp
+            fvxan7Hh57ODLMMiiGqEHsYnLTSyGjlI6PemfdfYwHp2yRYy5BBXjw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1ehm0ehd2v2emfuycf2p0suhg94ej29zcu96ffmh3t6afchhjd99sxc4984
+    encrypted_regex: ^(.*)$
+    lastmodified: "2026-10-08T14:39:51Z"
+    mac: ENC[AES256_GCM,data:0sP+SC9j7voRSe2heDirJE+MKsr2XJOSNHV4wui7sDfbnsIGBFs0JuzLCHUZ0Pd3UCjdT8U72kGk7ui4fmzH+dbbpyZQz/FWr57zxdAaDPY+D4/g0ak9Jj5wpLW0T5nlhb1VSa91MjPCrWGPD2eppWJdc4GpbcLGR8Suypy4RsY=,iv:4pYlooFYEQYVn9/9gXwzCHhksCiI1bgmXYQ9l0bkeIM=,tag:4V1fiXGPwxK0UU3EVTo/Hg==,type:str]
+    version: 3.13.2

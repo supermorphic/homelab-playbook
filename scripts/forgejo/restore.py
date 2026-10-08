@@ -107,10 +107,29 @@ def checked_expected(path):
             raise ValueError('expected artifact hash is absent')
     if re.fullmatch(r'[A-Za-z0-9_.-]+', document['lfs'].get('path', '')) is None:
         raise ValueError('expected LFS pointer path is unsafe')
+    checked_actions_data(document)
     credential = Path(document['credential_file'])
     service.safe_read(credential, private=True, owner=os.geteuid())
     document['credential_file'] = credential
     return document
+
+
+def checked_actions_data(expected):
+    if 'actions_data' not in expected:
+        return {}
+    values = expected['actions_data']
+    if (not isinstance(values, dict) or set(values) != {'actions_log', 'actions_artifacts'}
+            or any(not isinstance(value, str) or re.fullmatch(r'[0-9a-f]{64}', value) is None
+                   for value in values.values())):
+        raise ValueError('expected Actions fixture hashes are invalid')
+    return values
+
+
+def assert_actions_data(client, expected):
+    for name, digest in checked_actions_data(expected).items():
+        actual = client.command(['sha256sum', '/var/lib/gitea/data/' + name + '/recovery-fixture']).stdout.split()
+        if not actual or actual[0] != digest:
+            raise RuntimeError('restored Actions fixture content differs from the independent oracle')
 
 
 def write_auth(experiment, directory, expected):
@@ -224,6 +243,7 @@ def assert_expected(client, expected):
     client.git('-C', '/tmp/forgejo-restored-client', 'config', 'user.email', 'fixture@example.invalid')
     if client.lfs_hash(expected['username'], expected['repository'], expected['lfs']['sha256'], expected['lfs']['size']) != expected['lfs']['sha256']:
         raise RuntimeError('restored LFS object content differs')
+    assert_actions_data(client, expected)
     client.git('-C', '/tmp/forgejo-restored-client', 'checkout', '-b', 'restored-write')
     client.command(['/bin/sh', '-ec', "printf 'restored fixture write\\n' > /tmp/forgejo-restored-client/recovery-write.txt"])
     client.git('-C', '/tmp/forgejo-restored-client', 'add', 'recovery-write.txt')
