@@ -44,3 +44,21 @@ if ((${#tracked_workflows[@]} > 0)); then
   actionlint
   uv run --frozen --no-sync zizmor .github/workflows
 fi
+
+forgejo_workflows=()
+while IFS= read -r -d '' workflow_file; do
+  forgejo_workflows+=("$workflow_file")
+done < <(
+  git ls-files -z --cached --others --exclude-standard -- \
+    '.forgejo/workflows/*.yaml' \
+    '.forgejo/workflows/*.yml'
+)
+
+if ((${#forgejo_workflows[@]} > 0)); then
+  # Forgejo requires explicit action URLs. The GitHub linter rejects this syntax;
+  # the workflow contract tests independently check the checkout URL and pin.
+  actionlint -config-file .forgejo/actionlint.yaml \
+    -ignore '^specifying action "https://github\.com/actions/checkout@[0-9a-f]{40}" in invalid format' \
+    "${forgejo_workflows[@]}"
+  uv run --frozen --no-sync zizmor "${forgejo_workflows[@]}"
+fi

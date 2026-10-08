@@ -1,0 +1,309 @@
+---
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: "17 8 * * 1"
+
+# Retain the declaration for GitHub-aware tooling; Forgejo owns job-token scope.
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    name: classify
+    runs-on: homelab-podman-amd64
+    timeout-minutes: 10
+    outputs:
+      depth: ${{ steps.classify.outputs.depth }}
+      run_fast: ${{ steps.classify.outputs.run_fast }}
+      run_ansible: ${{ steps.classify.outputs.run_ansible }}
+      run_molecule: ${{ steps.classify.outputs.run_molecule }}
+      paths: ${{ steps.classify.outputs.paths }}
+      reasons: ${{ steps.classify.outputs.reasons }}
+      molecule_matrix: ${{ steps.classify.outputs.molecule_matrix }}
+      molecule_plan: ${{ steps.classify.outputs.molecule_plan }}
+    steps:
+      - name: Check out repository
+        uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify candidate revision
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            test "$(git rev-parse refs/remotes/origin/main)" = "$PR_BASE_SHA"
+            git merge-base --is-ancestor "$PR_BASE_SHA" "$CANDIDATE_SHA"
+          fi
+      - name: Install locked tools
+        run: |
+          mise trust --yes
+          mise install --locked
+      - name: Classify validation depth
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          classify_args=(--format github --summary "$GITHUB_STEP_SUMMARY")
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            classify_args+=(
+              --base "$PR_BASE_SHA"
+              --head "$PR_HEAD_SHA"
+            )
+          else
+            classify_args+=(
+              --base HEAD
+              --head HEAD
+              --force-depth full
+            )
+          fi
+          mise exec -- python scripts/ci/classify.py "${classify_args[@]}" \
+            >> "$GITHUB_OUTPUT"
+
+  fast:
+    name: fast
+    runs-on: homelab-podman-amd64
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify candidate revision
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            test "$(git rev-parse refs/remotes/origin/main)" = "$PR_BASE_SHA"
+            git merge-base --is-ancestor "$PR_BASE_SHA" "$CANDIDATE_SHA"
+          fi
+      - name: Install locked tools
+        run: |
+          mise trust --yes
+          mise install --locked
+      - name: Install fast Python dependencies
+        run: mise exec -- uv sync --frozen --only-group fast
+      - name: Run pull request fast validation
+        if: github.event_name == 'pull_request'
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          started_at=$SECONDS
+          validation_status=0
+          mise run validate:fast || validation_status=$?
+          elapsed_seconds=$((SECONDS - started_at))
+          {
+            printf '%s\n\n' '### fast validation'
+            printf -- "- Command: \`%s\`\n" 'mise run validate:fast'
+            printf -- '- Validation duration: %s seconds\n' "$elapsed_seconds"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$validation_status"
+      - name: Run full-history fast validation
+        if: github.event_name != 'pull_request'
+        env:
+          FULL_SECRET_SCAN: "1"
+        run: |
+          started_at=$SECONDS
+          validation_status=0
+          mise run validate:fast || validation_status=$?
+          elapsed_seconds=$((SECONDS - started_at))
+          {
+            printf '%s\n\n' '### fast validation'
+            printf -- "- Command: \`%s\`\n" 'mise run validate:fast'
+            printf -- '- Validation duration: %s seconds\n' "$elapsed_seconds"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$validation_status"
+
+  ansible:
+    name: ansible
+    needs: classify
+    if: >-
+      needs.classify.outputs.depth == 'ansible' ||
+      needs.classify.outputs.depth == 'molecule' ||
+      needs.classify.outputs.depth == 'full'
+    runs-on: homelab-podman-amd64
+    # Cold Galaxy bootstrap and offline validation share this job budget.
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify candidate revision
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            test "$(git rev-parse refs/remotes/origin/main)" = "$PR_BASE_SHA"
+            git merge-base --is-ancestor "$PR_BASE_SHA" "$CANDIDATE_SHA"
+          fi
+      - name: Install locked tools
+        run: |
+          mise trust --yes
+          mise install --locked
+      - name: Bootstrap controller dependencies
+        run: mise run bootstrap
+      - name: Run offline Ansible validation
+        run: |
+          started_at=$SECONDS
+          validation_status=0
+          mise run validate:ansible || validation_status=$?
+          elapsed_seconds=$((SECONDS - started_at))
+          {
+            printf '%s\n\n' '### Ansible validation'
+            printf -- "- Command: \`%s\`\n" 'mise run validate:ansible'
+            printf -- '- Validation duration: %s seconds\n' "$elapsed_seconds"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$validation_status"
+
+  molecule:
+    name: molecule (${{ matrix.selector }}, ${{ matrix.platform }})
+    needs: classify
+    if: needs.classify.outputs.run_molecule == 'true'
+    runs-on: homelab-podman-amd64
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      # Forgejo 15 matrix concurrency is bounded by runner-pool admission.
+      matrix: ${{ fromJSON(needs.classify.outputs.molecule_matrix) }}
+    steps:
+      - name: Check out repository
+        uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify candidate revision
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            test "$(git rev-parse refs/remotes/origin/main)" = "$PR_BASE_SHA"
+            git merge-base --is-ancestor "$PR_BASE_SHA" "$CANDIDATE_SHA"
+          fi
+      - name: Install locked tools
+        run: |
+          mise trust --yes
+          mise install --locked
+      - name: Bootstrap controller dependencies
+        run: mise run bootstrap
+      - name: Run Molecule platform validation
+        env:
+          HOMELAB_MOLECULE_PLATFORM: ${{ matrix.platform }}
+          MOLECULE_SELECTOR: ${{ matrix.selector }}
+        run: mise run test:molecule -- "$MOLECULE_SELECTOR"
+      - name: Test upstream Semaphore runtime and recovery
+        if: matrix.selector == 'semaphore/default' && matrix.platform == 'debian13'
+        run: |
+          mise run test:semaphore -- compatibility
+          mise run test:semaphore -- fixture
+          mise run test:semaphore -- controller
+      - name: Test upstream Forgejo runtime and recovery
+        if: matrix.selector == 'forgejo/default' && matrix.platform == 'debian13'
+        run: |
+          mise run test:forgejo -- compatibility
+          mise run test:forgejo -- fixture
+      - name: Test one-way metadata reconciliation over HTTPS
+        if: matrix.selector == 'forgejo_metadata/default' && matrix.platform == 'debian13'
+        run: mise run test:forgejo-metadata -- fixture
+
+  merge-gate:
+    name: merge-gate
+    needs:
+      - classify
+      - fast
+      - ansible
+      - molecule
+    if: always()
+    runs-on: homelab-podman-amd64
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify candidate revision
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            test "$(git rev-parse refs/remotes/origin/main)" = "$PR_BASE_SHA"
+            git merge-base --is-ancestor "$PR_BASE_SHA" "$CANDIDATE_SHA"
+          fi
+      - name: Install locked tools
+        run: |
+          mise trust --yes
+          mise install --locked
+      - name: Reconcile validation results
+        env:
+          SELECTED_DEPTH: ${{ needs.classify.outputs.depth }}
+          CLASSIFY_RESULT: ${{ needs.classify.result }}
+          FAST_RESULT: ${{ needs.fast.result }}
+          ANSIBLE_RESULT: ${{ needs.ansible.result }}
+          MOLECULE_RESULT: ${{ needs.molecule.result }}
+          MOLECULE_PLAN: ${{ needs.classify.outputs.molecule_plan }}
+        run: |
+          mise exec -- python scripts/ci/merge_gate.py \
+            --depth "$SELECTED_DEPTH" \
+            --classify-result "$CLASSIFY_RESULT" \
+            --fast-result "$FAST_RESULT" \
+            --ansible-result "$ANSIBLE_RESULT" \
+            --molecule-result "$MOLECULE_RESULT" \
+            --molecule-plan "$MOLECULE_PLAN"
+      - name: Write validation summary
+        if: always()
+        env:
+          SELECTED_DEPTH: ${{ needs.classify.outputs.depth }}
+          REASONS: ${{ needs.classify.outputs.reasons }}
+          CLASSIFY_RESULT: ${{ needs.classify.result }}
+          FAST_RESULT: ${{ needs.fast.result }}
+          ANSIBLE_RESULT: ${{ needs.ansible.result }}
+          MOLECULE_RESULT: ${{ needs.molecule.result }}
+        run: |
+          {
+            printf '%s\n\n' '### CI summary'
+            printf -- '- Selected depth: %s\n' "${SELECTED_DEPTH:-missing}"
+            printf -- '- Reasons: %s\n' "${REASONS:-missing}"
+            printf -- '- Results: classify=%s, fast=%s, ansible=%s, molecule=%s\n' \
+              "$CLASSIFY_RESULT" "$FAST_RESULT" "$ANSIBLE_RESULT" \
+              "$MOLECULE_RESULT"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -81,8 +81,8 @@ def classify_path(path: str) -> tuple[str, str]:
             "full",
             "security or validation configuration changes require full validation",
         )
-    if _has_prefix(path, (".github/",)):
-        return "full", "GitHub automation changes require full validation"
+    if _has_prefix(path, (".github/", ".forgejo/")):
+        return "full", "forge automation changes require full validation"
     if path in {"scripts/bootstrap.sh", "scripts/dependencies.py"}:
         return "full", "dependency automation changes require full validation"
     if _has_prefix(path, ("scripts/repository/", "tests/repository/")):

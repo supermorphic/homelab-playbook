@@ -550,6 +550,46 @@ Workflow requirements:
 - no JUnit, Allure, permanent result catalog, or report artifact unless a future
   measured consumer justifies it.
 
+### Forgejo workflow adoption
+
+The workflow in [.forgejo/workflows/ci.yml](../../.forgejo/workflows/ci.yml)
+adapts the existing GitHub topology to the runner platform owned by
+[Specification 011](011-forgejo-runners.md). It preserves repository-owned
+classification, selected validation and merge-gate reconciliation. Each job
+checks out and verifies the declared candidate before validation. PR jobs also
+require the event's target SHA to match the fetched `main` and be an ancestor of
+the candidate. This uses an up-to-date PR head instead of GitHub's synthetic
+merge checkout. Forgejo must require the branch to remain up to date through
+merge; checkout-time checks cannot prevent the target advancing afterward.
+
+Worker-pool admission owns the concurrency bound. Forgejo does not enforce
+GitHub's matrix `max-parallel` setting; expanding the pool requires reviewing
+aggregate capacity for these jobs.
+
+GitHub CI is no longer operational. Its YAML remains a configuration baseline;
+local Mise validation remains the operational reference until the Forgejo
+workflow passes live acceptance after issue #57. Required-check activation and
+repository settings changes need separate operator authorization. Offline
+workflow checks do not establish live runner or merge-protection acceptance.
+
+After the runner-platform handoff, perform attended acceptance with this exact
+workflow and the approved job image. Observe the checkout action, locked tool
+installation, fast and offline Ansible jobs, selected service scenarios,
+shared-change coverage, and a full manual or scheduled run. Record the candidate
+SHA, run and job links, selected matrix and final status in the evidence store.
+Use disposable candidate branches for deliberate failures and cancellation;
+include a failed matrix child and confirm the final gate rejects the candidate.
+Verify event-specific job-token authority for PR, manual and scheduled runs
+without printing tokens. The retained `permissions` declaration is not evidence
+of Forgejo token scope.
+
+Under separate authorization for repository settings, require the observed
+`merge-gate` status and an up-to-date branch, preserve the intended merge method,
+and prove failed, missing, cancelled and old-candidate checks block merge. Advance
+the target after a successful run and prove the old result cannot authorize that
+merge. Offline shell tests use supplied job results; they do not prove Forgejo
+matrix aggregation, cancellation or merge enforcement.
+
 ### GitHub main protection
 
 The workflow check and GitHub enforcement are separate controls. The workflow

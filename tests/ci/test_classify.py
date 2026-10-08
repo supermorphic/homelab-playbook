@@ -118,6 +118,7 @@ class PathClassificationTests(unittest.TestCase):
             "uv.lock": "full",
             "requirements.yml": "full",
             ".github/workflows/ci.yml": "full",
+            ".forgejo/workflows/ci.yml": "full",
             "scripts/ci/classify.py": "full",
             "scripts/ci/validate-fast.sh": "full",
             "tests/ci/test_classify.py": "full",
