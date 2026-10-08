@@ -1,11 +1,11 @@
 ---
-- name: Stop all repository polling before explicit recovery
+- name: Stop all shared owner polling before explicit recovery
   ansible.builtin.systemd_service:
     name: "forgejo-runner-{{ item.name }}.timer"
     state: stopped
   loop: "{{ forgejo_runner_slots }}"
   loop_control:
-    label: "{{ item.repository }}"
+    label: "{{ item.name }}"
 
 - name: Stop supervision and dispose every owned runtime even if Forgejo is unavailable
   ansible.builtin.command:
@@ -18,7 +18,7 @@
       - "{{ item.state_root }}/config.json"
   loop: "{{ forgejo_runner_slots }}"
   loop_control:
-    label: "{{ item.repository }}"
+    label: "{{ item.name }}"
   register: forgejo_runner_initial_recovery
   failed_when: forgejo_runner_initial_recovery.rc not in [0, 1]
   changed_when: true
@@ -31,12 +31,12 @@
       - -c
       - "{{ lookup('file', role_path ~ '/files/deployment_dispatch.py') }}"
       - restore-authority
-      - "{{ item.state_root }}/config.json"
-      - "{{ item.repository }}"
-    stdin: "{{ forgejo_runner_enrollment_tokens[item.repository] }}"
+      - "{{ item.0.state_root }}/config.json"
+      - "{{ item.1 }}"
+    stdin: "{{ forgejo_runner_enrollment_tokens[item.1] }}"
     stdin_add_newline: false
-  when: item.repository in forgejo_runner_enrollment_tokens
-  loop: "{{ forgejo_runner_slots }}"
+  when: item.1 in forgejo_runner_enrollment_tokens
+  loop: "{{ forgejo_runner_slots | product([forgejo_runner_scope]) | list }}"
   changed_when: true
   no_log: true
 
@@ -51,5 +51,5 @@
       - "{{ item.state_root }}/config.json"
   loop: "{{ forgejo_runner_slots }}"
   loop_control:
-    label: "{{ item.repository }}"
+    label: "{{ item.name }}"
   changed_when: true

@@ -9,13 +9,13 @@ import tempfile
 import hashlib
 
 
-def slot(index=0, repository='supermorphic/homelab-playbook'):
+def slot(index=0, scope='user:supermorphic'):
     def account(name, offset):
         return {'name': name, 'uid': 2200 + offset, 'gid': 2200 + offset,
                 'subuid_start': 1000000 + offset * 65536, 'subuid_count': 65536,
                 'subgid_start': 1000000 + offset * 65536, 'subgid_count': 65536}
-    name = ('playbook', 'talos', 'career')[index]
-    return {'name': name, 'repository': repository, 'enabled': False,
+    name = ('worker-1', 'worker-2', 'worker-3')[index]
+    return {'name': name, 'scope': scope, 'enabled': False,
             'label': 'homelab-podman-amd64',
             'state_root': '/var/lib/forgejo-runner/' + name,
             'controller': account('ci-' + name + '-ctl', index * 2 + 1),
@@ -57,9 +57,8 @@ class SlotPolicyTests(unittest.TestCase):
         cls.policy = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.policy)
 
-    def test_all_three_repositories_have_distinct_explicit_allocations(self):
-        desired = [slot(0), slot(1, 'supermorphic/homelab-talos'),
-                   slot(2, 'supermorphic/career-ops')]
+    def test_both_workers_share_one_owner_scope_with_distinct_allocations(self):
+        desired = [slot(0), slot(1)]
         original = copy.deepcopy(desired)
         self.assertEqual(desired, self.policy.validate_slots(desired))
         self.assertEqual(original, desired)
@@ -87,19 +86,26 @@ class SlotPolicyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.policy.validate_manifest(changed, candidate)
 
-    def test_repository_is_an_exact_owner_and_name_without_a_url(self):
-        for repository in ('', 'career-ops', 'https://example.invalid/o/r',
-                           'o/r/extra', '../r', 'o/r?token=x', 'o/*'):
-            with self.subTest(repository=repository), self.assertRaises(ValueError):
-                self.policy.validate_slots([slot(repository=repository)])
+    def test_scope_is_explicit_and_excludes_other_owners_and_global_authority(self):
+        for scope in ('', 'supermorphic', 'global', 'user:other', 'organization:other',
+                      'repository:supermorphic/career-ops', 'user:supermorphic/extra',
+                      'user:supermorphic?token=x', {}, None):
+            with self.subTest(scope=scope), self.assertRaises(ValueError):
+                self.policy.validate_slots([slot(scope=scope)])
+        self.assertEqual([slot(scope='organization:supermorphic')],
+                         self.policy.validate_slots([slot(scope='organization:supermorphic')]))
 
-    def test_duplicate_repository_cannot_share_another_slot(self):
+    def test_a_third_worker_exceeds_the_two_worker_resource_budget(self):
         with self.assertRaises(ValueError):
-            self.policy.validate_slots([slot(), slot(1)])
+            self.policy.validate_slots([slot(), slot(1), slot(2)])
+
+    def test_shared_workers_cannot_poll_different_owner_scopes(self):
+        with self.assertRaises(ValueError):
+            self.policy.validate_slots([slot(), slot(1, scope='organization:supermorphic')])
 
     def test_state_root_is_owned_by_the_named_slot(self):
-        for root in ('/', '/var/lib/forgejo', '/var/lib/forgejo-runner/../playbook',
-                     '/var/lib/forgejo-runner/other', '/var/lib/forgejo-runner/playbook/'):
+        for root in ('/', '/var/lib/forgejo', '/var/lib/forgejo-runner/../worker-1',
+                     '/var/lib/forgejo-runner/other', '/var/lib/forgejo-runner/worker-1/'):
             declaration = slot()
             declaration['state_root'] = root
             with self.subTest(root=root), self.assertRaises(ValueError):
@@ -107,7 +113,7 @@ class SlotPolicyTests(unittest.TestCase):
 
     def test_overlap_is_rejected_across_all_controllers_and_workers(self):
         for field in ('name', 'uid', 'gid', 'subuid_start', 'subgid_start'):
-            desired = [slot(), slot(1, 'supermorphic/homelab-talos')]
+            desired = [slot(), slot(1)]
             desired[1]['worker'][field] = desired[0]['controller'][field]
             with self.subTest(field=field), self.assertRaises(ValueError):
                 self.policy.validate_slots(desired)

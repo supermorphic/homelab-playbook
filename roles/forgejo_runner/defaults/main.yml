@@ -1,10 +1,7 @@
 ---
 # Identities and enrollment inputs require an explicit operator declaration.
 forgejo_runner_slots: []
-forgejo_runner_repositories:
-  - supermorphic/career-ops
-  - supermorphic/homelab-playbook
-  - supermorphic/homelab-talos
+forgejo_runner_scope: user:supermorphic
 forgejo_runner_enrollment_tokens: {}
 forgejo_runner_asset_directory: ''
 forgejo_runner_asset_manifest: {}

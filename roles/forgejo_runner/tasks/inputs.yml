@@ -1,13 +1,14 @@
 ---
-- name: Validate the complete repository slot declaration
+- name: Validate the complete shared worker declaration
   ansible.builtin.assert:
     that:
       - forgejo_runner_slots | forgejo_runner_validate_slots == forgejo_runner_slots
-      - forgejo_runner_slots | length == 3
-      - forgejo_runner_slots | map(attribute='repository') | sort == forgejo_runner_repositories | sort
+      - forgejo_runner_slots | length == 2
+      - forgejo_runner_slots[0].scope == forgejo_runner_scope
+      - forgejo_runner_slots[1].scope == forgejo_runner_scope
       - forgejo_runner_source_commit is match('^[0-9a-f]{40}$')
       - forgejo_runner_helper_root == '/usr/local/libexec/forgejo-runner/' ~ forgejo_runner_source_commit
-    fail_msg: Declare all three repository slots with explicit unused identities and qualified finite limits
+    fail_msg: Declare two shared workers serving the supermorphic owner scope with unused identities and finite limits
 
 - name: Validate the public deployment artifact manifest
   ansible.builtin.assert:
@@ -37,14 +38,16 @@
   loop_control:
     label: "{{ item.key }}"
 
-- name: Require separate private enrollment authority for enabled repositories
+- name: Require private owner-scoped enrollment authority for enabled workers
   ansible.builtin.assert:
     that:
       - forgejo_runner_enrollment_tokens is mapping
-      - forgejo_runner_enrollment_tokens[item.repository] | default('') is string
-      - forgejo_runner_enrollment_tokens[item.repository] | default('') | length > 0
-      - "'\n' not in forgejo_runner_enrollment_tokens[item.repository]"
-      - "'\r' not in forgejo_runner_enrollment_tokens[item.repository]"
-    fail_msg: Enroll repository-limited authority through the protected inventory boundary
-  loop: "{{ forgejo_runner_slots | selectattr('enabled') | list }}"
+      - forgejo_runner_enrollment_tokens | list | difference([forgejo_runner_scope]) | length == 0
+      - forgejo_runner_enrollment_tokens[item] | default('') is string
+      - forgejo_runner_enrollment_tokens[item] | default('') | length > 0
+      - "'\n' not in forgejo_runner_enrollment_tokens[item]"
+      - "'\r' not in forgejo_runner_enrollment_tokens[item]"
+    fail_msg: Enroll owner-scoped authority through the protected inventory boundary
+  when: forgejo_runner_slots | selectattr('enabled') | list | length > 0
+  loop: "{{ [forgejo_runner_scope] }}"
   no_log: true

@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import json
 from unittest.mock import patch, Mock
 
 files = Path(__file__).parents[2] / 'roles/forgejo_runner/files'
@@ -37,7 +38,7 @@ class ControlTests(unittest.TestCase):
         import lifecycle
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            slot = {'name': 'playbook', 'repository': 'example/project', 'enabled': False,
+            slot = {'name': 'playbook', 'scope': 'user:supermorphic', 'enabled': False,
                     'state_root': str(root), 'label': 'homelab-podman-amd64'}
             def store(path):
                 return lifecycle.CheckpointStore(path, authority_uid=os.getuid())
@@ -60,7 +61,7 @@ class ControlTests(unittest.TestCase):
     def test_busy_host_admission_does_not_load_credentials_or_enroll(self):
         import lifecycle
         with tempfile.TemporaryDirectory() as directory:
-            slot = {'name': 'playbook', 'repository': 'example/project', 'enabled': True,
+            slot = {'name': 'playbook', 'scope': 'user:supermorphic', 'enabled': True,
                     'state_root': directory, 'label': 'homelab-podman-amd64'}
             def store(path):
                 return lifecycle.CheckpointStore(path, authority_uid=os.getuid())
@@ -81,14 +82,16 @@ class ControlTests(unittest.TestCase):
         import lifecycle
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            slot = {'name': 'playbook', 'repository': 'example/project', 'enabled': True,
+            slot = {'name': 'playbook', 'scope': 'user:supermorphic', 'enabled': True,
                     'state_root': str(root), 'label': 'homelab-podman-amd64'}
             def store(path):
                 return lifecycle.CheckpointStore(path, authority_uid=os.getuid())
             with store(root) as checkpoint:
                 checkpoint.write({**lifecycle.clean_checkpoint(), 'phase': 'preparing', 'generation': 'a'*32})
-            (root / 'enrollment-token').write_text('synthetic-token')
-            (root / 'enrollment-token').chmod(0o600)
+            assignment = root / 'assignment.json'
+            assignment.write_text(json.dumps({'scope': 'user:supermorphic', 'generation': 'a'*32,
+                                              'job_digest': 'b'*64}))
+            assignment.chmod(0o600)
             runtime = Mock()
             runtime.assert_empty = Mock()
             client = Mock()

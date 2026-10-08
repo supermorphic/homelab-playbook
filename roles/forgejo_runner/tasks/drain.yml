@@ -6,14 +6,14 @@
   loop: "{{ forgejo_runner_slots }}"
   register: forgejo_runner_current_definitions
 
-- name: Stop all installed repository polling before waiting for a job
+- name: Stop all installed shared owner polling before waiting for a job
   ansible.builtin.systemd_service:
     name: "forgejo-runner-{{ item.item.name }}.timer"
     state: stopped
   when: item.stat.exists
   loop: "{{ forgejo_runner_current_definitions.results }}"
   loop_control:
-    label: "{{ item.item.repository }}"
+    label: "{{ item.item.name }}"
 
 - name: Drain jobs and require independently empty owned runtime
   ansible.builtin.command:
@@ -27,5 +27,5 @@
   when: item.stat.exists
   loop: "{{ forgejo_runner_current_definitions.results }}"
   loop_control:
-    label: "{{ item.item.repository }}"
+    label: "{{ item.item.name }}"
   changed_when: false

@@ -39,13 +39,13 @@ def validate_checkpoint(value):
             raise ValueError('Invalid owned runtime identity')
     registration = value['registration']
     if registration is not None:
-        if (not isinstance(registration, dict) or set(registration) != {'id', 'name', 'repository'}
+        if (not isinstance(registration, dict) or set(registration) != {'id', 'name', 'scope'}
                 or type(registration['id']) is not int or not 0 < registration['id'] < 2**63
                 or not isinstance(registration['name'], str)
                 or re.fullmatch(r'[a-z][a-z0-9-]{0,99}', registration['name']) is None
-                or not isinstance(registration['repository'], str)
-                or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}',
-                                registration['repository']) is None):
+                or not isinstance(registration['scope'], str)
+                or re.fullmatch(r'(user|organization):[A-Za-z0-9][A-Za-z0-9_.-]{0,99}',
+                                registration['scope']) is None):
             raise ValueError('Invalid scoped registration identity')
     if value['phase'] in ('registered', 'running') and (
             generation is None or allocation is None or registration is None):
@@ -175,7 +175,7 @@ def error_type(error):
 def bound_checkpoint(config, state):
     registration = state['registration']
     if registration is not None and (
-            registration['repository'] != config['repository']
+            registration['scope'] != config['scope']
             or registration['name'] != config['name'] + '-' + str(state['generation'])):
         raise ValueError('Checkpoint belongs to another slot or generation')
 
@@ -186,7 +186,7 @@ def cleanup_generation(config, resources, enrollment, store, state):
     store.write(state)
     errors = []
     try:
-        registration = enrollment.lookup(config['repository'], config['name'], state['generation'])
+        registration = enrollment.lookup(config['scope'], config['name'], state['generation'])
         if registration is not None:
             expected = state['registration']
             if expected is not None and registration.id != expected['id']:
@@ -212,13 +212,15 @@ def cleanup_generation(config, resources, enrollment, store, state):
     return 1 if errors or state['primary_error'] else 0
 
 
-def run_slot(config, resources, enrollment, store, *, recovery_only=False):
+def run_slot(config, resources, enrollment, store, *, recovery_only=False, generation=None):
     """Run at most one job with the caller holding the per-slot admission lock.
 
     The resource backend owns external timeouts and independent host ownership
     checks. Its destroy operation must also reconcile a interrupted prepare
     whose allocation identity has not yet reached this checkpoint.
     """
+    if generation is not None and (not isinstance(generation, str) or re.fullmatch(r'[0-9a-f]{32}', generation) is None):
+        raise ValueError('Reserved generation is invalid')
     state = store.read()
     try:
         bound_checkpoint(config, state)
@@ -248,15 +250,15 @@ def run_slot(config, resources, enrollment, store, *, recovery_only=False):
     except Exception as error:
         store.write({**clean_checkpoint(), 'phase': 'quarantined', 'primary_error': error_type(error)})
         return 1
-    generation = secrets.token_hex(16)
+    generation = generation or secrets.token_hex(16)
     state = {**clean_checkpoint(), 'phase': 'preparing', 'generation': generation}
     store.write(state)
     try:
         state['allocation'] = resources.prepare(generation)
         store.write(state)
-        registration = enrollment.enroll(config['repository'], config['name'], generation)
+        registration = enrollment.enroll(config['scope'], config['name'], generation)
         state.update(phase='registered', registration={
-            'id': registration.id, 'name': registration.name, 'repository': registration.repository})
+            'id': registration.id, 'name': registration.name, 'scope': registration.scope})
         store.write(state)
         state['phase'] = 'running'
         store.write(state)

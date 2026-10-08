@@ -1,5 +1,5 @@
 [Unit]
-Description=Disposable Forgejo runner for {{ forgejo_runner_slot.repository }}
+Description=Disposable shared Forgejo worker {{ forgejo_runner_slot.name }}
 After=network-online.target
 Wants=network-online.target
 

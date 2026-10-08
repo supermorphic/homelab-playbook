@@ -36,7 +36,7 @@ def audit_files(files, *, idle, authority_uid=0, plan=False):
         else:
             changed |= actual != (row['sha256'], row['mode'])
     if changed and not idle and not plan:
-        raise ValueError('Drain all repository slots before changing deployment inputs')
+        raise ValueError('Drain all shared worker slots before changing deployment inputs')
     return {'changed': changed, 'idle': idle}
 
 

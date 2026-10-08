@@ -8,7 +8,7 @@ import stat
 import sys
 
 
-def arguments(mode, value, configuration, repository=None):
+def arguments(mode, value, configuration, scope=None):
     slot = value.get('slot', {})
     name = slot.get('name', '')
     installation = value.get('installation', '')
@@ -18,11 +18,11 @@ def arguments(mode, value, configuration, repository=None):
             or str(configuration) != slot['state_root'] + '/config.json'
             or re.fullmatch(r'/usr/local/libexec/forgejo-runner/[0-9a-f]{40}', installation) is None):
         raise ValueError('Installed operation is outside its canonical boundary')
-    if mode == 'restore-authority' and repository != slot.get('repository'):
-        raise ValueError('Replacement authority does not match the installed repository')
+    if mode == 'restore-authority' and scope != slot.get('scope'):
+        raise ValueError('Replacement authority does not match the installed scope')
     entry = 'control.py' if mode in ('verify', 'restore-authority') else 'maintenance.py'
     argv = ['/usr/bin/python3', '-B', installation + '/' + entry, mode, '--config', str(configuration)]
-    return argv + ['--repository', repository] if mode == 'restore-authority' else argv
+    return argv + ['--scope', scope] if mode == 'restore-authority' else argv
 
 
 def main():
@@ -49,7 +49,7 @@ def main():
                 raise ValueError('Unsupported verification input')
             expected = sys.stdin.read(65537)
             if len(expected) > 65536 or json.loads(expected) != value['slot']:
-                raise ValueError('Installed slot differs from its declared repository configuration')
+                raise ValueError('Installed slot differs from its declared scope configuration')
         argv = arguments(sys.argv[1], value, path, sys.argv[3] if len(sys.argv) == 4 else None)
         entry = Path(argv[2])
         for parent in (entry.parent, *entry.parent.parents):

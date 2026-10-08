@@ -114,6 +114,81 @@ def run_registration(experiment, directory, *, empty=False):
     return application, first, token
 
 
+def run_owner_fixture():
+    from pathlib import Path
+    import tempfile
+    from scripts.forgejo_runner.fixture import ROOT, preflight, cleaned_up
+    experiment, runtime = preflight()
+    scratch = ROOT / '.tmp/forgejo-runner'
+    scratch.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='owner-', dir=scratch) as name, cleaned_up(experiment):
+        application = ActionsApplication(experiment, Path(name))
+        application.initialize_admin()
+        probe_owner_scope(application)
+    return 0
+
+
+def probe_owner_scope(application):
+    """Exercise owner inheritance and queue selection on a disposable Forgejo."""
+    import importlib.util
+    import secrets
+    import sys
+    from pathlib import Path
+    source = Path(__file__).resolve().parents[2] / 'roles/forgejo_runner/files/registration.py'
+    spec = importlib.util.spec_from_file_location('fixture_owner_registration', source)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    authority = application.request(f'/users/{application.user}/tokens', method='POST', payload={
+        'name': 'owner-enrollment-fixture', 'scopes': ['write:user']})
+    token = authority['sha1']
+    def request(path, **kwargs):
+        return token_request(application.url, path, token, **kwargs)
+    client = module.RegistrationClient('https://fixture.example.invalid', 'user:' + application.user,
+        token, request=request)
+    generation = secrets.token_hex(16)
+    registration = client.enroll(client.scope, 'owner-fixture', generation)
+    try:
+        # This repository did not exist when the scope and runner were registered.
+        repository = application.request('/user/repos', method='POST', payload={
+            'name': 'runner-future', 'auto_init': True, 'default_branch': 'main'})
+        path = f"/repos/{application.user}/{repository['name']}"
+        visible = application.request(path + '/actions/runners?visible=true')
+        if not any(row['id'] == registration.id for row in visible):
+            raise RuntimeError('Future repository did not inherit the owner runner')
+        label = 'owner-fixture'
+        workflow = ('name: owner queue admission\non: [push]\njobs:\n'
+                    f'  future:\n    runs-on: {label}\n    steps:\n      - run: echo owner-scope\n')
+        application.request(path + '/contents/.forgejo/workflows/owner.yml', method='POST', payload={
+            'content': base64.b64encode(workflow.encode()).decode(), 'message': 'synthetic owner workflow'})
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            handle = client.pending_job(label)
+            if handle is not None:
+                break
+            time.sleep(1)
+        else:
+            raise RuntimeError('Future repository job was absent from the owner queue')
+        import hashlib
+        if client.pending_job(label, excluded={hashlib.sha256(handle.encode()).hexdigest()}) is not None:
+            raise RuntimeError('Owner queue reused a reserved job')
+        rows = token_request(application.url, '/user/actions/runners/jobs?labels=' + label, token)
+        if len(rows) != 1 or rows[0]['repo_id'] != repository['id']:
+            raise RuntimeError('Owner queue did not bind the new repository job')
+        # The user-management token must not provide global runner authority.
+        try:
+            token_request(application.url, '/admin/actions/runners', token)
+        except RuntimeError as error:
+            if not any(str(status) in str(error) for status in (401, 403, 404)):
+                raise
+        else:
+            raise RuntimeError('Owner credential exceeded its runner scope')
+    finally:
+        client.retire(registration)
+        application.request(f"/users/{application.user}/tokens/{authority['id']}", method='DELETE')
+    print('Future repository inherited the owner runner; owner queue, reservation exclusion and retirement passed')
+
+
 class ControllerFailureInjected(RuntimeError):
     pass
 
