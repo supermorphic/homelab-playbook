@@ -55,3 +55,41 @@ class MaintenanceTests(unittest.TestCase):
         self.assertEqual([['systemctl', 'stop', 'forgejo-runner-playbook.timer'],
                           ['systemctl', 'stop', 'forgejo-runner-playbook.service']], commands)
         control.assert_called_once_with('recover', self.configuration())
+
+    def test_successful_recovery_clears_only_its_supervisor_failure(self):
+        failed = {'forgejo-runner-playbook.service', 'unrelated.service'}
+        inspected = False
+
+        def control(mode, value):
+            nonlocal inspected
+            if mode == 'recover':
+                return {'phase': 'clean', 'exit_code': 0}, 0
+            self.assertEqual('inspect', mode)
+            inspected = True
+            return {'phase': 'clean', 'runtime_absent': True, 'verified': True}, 0
+
+        def command(argv):
+            if argv[1] == 'reset-failed':
+                self.assertTrue(inspected, 'Verify disposal before clearing failure state')
+                self.assertEqual('--', argv[2])
+                failed.discard(argv[3])
+            return ''
+
+        _, code = module.recover(self.configuration(), command=command, control=control)
+        self.assertEqual(0, code)
+        self.assertEqual({'unrelated.service'}, failed)
+
+    def test_recovery_preserves_failure_state_when_disposal_is_unverified(self):
+        for observation, status in (
+                ({'phase': 'clean', 'runtime_absent': False, 'verified': True}, 0),
+                ({'phase': 'clean', 'runtime_absent': True, 'verified': False}, 0),
+                ({'phase': 'clean', 'runtime_absent': True, 'verified': True}, 1),
+                ({'phase': 'quarantined', 'runtime_absent': True, 'verified': True}, 0)):
+            with self.subTest(observation=observation, status=status):
+                commands = []
+                control = Mock(side_effect=[({'phase': 'clean', 'exit_code': 0}, 0),
+                                            (observation, status)])
+                with self.assertRaises(ValueError):
+                    module.recover(self.configuration(),
+                                   command=lambda argv: commands.append(argv) or '', control=control)
+                self.assertFalse(any(argv[1] == 'reset-failed' for argv in commands))

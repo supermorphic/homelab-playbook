@@ -41,7 +41,14 @@ def recover(value, *, command=execute, control=perform):
     name = 'forgejo-runner-' + value['slot']['name']
     command(['systemctl', 'stop', name + '.timer'])
     command(['systemctl', 'stop', name + '.service'])
-    return control('recover', value)
+    result, code = control('recover', value)
+    if code == 0:
+        observed, status = control('inspect', value)
+        if (status or observed.get('phase') != 'clean'
+                or not observed.get('runtime_absent') or not observed.get('verified')):
+            raise ValueError('Owned recovery is unverified; preserve supervisor failure state')
+        command(['systemctl', 'reset-failed', '--', name + '.service'])
+    return result, code
 
 
 def main():
