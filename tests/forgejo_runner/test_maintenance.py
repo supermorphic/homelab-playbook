@@ -69,6 +69,8 @@ class MaintenanceTests(unittest.TestCase):
             return {'phase': 'clean', 'runtime_absent': True, 'verified': True}, 0
 
         def command(argv):
+            if argv[1] == 'show':
+                return 'failed' if argv[-1] in failed else 'inactive'
             if argv[1] == 'reset-failed':
                 self.assertTrue(inspected, 'Verify disposal before clearing failure state')
                 self.assertEqual('--', argv[2])
@@ -78,6 +80,32 @@ class MaintenanceTests(unittest.TestCase):
         _, code = module.recover(self.configuration(), command=command, control=control)
         self.assertEqual(0, code)
         self.assertEqual({'unrelated.service'}, failed)
+
+    def test_recovery_can_repeat_after_reset_unloads_the_clean_supervisor(self):
+        states = {'forgejo-runner-playbook.service': 'failed', 'unrelated.service': 'failed'}
+        def command(argv):
+            if argv[1] == 'show':
+                return states.get(argv[-1], 'inactive')
+            if argv[1] == 'reset-failed':
+                if argv[-1] not in states:
+                    raise RuntimeError('Unit is not loaded')
+                states.pop(argv[-1])
+            return ''
+        def control(mode, value):
+            return {'phase': 'clean', 'runtime_absent': True, 'verified': True}, 0
+        for _ in range(2):
+            _, code = module.recover(self.configuration(), command=command, control=control)
+            self.assertEqual(0, code)
+        self.assertEqual({'unrelated.service': 'failed'}, states)
+
+    def test_recovery_refuses_a_supervisor_that_is_not_stopped(self):
+        for state in ('active', 'activating', 'deactivating', 'reloading', '', 'unknown'):
+            with self.subTest(state=state):
+                def command(argv):
+                    return state if argv[1] == 'show' else ''
+                control = Mock(return_value=({'phase': 'clean', 'runtime_absent': True, 'verified': True}, 0))
+                with self.assertRaises(ValueError):
+                    module.recover(self.configuration(), command=command, control=control)
 
     def test_recovery_preserves_failure_state_when_disposal_is_unverified(self):
         for observation, status in (

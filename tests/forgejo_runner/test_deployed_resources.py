@@ -4,6 +4,7 @@ import unittest
 import tempfile
 import json
 import stat
+import sys
 from unittest.mock import patch
 
 source = Path(__file__).parents[2] / 'roles/forgejo_runner/files/resources.py'
@@ -36,6 +37,56 @@ class ResourceContractTests(unittest.TestCase):
                     self.assertEqual(expected, json.loads(destination.read_text()))
                     self.assertEqual(0o600, stat.S_IMODE(destination.stat().st_mode))
                     self.assertEqual([destination], list(runtime.state_root.iterdir()))
+
+    def test_image_home_permits_trusted_setup_search_without_other_user_read_or_write(self):
+        # The launcher is root without DAC override/search. Its root-owned
+        # network-ready file is inside the worker's home, so Unix directory
+        # search is required even though listing and writes are forbidden.
+        class ImageDirectoriesCreated(Exception):
+            pass
+
+        from contextlib import ExitStack
+        config = self.target()
+        config['worker'].update(name='worker', subuid_start=200000,
+                                subgid_start=200000, subuid_count=65536)
+        config['controller'] = {'name': 'controller', 'uid': 2202, 'gid': 2202}
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as patches:
+            manifest = {'artifacts': {name: {} for name in ('job.oci', 'forgejo-runner', 'netavark')}}
+            runtime = module.OwnedRuntime(config, directory, directory, manifest, None, None)
+            runtime.state_root = Path(directory)
+            runtime.root = runtime.state_root / 'runtime'
+            patches.enter_context(patch.object(module.os, 'geteuid', return_value=0))
+            patches.enter_context(patch.object(module.os, 'chown'))
+            patches.enter_context(patch.object(runtime, 'record'))
+            patches.enter_context(patch.object(runtime, 'assert_empty'))
+            patches.enter_context(patch.object(runtime, 'capacity'))
+            patches.enter_context(patch('scripts.forgejo_runner.host_probe.secure_path', return_value=True))
+            patches.enter_context(patch('scripts.forgejo_runner.deployment_assets.verify'))
+            patches.enter_context(patch('scripts.forgejo_runner.deployment_assets.validate_executable'))
+            patches.enter_context(patch.object(sys, 'path', [str(source.parent), *sys.path]))
+            patches.enter_context(patch('pool.service_baseline', return_value=[]))
+            patches.enter_context(patch.object(module.OwnedUnit, 'observe', return_value={'LoadState': 'not-found'}))
+            # Package binaries and setcap need the Debian host. Keep directory
+            # construction real and stop before the rest of the image is built.
+            patches.enter_context(patch.object(module.shutil, 'copyfile'))
+            def command(argv):
+                if argv[0] == 'systemctl':
+                    return 'running'
+                if argv[0] == 'getcap':
+                    capability = 'cap_setuid' if argv[1].endswith('newuidmap') else 'cap_setgid'
+                    return argv[1] + ' ' + capability + '=ep'
+                return ''
+            patches.enter_context(patch.object(module, 'command', side_effect=command))
+            patches.enter_context(patch.object(module, 'worker_files', side_effect=ImageDirectoriesCreated))
+            # The real installation provides this public launcher input.
+            (Path(directory) / 'worker_launch.py').write_text('synthetic launcher')
+            with self.assertRaises(ImageDirectoriesCreated):
+                runtime.prepare('a'*32)
+            home = runtime.root / 'rootfs/work'
+            mode = stat.S_IMODE(home.stat().st_mode)
+            self.assertTrue(mode & stat.S_IXOTH, 'Trusted root cannot reach its network readiness file')
+            self.assertEqual(0, mode & (stat.S_IROTH | stat.S_IWOTH | stat.S_IRGRP | stat.S_IWGRP))
+            self.assertEqual(0o700, stat.S_IMODE((runtime.root / 'rootfs/controller').stat().st_mode))
 
     def test_interrupted_removal_resumes_only_after_proving_absence(self):
         from scripts.forgejo_runner.host_resources import Resources
