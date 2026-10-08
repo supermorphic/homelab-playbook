@@ -35,11 +35,12 @@ def start(success=True):
     run('systemctl','reset-failed')
     return run('systemctl','start',UNIT,success=success)
 
-def control(operation,key=None):
+def control(operation,key=None,plan_digest=None):
     fingerprint=enrollment_fingerprint(load_config(json.loads(CONFIG.read_text())))
     value={'operation':operation,'fingerprint':fingerprint,'decision_ref':'disposable-systemd-acceptance',
         'confirmation':operation+':'+fingerprint,'previous_writers_stopped':True,'outcomes_resolved':True}
     if key: value['key']=key
+    if plan_digest: value['plan_digest']=plan_digest
     run('/usr/bin/python3','/usr/local/libexec/forgejo-metadata/submit.py',stdin=json.dumps(value))
     assert not Path('/run/forgejo-metadata/control.json').exists()
 
@@ -69,8 +70,26 @@ def main():
     # Both units must load their credentials to authenticate against the fixture APIs.
     control('bootstrap-initial'); control('manual-apply')
     data=snapshot(); assert len(data['issues'])==len(data['comments'])==len(data['labels'])==len(data['milestones'])==1
-    assert data['issues'][0]['state']=='closed' and data['issues'][0]['labels']==['fj-bug-42'] and data['issues'][0]['milestone']==102
+    assert data['issues'][0]['state']=='closed' and data['issues'][0]['labels']==['bug'] and data['issues'][0]['milestone']==102
     assert 'original' in data['issues'][0]['body'] and 'commenter' in data['comments'][0]['body']
+    before=(FIXTURE/'destination.json').read_bytes(); start(); assert before==(FIXTURE/'destination.json').read_bytes()
+    # A pre-upgrade journal has no label evidence. Emulate the attended manual
+    # conversion using only this disposable API, retaining issue/comment evidence.
+    from forgejo_metadata.api import DestinationAPI
+    from forgejo_metadata.state import atomic_json
+    mapping=load_config(json.loads(CONFIG.read_text()))[0]
+    destination=DestinationAPI(mapping,'synthetic-fixture-token')
+    destination.request('PATCH','/labels/bug',{'description':'Defect'})
+    journal=json.loads((ROOT/'state.json').read_text()); journal['ownership'].pop('fixture:7:label:42')
+    atomic_json(ROOT/'state.json',journal); os.chown(ROOT/'state.json',account.pw_uid,account.pw_gid)
+    before_state=(ROOT/'state.json').read_bytes(); before_status=(ROOT/'status.json').read_bytes()
+    before=(FIXTURE/'destination.json').read_bytes()
+    plan=json.loads(run('/usr/bin/python3','/usr/local/libexec/forgejo-metadata/submit.py','labels-plan'))
+    assert plan['mappings'][0]['labels'][0]['status']=='ready'
+    assert before==(FIXTURE/'destination.json').read_bytes()
+    assert before_state==(ROOT/'state.json').read_bytes() and before_status==(ROOT/'status.json').read_bytes()
+    control('adopt-labels',plan_digest=plan['digest']); start()
+    data=snapshot(); assert data['labels'][0]['id']==101 and data['issues'][0]['labels']==['bug']
     before=(FIXTURE/'destination.json').read_bytes(); start(); assert before==(FIXTURE/'destination.json').read_bytes()
     # A service-owned lock blocks all runtime modes, including root-submitted controls.
     lock=ROOT/'operation.lock'; fd=os.open(lock,os.O_RDWR); fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)

@@ -51,6 +51,28 @@
   register: forgejo_metadata_groups
   changed_when: false
 
+- name: Inspect installed root submission helper
+  ansible.builtin.stat:
+    path: "{{ forgejo_metadata_helper_root }}/submit.py"
+    follow: false
+    checksum_algorithm: sha256
+    get_mime: false
+    get_attributes: false
+  register: forgejo_metadata_submission_helper
+
+- name: Require the current immutable root submission helper
+  ansible.builtin.assert:
+    that:
+      - forgejo_metadata_submission_helper.stat.exists
+      - forgejo_metadata_submission_helper.stat.isreg | default(false)
+      - not forgejo_metadata_submission_helper.stat.islnk | default(true)
+      - forgejo_metadata_submission_helper.stat.uid == 0
+      - forgejo_metadata_submission_helper.stat.mode == '0755'
+      - >-
+        forgejo_metadata_submission_helper.stat.checksum
+        == lookup('file', role_path + '/files/submit.py', rstrip=false) | hash('sha256')
+    fail_msg: Metadata submission helper differs; verification cannot repair it
+
 - name: Require metadata non-login private identity
   ansible.builtin.assert:
     that:

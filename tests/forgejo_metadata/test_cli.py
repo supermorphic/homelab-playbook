@@ -103,6 +103,32 @@ class CLITests(unittest.TestCase):
         value=json.loads(self.output.getvalue()); self.assertEqual('example/recovery',value['mappings'][0]['destination_repo'])
         self.assertEqual(enrollment_fingerprint(load_config(CONFIG)),value['fingerprint'])
         self.assertEqual(before,list(self.root.iterdir())); self.assertEqual([],self.destination.writes)
+
+    def test_label_plan_is_observational_and_guarded_adoption_reuses_label(self):
+        from forgejo_metadata.state import StateStore
+        store=StateStore(self.root/'state.json',enrollment_fingerprint(load_config(CONFIG)))
+        store.bootstrap('initial','existing')
+        label={'id':90,'name':'bug','color':'abcdef','description':'Defect'}
+        self.destination.data.labels.append(label); self.destination.rows['/labels/bug']=label
+        before={p.name:p.read_bytes() for p in self.root.iterdir()}
+        self.assertEqual(0,self.run_cli('labels-plan'))
+        self.assertEqual(before,{p.name:p.read_bytes() for p in self.root.iterdir()})
+        plan=json.loads(self.output.getvalue())
+        self.assertEqual('ready',plan['mappings'][0]['labels'][0]['status'])
+        request=self.request('adopt-labels',plan_digest=plan['digest'])
+        with patch.object(self.module,'trusted_request',return_value=json.loads(request.read_text())):
+            self.assertEqual(0,self.run_cli('control','--request',str(request)))
+        self.assertEqual([('PATCH','/labels/bug')],self.destination.writes)
+        self.assertEqual(90,label['id'])
+
+    def test_label_adoption_requires_stopped_writers_and_review_digest(self):
+        from forgejo_metadata.state import StateStore
+        StateStore(self.root/'state.json',enrollment_fingerprint(load_config(CONFIG))).bootstrap('initial','existing')
+        for extra in ({'plan_digest':'wrong'},{'previous_writers_stopped':False,'plan_digest':'wrong'}):
+            request=json.loads(self.request('adopt-labels').read_text()); request.update(extra)
+            with patch.object(self.module,'trusted_request',return_value=request):
+                self.assertEqual(1,self.run_cli('control','--request',str(self.root/'request.json')))
+        self.assertEqual([],self.destination.writes)
     def test_rate_limit_survives_restart_and_other_credentials_progress(self):
         from forgejo_metadata.api import APIError
         from forgejo_metadata.state import StateStore

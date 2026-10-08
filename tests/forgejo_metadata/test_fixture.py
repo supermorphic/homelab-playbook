@@ -11,6 +11,7 @@ from support import CONFIG
 from forgejo_metadata.model import load_config,enrollment_fingerprint
 from forgejo_metadata.state import StateStore
 from forgejo_metadata.api import SourceAPI
+from forgejo_metadata.api import DestinationAPI
 ROOT=Path(__file__).resolve().parents[2]
 class FixtureTests(unittest.TestCase):
     def setUp(self):
@@ -37,7 +38,7 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(0,self.apply()); count=len(self.fixture.writes())
         self.assertEqual(0,self.apply()); self.assertEqual(count,len(self.fixture.writes()))
         data=self.fixture.snapshot(); self.assertEqual('closed',data['issues'][0]['state'])
-        self.assertEqual(['fj-bug-42'],data['issues'][0]['labels']); self.assertEqual(102,data['issues'][0]['milestone'])
+        self.assertEqual(['bug'],data['issues'][0]['labels']); self.assertEqual(102,data['issues'][0]['milestone'])
         self.assertEqual(1,len(data['comments'])); self.assertTrue(all(row[0]=='GET' for row in self.fixture.source_ledger))
         self.fixture.source_data['issues']=[]; self.assertEqual(0,self.apply()); self.assertEqual(1,len(self.fixture.snapshot()['issues']))
 
@@ -77,11 +78,11 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(1,self.apply()); self.assertEqual(before,len(self.fixture.writes()))
     def test_label_slash_and_dots_can_be_updated_and_renamed_over_tls(self):
         self.fixture.source_data['labels'][0]['name']='area/ui'; self.fixture.source_data['issues'][0]['labels'][0]['name']='area/ui'
-        self.assertEqual(0,self.apply()); self.assertEqual('fj-area/ui-42',self.fixture.snapshot()['labels'][0]['name'])
+        self.assertEqual(0,self.apply()); self.assertEqual('area/ui',self.fixture.snapshot()['labels'][0]['name'])
         self.fixture.source_data['labels'][0]['color']='000000'; self.assertEqual(0,self.apply())
         self.assertEqual('000000',self.fixture.snapshot()['labels'][0]['color'])
         self.fixture.source_data['labels'][0]['name']='release..next'; self.fixture.source_data['issues'][0]['labels'][0]['name']='release..next'
-        self.assertEqual(0,self.apply()); self.assertEqual('fj-release..next-42',self.fixture.snapshot()['labels'][0]['name'])
+        self.assertEqual(0,self.apply()); self.assertEqual('release..next',self.fixture.snapshot()['labels'][0]['name'])
         self.assertEqual(1,len(self.fixture.snapshot()['labels'])); self.assertEqual(0,self.apply())
     def test_complete_source_pagination_over_tls_with_full_final_page(self):
         self.fixture.source_data['labels']=[{'id':number,'name':f'label-{number}','color':'abcdef'} for number in range(1,101)]
@@ -89,3 +90,30 @@ class FixtureTests(unittest.TestCase):
         inventory=SourceAPI(mapping,'synthetic-fixture-token').inventory(mapping)
         self.assertEqual(list(range(1,101)),[row['id'] for row in inventory.labels])
         self.assertEqual(2,sum(path.endswith('/labels') for _,path in self.fixture.source_ledger))
+
+    def test_tls_plan_adoption_and_restart_restore_existing_label_assignments(self):
+        from forgejo_metadata.labels import adopt_labels
+        from unittest.mock import patch
+        mapping=load_config(self.document)[0]
+        def clients(selected):
+            with patch.dict(os.environ,{'SSL_CERT_FILE':str(self.root/'ca.pem')}):
+                return SourceAPI(selected,'synthetic-fixture-token'),DestinationAPI(selected,'synthetic-fixture-token')
+        source,destination=clients(mapping)
+        destination.request('POST','/labels',{'name':'bug','color':'abcdef','description':'Defect'})
+        before=self.store.path.read_bytes(); writes=len(self.fixture.writes())
+        result=subprocess.run(self.command()[:-1]+['labels-plan'],env=self.environment,
+            cwd=self.package,capture_output=True,text=True,timeout=45)
+        self.assertEqual(0,result.returncode,result.stdout+result.stderr)
+        plan=json.loads(result.stdout)
+        self.assertEqual('ready',plan['mappings'][0]['labels'][0]['status'])
+        self.assertEqual(before,self.store.path.read_bytes())
+        self.assertEqual(writes,len(self.fixture.writes()))
+        self.assertEqual(1,adopt_labels([mapping],self.store,clients,plan['digest'],'tls-fixture',20))
+        self.assertEqual(0,self.apply())
+        data=self.fixture.snapshot()
+        self.assertEqual(101,data['labels'][0]['id'])
+        self.assertEqual(['bug'],data['issues'][0]['labels'])
+        self.assertEqual(1,len(data['labels']))
+        writes=len(self.fixture.writes()); self.assertEqual(0,self.apply())
+        self.assertEqual(writes,len(self.fixture.writes()))
+        self.assertEqual(1,sum(method=='POST' and path.endswith('/labels') for method,path in self.fixture.writes()))

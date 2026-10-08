@@ -56,15 +56,20 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(projection.key,self.identity.parse_marker(projection.fields['description'],'label'))
 
     def test_label_marker_fits_and_full_name_is_retained_in_issue(self):
-        label = {'id': 42, 'name': '長' * 80, 'color': '#ABCDEF', 'description': 'x' * 200}
+        label = {'id': 42, 'name': '長' * 50, 'color': '#ABCDEF', 'description': 'x' * 200}
         p = self.identity.render_projection(self.mapping, 'label', label)
         self.assertLessEqual(len(p.fields['name']), 50)
-        self.assertTrue(p.fields['name'].endswith('-42'))
+        self.assertEqual(label['name'], p.fields['name'])
         self.assertLessEqual(len(p.fields['description']), 100)
         self.assertEqual('abcdef', p.fields['color'])
         self.assertEqual(42, self.identity.parse_marker(p.fields['description'], 'label').object_id)
         issue = self.identity.render_projection(self.mapping, 'issue', dict(ISSUE, labels=[label]))
         self.assertIn(label['name'], issue.fields['body'])
+
+    def test_unsupported_label_names_fail_without_substitution(self):
+        for name in ('', 'x' * 51, '.', '..', ' leading', 'trailing ', 'new\nline', 'null\x00name'):
+            with self.subTest(name=name), self.assertRaisesRegex(self.model.MirrorError, 'unsupported_label_name'):
+                self.identity.render_projection(self.mapping, 'label', {'id':42, 'name':name, 'color':'abcdef'})
 
     def test_original_migration_author_and_oversized_history(self):
         p = self.identity.render_projection(self.mapping, 'issue', dict(ISSUE, original_author='migrated'))

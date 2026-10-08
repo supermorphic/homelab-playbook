@@ -19,11 +19,60 @@ class ReconciliationTests(unittest.TestCase):
     def test_historical_backfill_closure_assignments_and_repeat_noop(self):
         result=self.run_mirror(); self.assertEqual([],result.errors)
         issue=self.destination.data.issues[0]
-        self.assertEqual('closed',issue['state']); self.assertEqual(['fj-bug-42'],issue['labels'])
+        self.assertEqual('closed',issue['state']); self.assertEqual(['bug'],issue['labels'])
         self.assertEqual(102,issue['milestone']); self.assertEqual(1,len(self.destination.data.comments[103]))
         self.assertIn('Original text',issue['body']); self.assertIn('Original comment',self.destination.data.comments[103][0]['body'])
         self.destination.writes=[]; self.assertEqual(0,self.run_mirror().writes)
         self.assertEqual([],self.destination.writes)
+
+    def test_unmarked_same_name_label_stops_without_adoption_or_creation(self):
+        self.destination.data.labels.append({'id':90,'name':'bug','color':'abcdef','description':'Defect'})
+        self.assertIn('label_name_collision', self.run_mirror().errors)
+        self.assertEqual([], self.destination.writes)
+        self.assertEqual({}, self.store.load()['pending'])
+
+    def test_label_rename_preserves_numeric_identity_and_restart_evidence(self):
+        self.assertEqual([], self.run_mirror().errors)
+        identity=self.destination.data.labels[0]['id']
+        self.source.data.labels[0]['name']='area/ui'
+        self.assertEqual([], self.run_mirror().errors)
+        self.store=StateStore(self.store.path,'fixture')
+        self.assertEqual(identity,self.destination.data.labels[0]['id'])
+        self.assertEqual(['area/ui'],self.destination.data.issues[0]['labels'])
+        self.assertEqual('/labels/'+str(identity), self.store.load()['ownership']['fixture:7:label:42'])
+        self.destination.writes=[]
+        self.assertEqual(0,self.run_mirror().writes)
+        self.assertEqual([],self.destination.writes)
+
+    def test_known_label_missing_marker_or_replaced_id_stops_mapping(self):
+        self.assertEqual([],self.run_mirror().errors)
+        row=self.destination.data.labels[0]; original=row['description']
+        row['description']='Defect'; self.destination.writes=[]
+        self.assertIn('ownership_conflict',self.run_mirror().errors)
+        self.assertEqual([],self.destination.writes)
+        row['description']=original; row['id']=999
+        self.assertIn('ownership_conflict',self.run_mirror().errors)
+        self.assertEqual([],self.destination.writes)
+
+    def test_rename_collision_preserves_both_labels(self):
+        self.assertEqual([],self.run_mirror().errors)
+        self.destination.data.labels.append({'id':90,'name':'occupied','color':'abcdef','description':'Human label'})
+        before=copy.deepcopy(self.destination.data)
+        self.source.data.labels[0]['name']='occupied'; self.destination.writes=[]
+        self.assertIn('label_name_collision',self.run_mirror().errors)
+        self.assertEqual(before,self.destination.data)
+        self.assertEqual([],self.destination.writes)
+
+    def test_label_update_readback_rejects_replacement_numeric_identity(self):
+        self.assertEqual([],self.run_mirror().errors)
+        self.source.data.issues=[]; self.source.data.milestones=[]
+        self.source.data.labels[0]['name']='renamed'
+        update=self.destination.update
+        def replaced(target,projection):
+            update(target,projection)
+            if projection.key.kind=='label': self.destination.data.labels[0]['id']=999
+        self.destination.update=replaced
+        self.assertIn('ownership_conflict',self.run_mirror().errors)
     def test_edits_and_cleared_assignments_preserve_missing_objects(self):
         self.run_mirror(); original_count=self.destination.count
         issue=self.source.data.issues[0]; issue.update(title='Changed',state='open',labels=[],milestone=None)

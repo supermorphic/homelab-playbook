@@ -4,7 +4,13 @@ import time
 from .api import APIError
 from .identity import render_projection, parse_marker
 from .model import MirrorError, SourceKey, DestinationObject, Projection, RunResult
-from .state import key_string
+from .state import key_string, ownership_locator
+
+def require_label_name_available(projection,inventory,owned):
+    target=owned.get(projection.key)
+    matches=[row for row in inventory.labels if row['name'].casefold()==projection.fields['name'].casefold()]
+    if any(target is None or row['id']!=target.fields['id'] for row in matches):
+        raise MirrorError('label_name_collision')
 
 def normalize(kind,row,desired):
     values={key:row.get(key) for key in desired}
@@ -37,7 +43,9 @@ def discover_owned(mapping,inventory,ownership=None):
             if key is None:
                 recognizable=(f'\n---\nForgejo {mapping.source_repo} #' in text
                               or bool(text.splitlines()) and text.splitlines()[-1].startswith('<!-- forgejo-mirror:'))
-                if kind in ('issue','comment') and recognizable or kind in ('label','milestone') and (row.get('name','').startswith('fj-') or ' [fj-' in row.get('title','')):
+                if (kind in ('issue','comment') and recognizable
+                        or kind=='label' and 'forgejo-mirror:' in text
+                        or kind=='milestone' and ' [fj-' in row.get('title','')):
                     raise MirrorError('ownership_conflict')
                 continue
             if key.instance!=mapping.instance or key.repository_id!=mapping.source_id: continue
@@ -48,15 +56,23 @@ def discover_owned(mapping,inventory,ownership=None):
             fields=dict(row)
             if parent is not None: fields['_parent_id']=parent
             owned[key]=DestinationObject(key,locator,fields)
-    observed={key_string(key):target.locator for key,target in owned.items()}
+    observed={key_string(key):ownership_locator(target) for key,target in owned.items()}
     prefix=f'{mapping.instance}:{mapping.source_id}:'
     if any(identity.startswith(prefix) and observed.get(identity)!=locator
-           and (identity not in observed or locator in locators) for identity,locator in (ownership or {}).items()):
+           and (':label:' in identity or identity not in observed or locator in locators) for identity,locator in (ownership or {}).items()):
         raise MirrorError('ownership_conflict')
     return owned
 
-def discover_recorded(mapping,destination,store):
-    owned=discover_owned(mapping,destination.inventory(mapping),store.load().get('ownership',{}))
+def discover_recorded(mapping,destination,store,labels=()):
+    inventory=destination.inventory(mapping)
+    owned=discover_owned(mapping,inventory,store.load().get('ownership',{}))
+    names=set()
+    for row in labels:
+        projection=render_projection(mapping,'label',row)
+        name=projection.fields['name'].casefold()
+        if name in names: raise MirrorError('label_name_collision')
+        names.add(name)
+        require_label_name_available(projection,inventory,owned)
     store.remember_owned(owned)
     return owned
 
@@ -84,7 +100,7 @@ def reconcile(mapping,source,destination,store,write_budget):
         store.require_initialized(); destination.preflight(mapping)
         source_data=source.inventory(mapping)
         if not source_data.complete: raise MirrorError('incomplete_inventory')
-        owned=discover_recorded(mapping,destination,store)
+        owned=discover_recorded(mapping,destination,store,source_data.labels)
         # Rediscovery retires intents even when the source object has disappeared.
         for target in owned.values():
             if key_string(target.key) in store.load()['pending']:
@@ -116,7 +132,7 @@ def reconcile(mapping,source,destination,store,write_budget):
                     except MirrorError: pass
                 if result.writes>=write_budget: result.backlog+=1; continue
                 destination.preflight(mapping)
-                fresh=discover_recorded(mapping,destination,store)
+                fresh=discover_recorded(mapping,destination,store,source_data.labels)
                 observed=fresh.get(projection.key)
                 if target and observed is None: raise MirrorError('ownership_conflict')
                 target=observed
@@ -140,7 +156,7 @@ def reconcile(mapping,source,destination,store,write_budget):
                     if result.writes>=write_budget: result.backlog+=1
                     else:
                         destination.preflight(mapping)
-                        fresh=discover_recorded(mapping,destination,store)
+                        fresh=discover_recorded(mapping,destination,store,source_data.labels)
                         current=fresh.get(projection.key)
                         if current is None: raise MirrorError('ownership_conflict')
                         if kind=='comment': parent=comment_parent(mapping,fresh,parent_id,current)
@@ -150,12 +166,14 @@ def reconcile(mapping,source,destination,store,write_budget):
                         locator='/labels/'+quote(projection.fields['name'],safe='') if kind=='label' else current.locator
                         target=DestinationObject(projection.key,locator,destination.read(locator))
                         verify_projection(projection,target.fields)
+                        if kind=='label' and target.fields.get('id')!=current.fields['id']:
+                            raise MirrorError('ownership_conflict')
                 if kind=='comment': target.fields['_parent_id']=parent.fields['id']
                 owned[projection.key]=target
             except (MirrorError,KeyError,TypeError,ValueError) as error:
                 result.errors.append(str(error) if isinstance(error,MirrorError) else 'invalid_source_or_response')
                 if isinstance(error,APIError) and error.retry_at: store.defer(error.retry_at,error.retry_key)
-                if isinstance(error,MirrorError) and str(error) in ('run_timeout','ownership_conflict'): return result
+                if isinstance(error,MirrorError) and str(error) in ('run_timeout','ownership_conflict','label_name_collision','unsupported_label_name'): return result
         if any(intent['key']['instance']==mapping.instance and intent['key']['repository_id']==mapping.source_id for intent in store.load()['pending'].values()): result.errors.append('create_outcome_unresolved')
         if not result.errors and not result.backlog: result.converged_at=time.time()
     except MirrorError as error:

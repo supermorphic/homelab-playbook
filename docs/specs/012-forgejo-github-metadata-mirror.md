@@ -117,17 +117,18 @@ content inside a source body cannot define destination ownership.
 Labels have no Markdown body. Put a compact source identity marker in their
 description, followed by as much original description as the API permits. Use
 a single line because GitHub converts label-description newlines to spaces;
-retain read compatibility with the original newline-separated format. Use
-a deterministic name containing the source label ID and a readable source name.
-Bound the readable part to GitHub's name limit without truncating the identity.
-Preserve full original names in issue attribution. Label description truncation
+retain read compatibility with the original newline-separated format. Use the
+original Forgejo name without a prefix, suffix, or truncation. Reject names that
+cannot be represented exactly by the supported destination API and endpoint
+contract; never substitute another name. Earlier versions used source-ID-suffixed
+`fj-*` names; that naming decision is historical. Label description truncation
 is an explicit reconstruction limitation; full backups preserve exact values.
 Milestones likewise use a readable title with a source-ID suffix so pre-existing
 destination names do not become implicit matches.
 
 Only update objects carrying an unambiguous marker for the enrolled source.
 For issues and comments, also require the declared automation actor as creator.
-Reserved names alone do not authorize adoption of a label or milestone.
+Names alone do not authorize adoption of a label or milestone.
 Duplicate, malformed, conflicting, or missing ownership markers on recognizable
 service objects stop that mapping with an actionable conflict. Do not silently
 take over or merge historical GitHub issues, comments, labels, or milestones.
@@ -141,10 +142,17 @@ An owner-issued token shares its actor with ordinary GitHub history. Actor ident
 alone therefore does not make an unmarked issue or comment a service object.
 Generated attribution or a damaged terminal service marker identifies a
 recognizable shadow. The safety journal also retains the source identity and
-destination locator of observed issue/comment shadows. This evidence prevents a
+destination locator of observed issue/comment shadows. For labels, retain the
+numeric GitHub object ID rather than a name-based endpoint so renames preserve
+identity. The existing journal remains readable and retains initialization,
+pending creates, and issue/comment evidence when label evidence is added.
+This evidence prevents a
 known shadow whose entire body is replaced or whose object is deleted from being
 silently recreated. It never authorizes adoption or updates without a valid marker.
-Preserve this evidence during attended recovery. If both this evidence and all
+For recorded labels, missing markers, deletion, or replacement by another numeric
+GitHub ID stop synchronization even if a replacement has the same name. Malformed
+label markers are conflicts regardless of the label name. Preserve this evidence
+during attended recovery. If both this evidence and all
 service attribution and markers are lost, an object cannot be distinguished from
 ordinary owner-authored history; resolve that loss through attended recovery.
 
@@ -167,6 +175,11 @@ endpoint has identical pagination parameters. Filter non-issue comment records
 and test any repository-wide comment optimization against the accepted issue set.
 
 Reconcile labels and milestones before dependent issues, then issue comments.
+An unmarked or differently owned label occupying a desired name stops the mapping;
+ordinary synchronization never adopts it. Missing names are created normally with
+the original Forgejo name and marker. Rename a marked label in place using its
+stable source identity and verify its unchanged numeric GitHub ID. A collision at
+the requested new name stops the mapping before changing that label.
 Apply title, generated body, source label membership, milestone assignment, and
 open/closed state to each owned issue. Apply comment edits as well as additions.
 Milestone changes include title, description, state, and due date. Convert due
@@ -301,6 +314,60 @@ recovery bootstrap; copying configuration or rerunning provision cannot enable
 writes. No separate mapping database restore is needed for normal marker discovery.
 
 ## Attended operation and recovery
+
+### Original-name label cutover
+
+Existing GitHub labels imported into Forgejo can have identical names, colors and
+descriptions. This equality proposes an adoption pair; it does not grant ownership.
+Do not add markers manually or recreate these labels. Adoption changes the
+description to the generated marker plus the bounded original description and
+makes supported fields Forgejo-managed. Later name and color changes also affect
+historical GitHub issues that use the adopted label.
+
+Keep nightly synchronization paused and let any active run finish before manual
+label preparation. The operator removes legacy `fj-*` labels and prepares the
+original-name labels in GitHub. After that preparation, separately authorize
+deployment of the updated runtime while the timer remains disabled. The previous
+runtime would restore the historical names. Deployment does not adopt labels.
+
+Use `mise run playbook -- forgejo-metadata labels-plan production --limit <host>`
+to review the exact enrolled repositories, source label identities, destination
+numeric IDs, supported fields, generated descriptions, and review digest. The
+root submission helper runs a temporary process under the isolated service
+account with its existing scoped credentials and read-only filesystem access.
+The plan performs API reads and leaves GitHub, initialization, ownership evidence,
+pending creates, timer configuration and convergence status unchanged. It needs
+no mutation confirmation. Missing labels are reported for later normal creation;
+ambiguous names, mismatched fields, conflicting or damaged markers, unknown create
+outcomes, unsupported names and conflicting journal evidence require resolution.
+Matching is by exact name; a different-case collision cannot be adopted implicitly.
+
+After separately authorizing the reviewed pairs, submit `adopt-labels` through
+`mise run playbook -- forgejo-metadata adopt-labels production --limit <host>
+-e @.tmp/metadata-control.json`. The request supplies `plan_digest` from the plan,
+the enrolled fingerprint, its operation-bound confirmation, a non-secret decision
+reference and confirmation that previous writers are stopped. The runtime defines
+the exact request fields in `control --help`. The digest binds the full reviewed
+set, including original fields and destination numeric IDs. Adoption uses the
+existing root-owned control request, scoped service credentials, operation lock
+and write budget. It creates no labels and leaves unrelated labels and historical
+issue assignments intact. It rechecks every reviewed pair before each write,
+rejects changes since review, generates the markers and verifies supported fields
+and numeric identity after writing.
+
+If interrupted, preserve the journal and rerun the read-only plan. Correctly
+marked labels are reported as owned; a reviewed repeat does not patch them again.
+Partial adoption requires a fresh plan and separate authorization for its remaining
+pairs. Missing or invalid initialization still requires the existing attended
+recovery workflow. Recovery retains label ownership evidence and unresolved
+creates rather than silently reassigning identities.
+
+After adoption, separately authorize normal reconciliation to restore mirrored
+issue label membership from Forgejo. Verify convergence and the original names
+before separately authorizing resumption of nightly synchronization. Automated
+legacy label deletion, merging and cleanup are outside this workflow.
+
+### Enrollment and recovery
 
 The `forgejo_metadata` inventory group and its UID/GID, protected tokens and
 repository mappings require a separately authorized enrollment change. The

@@ -1,0 +1,19 @@
+---
+- name: Validate current metadata host and declaration
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Verify current installed metadata definitions
+  ansible.builtin.import_tasks: verify-definitions.yml
+
+- name: Collect label adoption plan with service credentials and read-only state
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - "{{ forgejo_metadata_helper_root }}/submit.py"
+      - labels-plan
+  register: forgejo_metadata_label_plan
+  changed_when: false
+
+- name: Report exact adoption pairs and review digest
+  ansible.builtin.debug:
+    msg: "{{ forgejo_metadata_label_plan.stdout | from_json }}"
