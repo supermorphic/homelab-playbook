@@ -216,10 +216,14 @@ class OwnedRuntime:
             self.helper_binds.append(str(destination) + ':/usr/bin/' + name)
         staging = self.root / 'rootfs'
         staging.mkdir(mode=0o755)
+        # Public image paths must remain readable by the execution UID even
+        # when the installed supervisor creates private files with umask 077.
+        staging.chmod(0o755)
         self.record(staging)
         for name in ('usr', 'proc', 'sys', 'dev', 'work', 'run', 'tmp', 'etc', 'controller'):
             directory = staging / name
             directory.mkdir(mode=0o755)
+            directory.chmod(0o755)
             if name in ('work', 'controller'):
                 account = self.config['worker' if name == 'work' else 'controller']
                 os.chown(directory, account['uid'], account['gid'])
@@ -272,6 +276,7 @@ class OwnedRuntime:
                 parent = parent.parent
             for parent in reversed(missing):
                 parent.mkdir(mode=0o755)
+                parent.chmod(0o755)
                 if parent.is_relative_to(staging / 'work'):
                     os.chown(parent, self.config['worker']['uid'], self.config['worker']['gid'])
                     parent.chmod(0o700)
@@ -291,6 +296,7 @@ class OwnedRuntime:
             destination = staging / relative
             if not destination.parent.exists():
                 destination.parent.mkdir(mode=0o755)
+                destination.parent.chmod(0o755)
                 self.record(destination.parent)
             with destination.open('xb'):
                 pass
