@@ -550,6 +550,20 @@ Workflow requirements:
 - no JUnit, Allure, permanent result catalog, or report artifact unless a future
   measured consumer justifies it.
 
+### Forgejo workflow adoption
+
+The workflow in [.forgejo/workflows/ci.yml](../../.forgejo/workflows/ci.yml)
+adapts the existing GitHub topology to the runner platform owned by
+[Specification 011](011-forgejo-runners.md). It preserves repository-owned
+classification, selected validation and merge-gate reconciliation. Each job
+checks out and verifies the declared candidate before validation.
+
+GitHub CI is no longer operational. Its YAML remains a configuration baseline;
+local Mise validation remains the operational reference until the Forgejo
+workflow passes live acceptance after issue #57. Required-check activation and
+repository settings changes need separate operator authorization. Offline
+workflow checks do not establish live runner or merge-protection acceptance.
+
 ### GitHub main protection
 
 The workflow check and GitHub enforcement are separate controls. The workflow
