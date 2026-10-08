@@ -266,7 +266,12 @@ class OwnedRuntime:
                                                   '[network]\nfirewall_driver="nftables"\n')
         extra['etc/containers/policy.json'] = json.dumps(image_policy(self.manifest))
         extra['work/network-ready'] = ''
-        extra['work/job-workspace/.owned'] = 'Disposable workspace\n'
+        # Rootless Podman remaps this bind for the job UID. Keep it empty:
+        # files created by trusted root cannot be chowned by that runtime.
+        workspace = staging / 'work/job-workspace'
+        workspace.mkdir(mode=0o700)
+        os.chown(workspace, self.config['worker']['uid'], self.config['worker']['gid'])
+        self.record(workspace)
         for relative, content in extra.items():
             destination = staging / relative
             missing = []

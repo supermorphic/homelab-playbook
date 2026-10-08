@@ -141,6 +141,9 @@ class ResourceContractTests(unittest.TestCase):
             self.assertEqual(0, home_mode & (stat.S_IROTH | stat.S_IWOTH | stat.S_IRGRP | stat.S_IWGRP))
             for private in ('controller', 'work/run', 'work/image-tmp', 'work/job-workspace'):
                 self.assertEqual(0o700, stat.S_IMODE((image / private).stat().st_mode))
+            # The job bind is remapped by rootless Podman. Trusted setup must
+            # not leave root-owned inputs for it to recursively chown.
+            self.assertEqual([], list((image / 'work/job-workspace').iterdir()))
 
     def test_interrupted_removal_resumes_only_after_proving_absence(self):
         from scripts.forgejo_runner.host_resources import Resources
