@@ -33,11 +33,15 @@ semaphore_controller_identity_enabled: false
 # Provisioning checks these IDs for conflicts before creating the account.
 forgejo_metadata_uid: 2003
 forgejo_metadata_gid: 2003
-forgejo_metadata_timer_enabled: true
+# Keep scheduling paused until expanded enrollment and live acceptance (Spec 012).
+forgejo_metadata_timer_enabled: false
 
 # github_metadata_write: owner supermorphic; expiration none.
-# Selected GitHub repository: supermorphic/homelab-playbook.
+# Required selected GitHub repositories: supermorphic/homelab-playbook,
+# supermorphic/homelab-talos and supermorphic/career-ops.
 # Required permissions: Issues read/write, Metadata read-only.
+# forgejo_metadata_read needs read:issue and read:repository for the same sources.
+# Extend both credentials before provisioning the expanded enrollment.
 # Token values belong to forgejo-metadata.sops.yml; rotation follows Spec 012.
 forgejo_metadata_mappings:
   - instance: homelab
@@ -52,4 +56,28 @@ forgejo_metadata_mappings:
     source_credential: forgejo_metadata_read
     destination_credential: github_metadata_write
     # Use system HTTPS trust; verify the source chain during live acceptance.
+    ca_file: ''
+  - instance: homelab
+    source_origin: https://forgejo.infra.supermorphic.com
+    source_repo: supermorphic/homelab-talos
+    source_id: 1
+    destination_origin: https://api.github.com
+    destination_repo: supermorphic/homelab-talos
+    destination_id: 1298663964
+    visibility: public
+    actor_id: 7303866
+    source_credential: forgejo_metadata_read
+    destination_credential: github_metadata_write
+    ca_file: ''
+  - instance: homelab
+    source_origin: https://forgejo.infra.supermorphic.com
+    source_repo: supermorphic/career-ops
+    source_id: 3
+    destination_origin: https://api.github.com
+    destination_repo: supermorphic/career-ops
+    destination_id: 1348709615
+    visibility: private
+    actor_id: 7303866
+    source_credential: forgejo_metadata_read
+    destination_credential: github_metadata_write
     ca_file: ''
