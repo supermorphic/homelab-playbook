@@ -84,7 +84,7 @@ def main():
                 pass
     os.chdir('/controller')
     os.environ.clear()
-    os.environ.update(PATH='/usr/sbin:/usr/bin:/sbin:/bin', HOME='/controller', LC_ALL='C')
+    os.environ.update(PATH='/usr/sbin:/usr/bin:/sbin:/bin', HOME='/controller', TMPDIR='/controller', LC_ALL='C')
     arguments = runner_arguments(request, descriptor)
     os.execv(arguments[0], arguments)
 
