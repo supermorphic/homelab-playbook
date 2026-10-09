@@ -14,6 +14,63 @@ spec.loader.exec_module(module)
 
 
 class ResourceContractTests(unittest.TestCase):
+    def test_admission_retries_clean_owned_failures_and_rejects_other_host_failures(self):
+        from contextlib import ExitStack
+        from scripts.forgejo_runner.host_resources import HostCommandError
+
+        class AdmissionReached(Exception):
+            pass
+
+        own = 'forgejo-runner-playbook.service'
+        peer = {**self.target(), 'name': 'peer', 'state_root': '/var/lib/forgejo-runner/peer'}
+        cases = [
+            ('running', '', 'clean', True, True),
+            ('degraded', own, 'clean', True, True),
+            ('degraded', own + '\nforgejo-runner-peer.service', 'clean', True, True),
+            ('degraded', 'unrelated.service', 'clean', True, False),
+            ('degraded', own + '\nunrelated.service', 'clean', True, False),
+            ('degraded', 'forgejo-runner-playbook-extra.service', 'clean', True, False),
+            ('degraded', 'root.mount', 'clean', True, False),
+            ('degraded', own, 'quarantined', True, False),
+            ('degraded', own, 'clean', False, False),
+            ('degraded', '', 'clean', True, False),
+            ('starting', '', 'clean', True, False),
+        ]
+        for manager, failed, phase, absent, allowed in cases:
+            with self.subTest(manager=manager, failed=failed, phase=phase, absent=absent), ExitStack() as patches:
+                runtime = module.OwnedRuntime(self.target(), '/synthetic', '/synthetic', {}, None, None)
+                patches.enter_context(patch.object(module.os, 'geteuid', return_value=0))
+                patches.enter_context(patch('scripts.forgejo_runner.host_probe.secure_path', return_value=True))
+                patches.enter_context(patch.object(runtime, 'assert_empty'))
+                patches.enter_context(patch.object(runtime, 'capacity', side_effect=AdmissionReached))
+                patches.enter_context(patch.object(sys, 'path', [str(source.parent), *sys.path]))
+                patches.enter_context(patch('pool.read_registry', return_value=[self.target(), peer]))
+                patches.enter_context(patch('verify.observe', return_value={
+                    'phase': phase, 'runtime_absent': absent, 'owned_process_count': 0 if absent else 1,
+                    'limits_verified': False, 'allocation_identity_verified': False,
+                    'verified': phase == 'clean' and absent}))
+
+                def command(argv):
+                    if argv == ['systemctl', 'is-system-running']:
+                        if manager != 'running':
+                            raise HostCommandError('')
+                        return 'running\n'
+                    if argv == ['systemctl', 'show', '--property=SystemState', '--value']:
+                        return manager + '\n'
+                    if argv == ['systemctl', 'list-units', '--state=failed', '--plain', '--no-legend', '--no-pager']:
+                        return '\n'.join(unit + ' loaded failed failed Synthetic unit' for unit in failed.splitlines())
+                    raise AssertionError('Unexpected host observation')
+
+                patches.enter_context(patch.object(module, 'command', side_effect=command))
+                try:
+                    runtime.prepare('a' * 32)
+                except AdmissionReached:
+                    self.assertTrue(allowed, 'Admission accepted an unrelated or unclean host failure')
+                except (ValueError, HostCommandError):
+                    self.assertFalse(allowed, 'Admission rejected a clean pool after an owned supervisor failure')
+                else:
+                    self.fail('Admission did not reject the host state or reach capacity validation')
+
     def test_persist_publishes_a_private_receipt_and_replaces_it_without_leftovers(self):
         expected = {'schema': 1, 'generation': 'a'*32,
                     'unit': 'forgejo-worker-playbook-'+'a'*32+'.service',

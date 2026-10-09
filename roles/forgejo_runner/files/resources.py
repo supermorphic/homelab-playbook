@@ -186,8 +186,10 @@ class OwnedRuntime:
         from scripts.forgejo_runner.host_probe import secure_path
         if os.geteuid() != 0 or self.config['state_root'] != '/var/lib/forgejo-runner/' + self.config['name']:
             raise ValueError('Runtime setup requires the canonical trusted slot boundary')
-        if not secure_path(self.state_root) or command(['systemctl', 'is-system-running']).strip() != 'running':
+        if not secure_path(self.state_root):
             raise ValueError('The current slot boundary or host manager is unsafe')
+        from pool import require_manager_health
+        require_manager_health(self.config, execute=command)
         self.assert_empty()
         self.capacity()
         from pool import service_baseline
