@@ -146,6 +146,47 @@ class ForgejoWorkflowTests(unittest.TestCase):
         ):
             self.assertIn(command, runs)
 
+    def test_service_checkout_is_visible_to_the_job_scoped_podman_service(self):
+        fixture = TemporaryGitRepository()
+        self.addCleanup(fixture.cleanup)
+        fixture.initialize_fixture()
+        backup = fixture.write("roles/semaphore/files/backup.sh", "synthetic backup program\n")
+        candidate = fixture.commit_all("Service fixture")
+        job = self.jobs["molecule"]
+        with tempfile.TemporaryDirectory() as directory:
+            shared = Path(directory)
+            for step in job["steps"][2:]:
+                if "mise install --locked" in step.get("run", ""):
+                    break
+                self.assertEqual("${{ github.workspace }}", step["working-directory"])
+                result = subprocess.run(
+                    ["bash", "-e", "-o", "pipefail", "-c", step["run"]],
+                    cwd=fixture.root,
+                    env={
+                        **os.environ,
+                        "GITHUB_WORKSPACE": str(fixture.root),
+                        "FORGEJO_RUNNER_WORKSPACE": str(shared),
+                    },
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
+            configured = job.get("defaults", {}).get("run", {}).get("working-directory")
+            checkout = (
+                fixture.root
+                if configured is None
+                else shared / Path(configured).relative_to("/work/job-workspace")
+            )
+            # The daemon sees the shared bind, not the job's private checkout volume.
+            self.assertTrue(checkout.is_relative_to(shared), "Podman cannot bind this checkout")
+            copied_backup = checkout / backup.relative_to(fixture.root)
+            self.assertEqual(backup.read_bytes(), copied_backup.read_bytes())
+            copied_head = subprocess.check_output(
+                ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True
+            ).strip()
+            self.assertEqual(candidate, copied_head)
+            self.assertEqual(0o700, checkout.stat().st_mode & 0o777)
+
     def test_classifier_retains_skipped_dependency_and_preserves_selected_plan(self):
         step = next(
             step for step in self.jobs["classify"]["steps"]
