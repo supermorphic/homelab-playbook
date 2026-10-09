@@ -148,6 +148,24 @@ class APITests(unittest.TestCase):
         self.assertTrue(any('type=issues' in c[1] for c in self.calls))
         self.assertFalse(any('/issues/2/comments' in c[1] for c in self.calls))
 
+    def test_source_label_inventory_checks_identity_and_complete_pagination(self):
+        next_url='https://forgejo.example.test/api/v1/repos/example/project/labels?limit=50&page=2'
+        client=self.client([(200,{'id':7,'full_name':'example/project'},{}),
+            (200,[{'id':i} for i in range(1,51)],{'Link':f'<{next_url}>; rel="next"'}),
+            (200,[{'id':51}],{})],True)
+        inventory=client.label_inventory(self.mapping)
+        self.assertEqual(list(range(1,52)),[r['id'] for r in inventory.labels])
+        self.assertTrue(inventory.complete)
+        self.assertEqual([],inventory.issues); self.assertEqual({},inventory.comments)
+        self.assertEqual(3,len(self.calls))
+        self.assertTrue(all('/labels' in c[1] for c in self.calls[1:]))
+
+    def test_source_label_inventory_rejects_identity_drift_and_incomplete_pages(self):
+        for responses in ([(200,{'id':8,'full_name':'example/project'}, {})],
+                          [(200,{'id':7,'full_name':'example/project'},{}),(500,{}, {})]):
+            with self.subTest(responses=responses):
+                with self.assertRaises(MirrorError):self.client(responses,True).label_inventory(self.mapping)
+
     def test_repository_comments_keep_issue_parents_and_exclude_pull_requests(self):
         parent='https://api.github.com/repos/example/recovery/issues/'
         next_page='https://api.github.com/repos/example/recovery/issues/comments?per_page=100&page=2'

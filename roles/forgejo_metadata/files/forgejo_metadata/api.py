@@ -125,10 +125,15 @@ class Client:
 
 class SourceAPI(Client):
     source=True
-    def inventory(self,mapping):
+    def preflight(self,mapping):
         repo,_=self.request('GET','')
         if not isinstance(repo,dict): raise APIError('invalid_response')
         if repo.get('id')!=mapping.source_id or repo.get('full_name')!=mapping.source_repo: raise APIError('source_identity')
+    def label_inventory(self,mapping):
+        self.preflight(mapping)
+        return Inventory(labels=self.pages('/labels?limit=50'))
+    def inventory(self,mapping):
+        self.preflight(mapping)
         issues=[r for r in self.pages('/issues?type=issues&state=all&sort=oldest&limit=50') if r.get('pull_request') is None]
         comments={}
         for issue in issues:
