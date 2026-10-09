@@ -2,6 +2,7 @@
 
 import os
 import json
+import re
 from pathlib import Path
 import shlex
 import subprocess
@@ -106,9 +107,7 @@ class ForgejoWorkflowTests(unittest.TestCase):
         self.assertEqual("classify", self.jobs["molecule"]["needs"])
         matrix = self.jobs["molecule"]["strategy"]
         self.assertEqual("false", matrix["fail-fast"])
-        self.assertEqual(
-            "${{ fromJSON(needs.classify.outputs.molecule_matrix) }}", matrix["matrix"]
-        )
+        self.assertIn("needs.classify.outputs.molecule_matrix", matrix["matrix"])
         gate = self.jobs["merge-gate"]
         self.assertEqual("always()", gate["if"])
         self.assertEqual(
@@ -146,6 +145,60 @@ class ForgejoWorkflowTests(unittest.TestCase):
             "mise run test:forgejo-metadata",
         ):
             self.assertIn(command, runs)
+
+    def test_classifier_retains_skipped_dependency_and_preserves_selected_plan(self):
+        step = next(
+            step for step in self.jobs["classify"]["steps"]
+            if step.get("id") == "classify"
+        )
+        line = next(
+            line.strip() for line in step["run"].splitlines()
+            if line.strip().startswith("classify_args=(")
+        )
+        arguments = shlex.split(line.removeprefix("classify_args=(").removesuffix(")"))
+        selected_format = arguments[arguments.index("--format") + 1]
+        for path, depth in (
+            ("docs/example.md", "fast"),
+            ("roles/forgejo_runner/files/controller_launch.py", "ansible"),
+            ("roles/reverse_proxy/tasks/main.yml", "molecule"),
+            (".mise.toml", "full"),
+        ):
+            with self.subTest(depth=depth):
+                fixture = TemporaryGitRepository()
+                self.addCleanup(fixture.cleanup)
+                base = fixture.initialize_fixture()
+                fixture.write(path, "synthetic candidate\n")
+                head = fixture.commit_all("Candidate")
+                args = ["--base", base, "--head", head, "--format", selected_format]
+                result = fixture.run_python(ROOT / "scripts/ci/classify.py", args)
+                self.assertEqual(0, result.returncode, result.stderr)
+                output = dict(line.split("=", 1) for line in result.stdout.splitlines())
+                self.assertEqual(depth, output["depth"])
+                matrix = json.loads(output["molecule_matrix"])
+                plan = json.loads(output["molecule_plan"])
+                self.assertGreater(
+                    len(matrix["include"]), 0,
+                    "Forgejo must retain the merge-gate dependency",
+                )
+                if output["run_molecule"] == "false":
+                    self.assertEqual({"mode": "none", "matrix": {"include": []}}, plan)
+                else:
+                    self.assertEqual(plan["matrix"], matrix)
+                args[-1] = "github"
+                github = fixture.run_python(ROOT / "scripts/ci/classify.py", args)
+                self.assertEqual(0, github.returncode, github.stderr)
+                original = dict(line.split("=", 1) for line in github.stdout.splitlines())
+                self.assertEqual(plan["matrix"], json.loads(original["molecule_matrix"]))
+
+    def test_missing_classifier_output_retains_a_matrix_dependency(self):
+        expression = self.jobs["molecule"]["strategy"]["matrix"]
+        match = re.search(r"\|\|\s*'([^']+)'", expression)
+        self.assertIsNotNone(match, "A failed classifier must retain the dependency")
+        fallback = json.loads(match.group(1))
+        self.assertGreater(len(fallback["include"]), 0)
+        for row in fallback["include"]:
+            self.assertTrue(row["selector"])
+            self.assertTrue(row["platform"])
 
     def test_pr_candidate_must_include_the_current_target(self):
         fixture = TemporaryGitRepository()

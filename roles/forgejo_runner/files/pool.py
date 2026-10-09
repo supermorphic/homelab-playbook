@@ -196,6 +196,27 @@ def peer_allocated_disk(slot, state):
     return min(metadata.st_blocks * 512, slot['limits']['disk_bytes'])
 
 
+def require_manager_health(slot, *, execute):
+    state = execute(['systemctl', 'show', '--property=SystemState', '--value']).strip()
+    if state == 'running':
+        return
+    if state != 'degraded':
+        raise ValueError('The host manager is not ready for admission')
+    raw = execute(['systemctl', 'list-units', '--state=failed', '--plain', '--no-legend', '--no-pager'])
+    if len(raw) > 16384:
+        raise ValueError('Failed-unit observation exceeded its bound')
+    slots = read_registry(slot)
+    owned = {'forgejo-runner-' + candidate['name'] + '.service': candidate for candidate in slots}
+    failed = [line.split()[0] for line in raw.splitlines() if line.strip()]
+    if not failed or len(failed) > len(owned) or any(unit not in owned for unit in failed):
+        raise ValueError('An unrelated host unit failed; admission remains blocked')
+    from verify import observe
+    for unit in failed:
+        observed = observe(owned[unit])
+        if observed['phase'] != 'clean' or not observed['runtime_absent'] or not observed['verified']:
+            raise ValueError('A failed runner supervisor has not completed independent cleanup')
+
+
 def service_baseline(slot):
     # The private registry reserves the exact systemd namespaces of the two
     # disposable workers. Their normal completion must not look like an

@@ -64,7 +64,7 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          classify_args=(--format github --summary "$GITHUB_STEP_SUMMARY")
+          classify_args=(--format forgejo --summary "$GITHUB_STEP_SUMMARY")
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             classify_args+=(
               --base "$PR_BASE_SHA"
@@ -196,7 +196,8 @@ jobs:
     strategy:
       fail-fast: false
       # Forgejo 15 matrix concurrency is bounded by runner-pool admission.
-      matrix: ${{ fromJSON(needs.classify.outputs.molecule_matrix) }}
+      # A failed classifier must also leave a dependency the gate can reconcile.
+      matrix: ${{ fromJSON(needs.classify.outputs.molecule_matrix || '{"include":[{"selector":"unselected","platform":"unselected"}]}') }}
     steps:
       - name: Check out repository
         uses: https://github.com/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

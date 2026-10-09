@@ -391,7 +391,9 @@ def format_text(result: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
-def format_github(result: dict[str, object]) -> str:
+def format_github(
+    result: dict[str, object], *, keep_empty_matrix_job: bool = False
+) -> str:
     output = "\n".join(
         [
             f"depth={result['depth']}",
@@ -404,7 +406,12 @@ def format_github(result: dict[str, object]) -> str:
         ]
     )
     if "molecule_plan" in result:
-        output += "\nmolecule_matrix=" + format_json(result["molecule_plan"]["matrix"])
+        matrix = result["molecule_plan"]["matrix"]
+        if keep_empty_matrix_job and not matrix["include"]:
+            # Forgejo removes zero-row jobs, leaving their dependents blocked.
+            # Retain one job that the workflow's selection condition skips.
+            matrix = {"include": [{"selector": "unselected", "platform": "unselected"}]}
+        output += "\nmolecule_matrix=" + format_json(matrix)
         output += "\nmolecule_plan=" + format_json(result["molecule_plan"])
         output += f"\nbase_sha={result['base_sha'] or ''}"
         output += f"\nhead_sha={result['head_sha'] or ''}"
@@ -419,7 +426,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--head", default="HEAD", metavar="REF")
     parser.add_argument("--include-worktree", action="store_true")
     parser.add_argument("--force-depth", choices=EMITTED_DEPTHS)
-    parser.add_argument("--format", choices=("text", "json", "github"), default="text")
+    parser.add_argument(
+        "--format", choices=("text", "json", "github", "forgejo"), default="text"
+    )
     parser.add_argument("--summary", type=Path, help="append the plan to a job summary")
     return parser
 
@@ -461,6 +470,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "text": format_text,
         "json": format_json,
         "github": format_github,
+        "forgejo": lambda result: format_github(result, keep_empty_matrix_job=True),
     }[arguments.format]
     print(formatter(result))
     return 0

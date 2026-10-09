@@ -42,7 +42,7 @@ done < <(
 
 if ((${#tracked_workflows[@]} > 0)); then
   actionlint
-  uv run --frozen --no-sync zizmor .github/workflows
+  uv run --frozen --no-sync zizmor --offline .github/workflows
 fi
 
 forgejo_workflows=()
@@ -60,5 +60,5 @@ if ((${#forgejo_workflows[@]} > 0)); then
   actionlint -config-file .forgejo/actionlint.yaml \
     -ignore '^specifying action "https://github\.com/actions/checkout@[0-9a-f]{40}" in invalid format' \
     "${forgejo_workflows[@]}"
-  uv run --frozen --no-sync zizmor "${forgejo_workflows[@]}"
+  uv run --frozen --no-sync zizmor --offline "${forgejo_workflows[@]}"
 fi
