@@ -193,6 +193,9 @@ jobs:
     if: needs.classify.outputs.run_molecule == 'true'
     runs-on: homelab-podman-amd64
     timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: /work/job-workspace/source
     strategy:
       fail-fast: false
       # Forgejo 15 matrix concurrency is bounded by runner-pool admission.
@@ -206,6 +209,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Verify candidate revision
+        working-directory: ${{ github.workspace }}
         env:
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           EVENT_NAME: ${{ github.event_name }}
@@ -216,6 +220,13 @@ jobs:
             test "$(git rev-parse refs/remotes/origin/main)" = "$PR_BASE_SHA"
             git merge-base --is-ancestor "$PR_BASE_SHA" "$CANDIDATE_SHA"
           fi
+      - name: Prepare checkout for the job-scoped Podman service
+        working-directory: ${{ github.workspace }}
+        run: |
+          shared_checkout="${FORGEJO_RUNNER_WORKSPACE:?}/source"
+          mkdir -m 700 -- "$shared_checkout"
+          cp -a -- "$GITHUB_WORKSPACE/." "$shared_checkout/"
+          chmod 700 "$shared_checkout"
       - name: Install locked tools
         run: |
           mise trust --yes
