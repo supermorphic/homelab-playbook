@@ -33,8 +33,8 @@ semaphore_controller_identity_enabled: false
 # Provisioning checks these IDs for conflicts before creating the account.
 forgejo_metadata_uid: 2003
 forgejo_metadata_gid: 2003
-# Keep scheduling paused until expanded enrollment and live acceptance (Spec 012).
-forgejo_metadata_timer_enabled: false
+# Run the enrolled mirrors nightly after attended initialization (Spec 012).
+forgejo_metadata_timer_enabled: true
 
 # github_metadata_write: owner supermorphic; expiration none.
 # Required selected GitHub repositories: supermorphic/homelab-playbook,
