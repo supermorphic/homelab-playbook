@@ -68,6 +68,10 @@ Preserve important decisions and authorization history.
 - Never commit or push directly to `main`. Use an issue-backed feature branch.
   A runtime-managed worktree may operate at detached `HEAD`; preserve useful
   work on an appropriate branch before publication or worktree removal.
+- Publish PR branches to a fork and target the canonical repository. Keep
+  `origin` pointed at the canonical repository and use a separate `fork` remote
+  for publication. Forgejo gives fork-based `pull_request` jobs read-only
+  repository tokens; same-repository PR jobs receive write tokens.
 - Never merge or enable auto-merge without explicit operator authorization for
   that specific action. General or stale approval does not count.
 - Use an isolated task worktree unless the operator explicitly authorizes work
@@ -77,8 +81,8 @@ Preserve important decisions and authorization history.
   and stop when the current Git or worktree state is inconsistent or unsafe.
 - Keep each commit limited to one coherent change. Split changes that can be
   reviewed or reverted independently.
-- Before each push, fetch `origin` and inspect `origin/main` and the remote
-  feature branch when it exists. Stop on unexpected remote commits. Rebase only
+- Before each push, fetch `origin` and the destination remote, then inspect
+  `origin/main` and the destination feature branch when it exists. Stop on unexpected remote commits. Rebase only
   a clean worktree, rerun required validation, and use `--force-with-lease` only
   when a reviewed rebase requires it.
 - Do not use `git reset --hard`, `git clean -fd`, repository-wide
@@ -93,7 +97,8 @@ Preserve important decisions and authorization history.
   pull requests, reviews, comments, labels, and other forge metadata.
 - Do not manipulate Forgejo's database or invoke its server-side CLI directly.
 - Use the Forgejo REST API only when `teacli` does not expose the
-  required operation. Use configured client credentials within the task's
+  required operation. Use the authenticated Forgejo UI only when neither the
+  client nor the REST API supports the required operation. Use configured client credentials within the task's
   authorization; do not expose secrets or broaden access.
 - Proceed autonomously with safe, agent-owned work allowed by repository policy.
   Complete independent safe work before stopping for required operator action.

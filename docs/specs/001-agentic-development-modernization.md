@@ -562,12 +562,33 @@ the candidate. This uses an up-to-date PR head instead of GitHub's synthetic
 merge checkout. Forgejo must require the branch to remain up to date through
 merge; checkout-time checks cannot prevent the target advancing afterward.
 
+Ordinary PR validation uses branches from a fork, following the publication
+policy in [AGENTS.md](../../AGENTS.md). Forgejo makes the automatic job token
+read-only for fork PRs. Same-repository PRs, manual runs and scheduled runs
+receive repository write tokens; the YAML `permissions` declaration does not
+restrict them. Run manual validation only on reviewed, trusted refs; scheduled
+validation uses the default branch. These events retain write tokens and receive
+no production credentials. Read-only tokens for them require separate
+server-side support.
+
+For a named fork under the same owner, the current REST PR-creation API cannot
+select the fork repository: its head selector identifies only an owner and
+branch. Open the authenticated web comparison with an explicit source
+repository, then create the PR:
+
+```text
+<forgejo-url>/<owner>/<canonical-repo>/compare/main...<fork-owner>/<fork-repo>:<issue-branch>
+```
+
+Confirm the resulting PR names the fork as its head repository and the canonical
+repository as its base. Use `teacli` for subsequent metadata operations.
+
 Worker-pool admission owns the concurrency bound. Forgejo does not enforce
 GitHub's matrix `max-parallel` setting; expanding the pool requires reviewing
 aggregate capacity for these jobs.
 
-GitHub CI is no longer operational. Its YAML remains a configuration baseline;
-local Mise validation remains the operational reference until the Forgejo
+GitHub CI is no longer operational. Its YAML is retained as an unmaintained
+fallback reference; local Mise validation remains the operational reference until the Forgejo
 workflow passes live acceptance after issue #57. Required-check activation and
 repository settings changes need separate operator authorization. Offline
 workflow checks do not establish live runner or merge-protection acceptance.
