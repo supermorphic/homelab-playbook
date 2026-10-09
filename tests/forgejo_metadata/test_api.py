@@ -1,6 +1,9 @@
 import importlib
 import json
+import socket
 import unittest
+from unittest.mock import MagicMock, patch
+from urllib.error import URLError
 from support import CONFIG
 from forgejo_metadata.model import load_config, MirrorError
 
@@ -23,6 +26,49 @@ class APITests(unittest.TestCase):
                                    (self.client([]),'POST','/git/refs')]:
             with self.assertRaises(MirrorError): client.request(method,path)
         self.assertEqual([],self.calls)
+
+    def test_temporary_dns_failure_retries_before_request_is_sent(self):
+        for method,path,payload in [('GET','/issues',None),('POST','/issues',{'title':'Example'}),
+                                    ('PATCH','/issues/1',{'state':'closed'})]:
+            with self.subTest(method=method):
+                response=MagicMock(); response.status=200; response.headers={}; response.read.return_value=b'{}'
+                response.__enter__.return_value=response
+                opener=MagicMock()
+                failure=URLError(socket.gaierror(socket.EAI_AGAIN,'synthetic resolver failure'))
+                opener.open.side_effect=[failure,failure,response]
+                waits=[]
+                with patch.object(self.api,'build_opener',return_value=opener):
+                    client=self.api.DestinationAPI(self.mapping,'synthetic-token',sleep=waits.append,clock=lambda:0)
+                self.assertEqual({},client.request(method,path,payload)[0])
+                self.assertEqual(3,opener.open.call_count)
+                self.assertEqual([1,2],[delay for delay in waits if delay])
+                self.assertEqual([method]*3,[call.args[0].method for call in opener.open.call_args_list])
+
+    def test_temporary_dns_retries_are_bounded_and_prove_non_creation(self):
+        opener=MagicMock()
+        opener.open.side_effect=URLError(socket.gaierror(socket.EAI_AGAIN,'never-print-dns-details'))
+        waits=[]
+        with patch.object(self.api,'build_opener',return_value=opener):
+            client=self.api.DestinationAPI(self.mapping,'synthetic-token',sleep=waits.append,clock=lambda:0)
+        with self.assertRaises(self.api.APIError) as raised:
+            client.request('POST','/issues',{'title':'Example'})
+        self.assertEqual(3,opener.open.call_count)
+        self.assertEqual([1,2],[delay for delay in waits if delay])
+        self.assertEqual('not_created',raised.exception.outcome)
+        self.assertEqual('transport_failure',str(raised.exception))
+
+    def test_other_transport_failures_do_not_replay_requests(self):
+        for failure in (URLError(TimeoutError()),URLError(ConnectionResetError()),
+                        URLError(socket.gaierror(socket.EAI_NONAME,'synthetic permanent DNS failure')),
+                        TimeoutError()):
+            with self.subTest(failure=type(failure).__name__):
+                opener=MagicMock(); opener.open.side_effect=failure
+                with patch.object(self.api,'build_opener',return_value=opener):
+                    client=self.api.DestinationAPI(self.mapping,'synthetic-token',sleep=lambda _:None)
+                with self.assertRaises(self.api.APIError) as raised:
+                    client.request('POST','/issues',{'title':'Example'})
+                self.assertEqual(1,opener.open.call_count)
+                self.assertEqual('unknown',raised.exception.outcome)
 
     def test_foreign_pagination_and_cycle_fail_closed(self):
         for next_url in ('https://evil.example/repos/example/recovery/issues',
