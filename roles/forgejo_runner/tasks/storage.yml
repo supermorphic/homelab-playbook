@@ -13,6 +13,7 @@
       - e2fsprogs
       - libcap2-bin
       - ca-certificates
+      - git
     state: present
 
 - name: Create immutable public helper directories
