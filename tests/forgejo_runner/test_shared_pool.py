@@ -97,8 +97,8 @@ class SharedPoolTests(unittest.TestCase):
         def request(path, *, method='GET', payload=None):
             with api_lock:
                 if path.endswith('/jobs?labels=homelab-podman-amd64'):
-                    return [{'handle': 'job-one', 'owner_id': 1, 'repo_id': 902},
-                            {'handle': 'job-two', 'owner_id': 1, 'repo_id': 902}]
+                    return [{'id': 2, 'status': 'waiting', 'handle': 'job-two', 'owner_id': 1, 'repo_id': 902},
+                            {'id': 1, 'status': 'waiting', 'handle': 'job-one', 'owner_id': 1, 'repo_id': 902}]
                 if '/actions/runners' not in path:
                     return {'id': 1, 'login': 'supermorphic'}
                 if method == 'POST':
@@ -118,7 +118,8 @@ class SharedPoolTests(unittest.TestCase):
             def __init__(self, selected, installation, assets, manifest, handle, checkpoint):
                 super().__init__([])
                 self.handle, self.selected = handle, selected
-            def run(self, registration):
+            def run(self, registration, *, registration_present):
+                assert registration_present()
                 executed.append((self.handle, registration.scope))
                 first_running.set()
                 both_running.wait(timeout=5)

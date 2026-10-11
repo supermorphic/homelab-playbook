@@ -134,8 +134,8 @@ class RuntimeAclTests(unittest.TestCase):
         with patch.object(module, 'command'), patch.object(module, 'start_gateway'), \
                 patch.object(runtime, 'persist'), patch.object(runtime, 'allocation', return_value={}), \
                 patch.object(module, 'read_worker_result', side_effect=readiness), \
-                patch.object(runtime, 'run_controller', side_effect=lambda *_: events.append('controller')):
-            runtime.run(SimpleNamespace(uuid='synthetic', token='synthetic'))
+                patch.object(runtime, 'run_controller', side_effect=lambda *_, **kw: events.append('controller')):
+            runtime.run(SimpleNamespace(uuid='synthetic', token='synthetic'), registration_present=lambda: True)
         self.assertEqual(['verified', 'controller'], events)
 
     def test_deployed_storage_reads_acl_from_pinned_directory_and_fails_closed(self):

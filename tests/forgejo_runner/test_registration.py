@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 import unittest
 import hashlib
+import itertools
 from unittest.mock import patch
 
 
@@ -47,14 +48,42 @@ class RegistrationTests(unittest.TestCase):
     generation = 'a' * 32
 
     def test_pending_selection_skips_the_other_workers_reserved_job(self):
-        rows = [{'handle': 'first-job', 'owner_id': 7, 'repo_id': 18},
-                {'handle': 'second-job', 'owner_id': 7, 'repo_id': 18}]
+        rows = [{'id': 2, 'status': 'waiting', 'handle': 'second-job', 'owner_id': 7, 'repo_id': 18},
+                {'id': 1, 'status': 'waiting', 'handle': 'first-job', 'owner_id': 7, 'repo_id': 18}]
         client = module.RegistrationClient('https://forge.example', 'user:example',
             'synthetic', request=lambda path, **kw: {'id': 7, 'login': 'example'} if path == '/user' else rows)
         first = hashlib.sha256(b'first-job').hexdigest()
         self.assertEqual('second-job', client.pending_job('homelab-podman-amd64', excluded={first}))
         second = hashlib.sha256(b'second-job').hexdigest()
         self.assertIsNone(client.pending_job('homelab-podman-amd64', excluded={first, second}))
+
+    def test_oldest_waiting_job_wins_across_repositories_regardless_of_api_order(self):
+        rows = [{'id': 91, 'status': 'waiting', 'handle': 'new-pr', 'owner_id': 7, 'repo_id': 18},
+                {'id': 42, 'status': 'waiting', 'handle': 'old-pr', 'owner_id': 7, 'repo_id': 19},
+                {'id': 12, 'status': 'running', 'handle': 'running-job', 'owner_id': 7, 'repo_id': 18}]
+        for order in itertools.permutations(rows):
+            client = module.RegistrationClient('https://forge.example', 'user:example', 'synthetic',
+                request=lambda path, **kw: {'id': 7, 'login': 'example'} if path == '/user' else list(order))
+            with self.subTest(order=[row['id'] for row in order]):
+                self.assertEqual('old-pr', client.pending_job('homelab-podman-amd64'))
+
+    def test_running_jobs_do_not_allocate_another_worker(self):
+        rows = [{'id': 12, 'status': 'running', 'handle': 'running-job', 'owner_id': 7, 'repo_id': 18}]
+        client = module.RegistrationClient('https://forge.example', 'user:example', 'synthetic',
+            request=lambda path, **kw: {'id': 7, 'login': 'example'} if path == '/user' else rows)
+        self.assertIsNone(client.pending_job('homelab-podman-amd64'))
+
+    def test_missing_or_invalid_queue_order_fields_block_admission(self):
+        valid = {'id': 42, 'status': 'waiting', 'handle': 'job', 'owner_id': 7, 'repo_id': 18}
+        for field, values in (('id', (None, True, 0, -1, '42')), ('status', (None, '', 'blocked', 'success'))):
+            for value in values:
+                row = {**valid, field: value}
+                if value is None:
+                    del row[field]
+                client = module.RegistrationClient('https://forge.example', 'user:example', 'synthetic',
+                    request=lambda path, **kw: {'id': 7, 'login': 'example'} if path == '/user' else [row])
+                with self.subTest(field=field, value=value), self.assertRaises(module.RegistrationUncertain):
+                    client.pending_job('homelab-podman-amd64')
 
     def setUp(self):
         self.server = Server()
@@ -148,7 +177,7 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(2, len(calls))
 
     def test_future_repository_is_served_without_changing_the_owner_scope(self):
-        rows = [{'handle': 'new-repo-job', 'repo_id': 902, 'owner_id': 7}]
+        rows = [{'id': 42, 'status': 'waiting', 'handle': 'new-repo-job', 'repo_id': 902, 'owner_id': 7}]
         client = module.RegistrationClient('https://forge.example', 'user:example', 'synthetic',
             request=lambda path, **kw: {'id': 7, 'login': 'example'} if path == '/user' else rows)
         self.assertEqual('new-repo-job', client.pending_job('homelab-podman-amd64'))
@@ -161,8 +190,8 @@ class RegistrationTests(unittest.TestCase):
 
     def test_malformed_queue_response_is_rejected_before_admission(self):
         for rows in ({'error': 'unavailable'}, 'unavailable', [None],
-                     [{'handle': 'job', 'owner_id': True, 'repo_id': 7}],
-                     [{'handle': 'job', 'owner_id': 7, 'repo_id': 0}]):
+                     [{'id': 42, 'status': 'waiting', 'handle': 'job', 'owner_id': True, 'repo_id': 7}],
+                     [{'id': 42, 'status': 'waiting', 'handle': 'job', 'owner_id': 7, 'repo_id': 0}]):
             client = module.RegistrationClient('https://forge.example', 'user:example', 'synthetic',
                 request=lambda path, **kw: {'id': 7, 'login': 'example'} if path == '/user' else rows)
             with self.subTest(rows=rows), self.assertRaises(module.RegistrationUncertain):
@@ -170,7 +199,8 @@ class RegistrationTests(unittest.TestCase):
 
     def test_foreign_owner_jobs_and_wrong_authenticated_user_are_denied(self):
         for identity, rows in (({'id': 7, 'login': 'other'}, []),
-                               ({'id': 7, 'login': 'example'}, [{'handle': 'job', 'repo_id': 902, 'owner_id': 8}])):
+                               ({'id': 7, 'login': 'example'},
+                                [{'id': 42, 'status': 'waiting', 'handle': 'job', 'repo_id': 902, 'owner_id': 8}])):
             client = module.RegistrationClient('https://forge.example', 'user:example', 'synthetic',
                 request=lambda path, **kw: identity if path == '/user' else rows)
             with self.subTest(identity=identity), self.assertRaises(module.RegistrationUncertain):

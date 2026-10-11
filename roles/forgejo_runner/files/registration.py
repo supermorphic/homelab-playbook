@@ -105,15 +105,19 @@ class RegistrationClient:
             raise RegistrationUncertain('Pending-job lookup is invalid or exceeds its bound')
         if not rows:
             return None
-        if any(not isinstance(row, dict) or type(row.get('owner_id')) is not int
+        if any(not isinstance(row, dict) or type(row.get('id')) is not int or row['id'] <= 0
+               or row.get('status') not in ('waiting', 'running') or type(row.get('owner_id')) is not int
                or row['owner_id'] != owner_id or type(row.get('repo_id')) is not int
                or row['repo_id'] <= 0 or not isinstance(row.get('handle'), str)
                or not 1 <= len(row['handle']) <= 4096
                or any(ord(character) < 32 or ord(character) == 127 for character in row['handle'])
                for row in rows):
             raise RegistrationUncertain('Pending-job lookup lacks a usable handle')
-        return next((row['handle'] for row in rows
-                     if hashlib.sha256(row['handle'].encode()).hexdigest() not in excluded), None)
+        # Forgejo's listing is newest first and includes running jobs. Choose
+        # waiting jobs by stable ID so newer submissions cannot overtake them.
+        return next((row['handle'] for row in sorted(rows, key=lambda row: row['id'])
+                     if row['status'] == 'waiting'
+                     and hashlib.sha256(row['handle'].encode()).hexdigest() not in excluded), None)
 
     def lookup(self, scope, slot, generation):
         name = self.identity(scope, slot, generation)

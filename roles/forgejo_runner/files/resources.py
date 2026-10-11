@@ -14,6 +14,38 @@ from scripts.forgejo_runner.host_worker import worker_files, worker_cleanup_erro
 from scripts.forgejo_runner.host_egress import observe_configuration, dns_forward, start_gateway
 
 
+def wait_controller(child, payload, *, job_seconds, registration_present, poll_seconds=15):
+    from registration import RegistrationUncertain
+
+    deadline = time.monotonic() + job_seconds
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired('owned controller', job_seconds)
+            try:
+                child.communicate(payload, timeout=min(poll_seconds, remaining))
+                return
+            except subprocess.TimeoutExpired:
+                # communicate retains pending input when retried without input.
+                payload = None
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired('owned controller', job_seconds)
+            try:
+                present = registration_present()
+            except RegistrationUncertain:
+                # An API outage is not evidence of revocation. The original
+                # deadline and systemd runtime limit still bound execution.
+                continue
+            if present is not True:
+                raise RuntimeError('Owned ephemeral registration is no longer present')
+    except BaseException:
+        # Lifecycle teardown disposes the complete owned process tree next.
+        child.kill()
+        child.wait(timeout=5)
+        raise
+
+
 def unit_properties(config, image, helper_binds):
     limits = config['limits']
     return [
@@ -327,7 +359,7 @@ class OwnedRuntime:
                 'gid': metadata.st_gid, 'mode': metadata.st_mode, 'nlink': metadata.st_nlink,
                 'invocation': invocation or self.unit.invocation}
 
-    def run(self, registration):
+    def run(self, registration, *, registration_present):
         properties = unit_properties(self.config, self.root / 'worker.ext4', self.helper_binds)
         argv = ['systemd-run', '--quiet', '--unit=' + self.unit.name]
         argv += ['--property=' + setting for setting in properties]
@@ -364,9 +396,9 @@ class OwnedRuntime:
                    'controller_uid': self.config['controller']['uid'], 'controller_gid': self.config['controller']['gid'],
                    'job_seconds': self.config['limits']['job_seconds'],
                    'uuid': registration.uuid, 'token': registration.token, 'handle': self.handle}
-        self.run_controller(observed, request)
+        self.run_controller(observed, request, registration_present=registration_present)
 
-    def run_controller(self, observed, request):
+    def run_controller(self, observed, request, *, registration_present):
         # Pin every namespace and the image root before creating the controller.
         process = os.open('/proc/' + observed['MainPID'], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         descriptors = {}
@@ -396,13 +428,9 @@ class OwnedRuntime:
             child = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 pass_fds=tuple(descriptors.values()), preexec_fn=attach,
                 env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'})
-            try:
-                child.communicate(json.dumps(request).encode(), timeout=self.config['limits']['job_seconds'])
-            except BaseException:
-                # Outer teardown also terminates the entire bounded process tree.
-                child.kill()
-                child.wait(timeout=5)
-                raise
+            wait_controller(child, json.dumps(request).encode(),
+                            job_seconds=self.config['limits']['job_seconds'],
+                            registration_present=registration_present)
             if child.returncode:
                 raise RuntimeError('One-job controller did not complete')
         finally:

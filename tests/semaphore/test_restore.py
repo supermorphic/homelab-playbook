@@ -468,6 +468,35 @@ class RecordingRunner:
 
 
 class RestoreOrchestrationTests(RestorePlanTests):
+    def test_restore_waits_for_tcp_after_temporary_socket_server_is_ready(self) -> None:
+        runner = RecordingRunner(self.restore, b"custom archive")
+        original = runner.run
+        tcp_ready = False
+
+        def initializing_database(command, **kwargs):
+            if "pg_isready" in command:
+                host = next((command[index + 1] for index, argument in enumerate(command)
+                             if argument in ("--host", "-h")), None)
+                # The image's initialization server accepts socket connections
+                # before the final server opens its TCP listener.
+                ready = host is None or tcp_ready
+                return mock.Mock(returncode=0 if ready else 1, stdout="", stderr="")
+            if any("pg_restore --exit-on-error" in argument for argument in command):
+                if not tcp_ready:
+                    raise self.restore.CommandError("pg_restore: TCP connection refused")
+            return original(command, **kwargs)
+
+        def finish_initialization(_seconds):
+            nonlocal tcp_ready
+            tcp_ready = True
+
+        runner.run = initializing_database
+        options = self.options()
+        with mock.patch.object(self.restore.time, "sleep", side_effect=finish_initialization):
+            self.restore.RestoreExperiment(options, runner).run()
+
+        self.assertFalse(options.destination.exists())
+
     def test_success_waits_for_buffered_task_output(self) -> None:
         runner = RecordingRunner(self.restore, b"custom archive")
         response = runner.curl_response

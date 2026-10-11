@@ -262,7 +262,10 @@ def run_slot(config, resources, enrollment, store, *, recovery_only=False, gener
         store.write(state)
         state['phase'] = 'running'
         store.write(state)
-        resources.run(registration)
+        def registration_present():
+            found = enrollment.lookup(config['scope'], config['name'], generation)
+            return found is not None and found.id == registration.id
+        resources.run(registration, registration_present=registration_present)
     except BaseException as error:
         state['primary_error'] = error_type(error)
     return cleanup_generation(config, resources, enrollment, store, state)

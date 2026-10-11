@@ -165,6 +165,26 @@ sudo baseline to make this work.
 
 ## Job lifecycle and cleanup
 
+Before allocating a worker, the shared pool selects the waiting job with the
+lowest job ID from its owner-scoped queue. Running jobs and jobs already reserved
+by another worker are excluded. This orders work by job creation across all
+repositories served by the pool; it does not serialize whole PRs or claim FIFO
+by the time dependencies became ready. Forgejo still enforces job dependencies
+and workflow concurrency. New submissions must not overtake older waiting jobs.
+
+Run routine full manual validation when PR work is quiet. Keep superseded-run
+cancellation scoped to the same PR so an update does not cancel another PR's
+checks. Repository-specific priority and fair-sharing rules remain deferred until
+observed contention justifies them.
+
+For activity across repositories, use the pool owner's **Settings > Actions >
+Runners** page and open a runner to see its current task. Ephemeral registrations
+disappear after a task; this page does not prove that host cleanup has completed.
+Use the runner playbook's `verify` action for host state. Repository Actions job
+pages show execution duration and attempt start time. Compare those with the run's
+creation time when investigating delays, but identify the difference as combined
+dependency and queue waiting: the owner queue API supplies no ready timestamp.
+
 Use upstream ephemeral registration and `forgejo-runner one-job`. The trusted
 supervisor owns the following sequence; workflow code cannot authorize reuse:
 

@@ -24,6 +24,33 @@ class ForgejoWorkflowTests(unittest.TestCase):
         self.workflow = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)
         self.jobs = self.workflow["jobs"]
 
+    def test_validation_timings_reach_logs_without_changing_failed_exit_status(self):
+        names = {
+            "Run pull request fast validation",
+            "Run full-history fast validation",
+            "Run offline Ansible validation",
+        }
+        steps = [step for name in ("fast", "ansible")
+                 for step in self.jobs[name]["steps"] if step.get("name") in names]
+        self.assertEqual(3, len(steps))
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary"
+            for step in steps:
+                for status in (0, 7):
+                    summary.write_text("")
+                    with self.subTest(step=step["name"], status=status):
+                        result = subprocess.run(
+                            ["bash", "-e", "-o", "pipefail", "-c",
+                             'mise() { return "$FIXTURE_STATUS"; }\n' + step["run"]],
+                            env={**os.environ, "FIXTURE_STATUS": str(status),
+                                 "GITHUB_STEP_SUMMARY": str(summary)},
+                            capture_output=True, text=True,
+                        )
+                        self.assertEqual(status, result.returncode, result.stderr)
+                        self.assertIn("Validation duration:", result.stdout)
+                        self.assertIn("Command:", result.stdout)
+                        self.assertEqual(summary.read_text(), result.stdout)
+
     def test_pr_manual_and_scheduled_validation_use_the_shared_pool(self):
         events = self.workflow["on"]
         self.assertEqual(["main"], events["pull_request"]["branches"])

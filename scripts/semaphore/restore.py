@@ -355,6 +355,7 @@ class RestoreExperiment:
         for _ in range(60):
             result = self._podman(
                 "exec", self.database, "pg_isready", "--quiet",
+                "--host", "127.0.0.1",
                 "--username", self.settings["POSTGRES_USER"],
                 "--dbname", self.settings["POSTGRES_DB"], check=False,
             )

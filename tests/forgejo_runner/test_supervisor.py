@@ -31,8 +31,10 @@ class Backend:
         self.present = True
         return self.identity
 
-    def run(self, registration):
+    def run(self, registration, *, registration_present):
         self.events.append('job')
+        if not registration_present():
+            raise RuntimeError('Synthetic registration was removed')
         if self.fail_job:
             raise TimeoutError('synthetic private diagnostic')
 
@@ -114,6 +116,19 @@ class SupervisorTests(unittest.TestCase):
             self.assertEqual('TimeoutError', state['primary_error'])
             self.assertEqual([], state['cleanup_errors'])
         self.backend.fail_job = False
+        self.assertEqual(0, self.run_cycle())
+
+    def test_removed_registration_disposes_runtime_before_reuse(self):
+        original_run = self.backend.run
+        def revoked(registration, *, registration_present):
+            self.enrollment.present = None
+            original_run(registration, registration_present=registration_present)
+        self.backend.run = revoked
+        self.assertEqual(1, self.run_cycle())
+        self.assertFalse(self.backend.present)
+        with self.store as store:
+            self.assertEqual('clean', store.read()['phase'])
+        self.backend.run = original_run
         self.assertEqual(0, self.run_cycle())
 
     def test_failed_cleanup_quarantines_and_blocks_next_registration(self):
