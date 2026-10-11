@@ -34,6 +34,45 @@ def load_fixture():
 
 
 class FixtureContractTests(unittest.TestCase):
+    def test_source_fixture_waits_for_final_postgres_before_starting_application(self) -> None:
+        fixture = load_fixture()
+        run = fixture.Fixture("semaphore-20260910T031500Z-Ab12", Path("unused"))
+        tcp_ready = False
+        application_database_ready = False
+
+        def container_command(argv, **_kwargs):
+            nonlocal application_database_ready
+            code = 0
+            if "pg_isready" in argv:
+                host = next((argv[index + 1] for index, argument in enumerate(argv)
+                             if argument in ("--host", "-h")), None)
+                ready = host is None or (host == "127.0.0.1" and tcp_ready)
+                code = 0 if ready else 1
+            elif argv[:2] == ["podman", "run"] and "--name" in argv:
+                if argv[argv.index("--name") + 1] == run.application:
+                    # A detached application launched before its database is
+                    # initialized exits and never becomes healthy.
+                    application_database_ready = tcp_ready
+            if "http://source-semaphore:3000/api/ping" in argv:
+                code = 0 if application_database_ready else 1
+            return fixture.subprocess.CompletedProcess(argv, code, "", "")
+
+        def finish_initialization(_seconds):
+            nonlocal tcp_ready
+            tcp_ready = True
+
+        with tempfile.TemporaryDirectory() as directory:
+            run.root = Path(directory)
+            with (
+                mock.patch.object(fixture.subprocess, "run", side_effect=container_command),
+                mock.patch.object(fixture.time, "sleep", side_effect=finish_initialization),
+            ):
+                try:
+                    run._create_source()
+                except fixture.FixtureFailure as error:
+                    self.fail(str(error))
+        self.assertIn(("container", run.application), run.created)
+
     def test_http_client_reuses_application_network_namespace(self) -> None:
         fixture = load_fixture()
         run = fixture.Fixture("semaphore-20260910T031500Z-Ab12", Path("unused"))

@@ -716,6 +716,8 @@ def _compatibility() -> int:
                     "exec",
                     postgres_name,
                     "pg_isready",
+                    "--host",
+                    "127.0.0.1",
                     "--username",
                     "semaphore",
                     "--dbname",

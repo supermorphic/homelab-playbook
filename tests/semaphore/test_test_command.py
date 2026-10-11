@@ -23,6 +23,45 @@ def load_runner():
 
 
 class SemaphoreTestCommandTests(unittest.TestCase):
+    def test_compatibility_waits_for_final_postgres_before_querying_version(self) -> None:
+        runner = load_runner()
+        tcp_ready = False
+
+        def container_command(argv, **_kwargs):
+            code, stdout = 0, ""
+            if argv[:2] == ["podman", "info"]:
+                stdout = "true x86_64"
+            elif any("uname -m" in argument for argument in argv):
+                stdout = "x86_64"
+            elif "pg_isready" in argv:
+                # The initialization server accepts sockets before the final
+                # server opens TCP and the initialized database is stable.
+                host = next((argv[index + 1] for index, argument in enumerate(argv)
+                             if argument in ("--host", "-h")), None)
+                ready = host is None or (host == "127.0.0.1" and tcp_ready)
+                code = 0 if ready else 1
+            elif "SHOW server_version;" in argv:
+                code, stdout = (0, "17.11") if tcp_ready else (1, "")
+            elif "--version" in argv and any(
+                argument in ("pg_dump", "pg_restore") for argument in argv
+            ):
+                stdout = "PostgreSQL) 17.11"
+            return subprocess.CompletedProcess(argv, code, stdout, "")
+
+        def finish_initialization(_seconds):
+            nonlocal tcp_ready
+            tcp_ready = True
+
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory) / "evidence.md"
+            with (
+                mock.patch.object(runner.subprocess, "run", side_effect=container_command),
+                mock.patch.object(runner.time, "sleep", side_effect=finish_initialization),
+                mock.patch.object(runner, "EVIDENCE", evidence),
+            ):
+                self.assertEqual(0, runner._compatibility())
+            self.assertIn("Overall experiment: passed", evidence.read_text())
+
     def test_unknown_mode_fails_argument_validation(self) -> None:
         result = subprocess.run(
             [sys.executable, str(RUNNER), "unknown"],

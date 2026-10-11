@@ -232,7 +232,7 @@ class Fixture:
                     "--env-file", str(self.root / "postgres.env"), "-v", f"{self.volume}:/var/lib/postgresql/data:rw",
                     self.restore.POSTGRES_IMAGE)
         for _ in range(60):
-            if self.podman("exec", self.database, "pg_isready", "-q", "-U", "semaphore", check=False).returncode == 0:
+            if self.podman("exec", self.database, "pg_isready", "--host", "127.0.0.1", "-q", "-U", "semaphore", check=False).returncode == 0:
                 break
             time.sleep(1)
         else:
