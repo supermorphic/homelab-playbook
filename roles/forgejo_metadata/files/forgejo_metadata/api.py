@@ -1,6 +1,7 @@
 """Bounded HTTPS API access with read-only source and metadata-only destination."""
 import json
 import re
+import socket
 import ssl
 import time
 from urllib.parse import urlencode, urlsplit, quote, unquote
@@ -32,12 +33,20 @@ class Client:
         def https(method,url,headers,payload):
             data=None if payload is None else json.dumps(payload).encode()
             req=Request(url,data=data,headers=headers,method=method)
-            try:
-                with opener.open(req,timeout=20) as response:
-                    return response.status,response.read(MAX_RESPONSE+1),dict(response.headers)
-            except HTTPError as error:
-                return error.code,error.read(MAX_RESPONSE+1),dict(error.headers)
-            except (URLError,OSError,TimeoutError): raise APIError('transport_failure') from None
+            for attempt in range(3):
+                try:
+                    with opener.open(req,timeout=20) as response:
+                        return response.status,response.read(MAX_RESPONSE+1),dict(response.headers)
+                except HTTPError as error:
+                    return error.code,error.read(MAX_RESPONSE+1),dict(error.headers)
+                except URLError as error:
+                    if isinstance(error.reason,socket.gaierror) and error.reason.errno==socket.EAI_AGAIN:
+                        # DNS failed before any HTTP request could reach the peer.
+                        if attempt==2: raise APIError('transport_failure','not_created') from None
+                        self.sleep(attempt+1)
+                        continue
+                    raise APIError('transport_failure') from None
+                except (OSError,TimeoutError): raise APIError('transport_failure') from None
         self.transport=transport or https
 
     def request(self,method,path,payload=None):
@@ -116,10 +125,15 @@ class Client:
 
 class SourceAPI(Client):
     source=True
-    def inventory(self,mapping):
+    def preflight(self,mapping):
         repo,_=self.request('GET','')
         if not isinstance(repo,dict): raise APIError('invalid_response')
         if repo.get('id')!=mapping.source_id or repo.get('full_name')!=mapping.source_repo: raise APIError('source_identity')
+    def label_inventory(self,mapping):
+        self.preflight(mapping)
+        return Inventory(labels=self.pages('/labels?limit=50'))
+    def inventory(self,mapping):
+        self.preflight(mapping)
         issues=[r for r in self.pages('/issues?type=issues&state=all&sort=oldest&limit=50') if r.get('pull_request') is None]
         comments={}
         for issue in issues:

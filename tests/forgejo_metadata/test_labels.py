@@ -41,6 +41,11 @@ class LabelAdoptionTests(unittest.TestCase):
         self.assertEqual('forgejo-mirror:v=1;src=fixture;repo=7;kind=label;id=42 Defect',row['projection']['description'])
         self.assertEqual(before,self.store.path.read_bytes()); self.assertEqual([],self.destination.writes)
 
+    def test_label_plan_does_not_read_source_issue_history(self):
+        def forbidden(mapping):self.fail('Label planning read source issue history')
+        self.source.inventory=forbidden
+        self.assertEqual('ready',self.plan()['mappings'][0]['labels'][0]['status'])
+
     def test_adoption_reuses_label_and_preserves_historical_assignments(self):
         self.destination.data.issues.append({'id':80,'number':80,'body':'History','labels':['bug'],'user':{'id':99}})
         before=copy.deepcopy(self.destination.data.issues)

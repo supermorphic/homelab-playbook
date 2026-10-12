@@ -1,6 +1,9 @@
 import importlib
 import json
+import socket
 import unittest
+from unittest.mock import MagicMock, patch
+from urllib.error import URLError
 from support import CONFIG
 from forgejo_metadata.model import load_config, MirrorError
 
@@ -23,6 +26,49 @@ class APITests(unittest.TestCase):
                                    (self.client([]),'POST','/git/refs')]:
             with self.assertRaises(MirrorError): client.request(method,path)
         self.assertEqual([],self.calls)
+
+    def test_temporary_dns_failure_retries_before_request_is_sent(self):
+        for method,path,payload in [('GET','/issues',None),('POST','/issues',{'title':'Example'}),
+                                    ('PATCH','/issues/1',{'state':'closed'})]:
+            with self.subTest(method=method):
+                response=MagicMock(); response.status=200; response.headers={}; response.read.return_value=b'{}'
+                response.__enter__.return_value=response
+                opener=MagicMock()
+                failure=URLError(socket.gaierror(socket.EAI_AGAIN,'synthetic resolver failure'))
+                opener.open.side_effect=[failure,failure,response]
+                waits=[]
+                with patch.object(self.api,'build_opener',return_value=opener):
+                    client=self.api.DestinationAPI(self.mapping,'synthetic-token',sleep=waits.append,clock=lambda:0)
+                self.assertEqual({},client.request(method,path,payload)[0])
+                self.assertEqual(3,opener.open.call_count)
+                self.assertEqual([1,2],[delay for delay in waits if delay])
+                self.assertEqual([method]*3,[call.args[0].method for call in opener.open.call_args_list])
+
+    def test_temporary_dns_retries_are_bounded_and_prove_non_creation(self):
+        opener=MagicMock()
+        opener.open.side_effect=URLError(socket.gaierror(socket.EAI_AGAIN,'never-print-dns-details'))
+        waits=[]
+        with patch.object(self.api,'build_opener',return_value=opener):
+            client=self.api.DestinationAPI(self.mapping,'synthetic-token',sleep=waits.append,clock=lambda:0)
+        with self.assertRaises(self.api.APIError) as raised:
+            client.request('POST','/issues',{'title':'Example'})
+        self.assertEqual(3,opener.open.call_count)
+        self.assertEqual([1,2],[delay for delay in waits if delay])
+        self.assertEqual('not_created',raised.exception.outcome)
+        self.assertEqual('transport_failure',str(raised.exception))
+
+    def test_other_transport_failures_do_not_replay_requests(self):
+        for failure in (URLError(TimeoutError()),URLError(ConnectionResetError()),
+                        URLError(socket.gaierror(socket.EAI_NONAME,'synthetic permanent DNS failure')),
+                        TimeoutError()):
+            with self.subTest(failure=type(failure).__name__):
+                opener=MagicMock(); opener.open.side_effect=failure
+                with patch.object(self.api,'build_opener',return_value=opener):
+                    client=self.api.DestinationAPI(self.mapping,'synthetic-token',sleep=lambda _:None)
+                with self.assertRaises(self.api.APIError) as raised:
+                    client.request('POST','/issues',{'title':'Example'})
+                self.assertEqual(1,opener.open.call_count)
+                self.assertEqual('unknown',raised.exception.outcome)
 
     def test_foreign_pagination_and_cycle_fail_closed(self):
         for next_url in ('https://evil.example/repos/example/recovery/issues',
@@ -101,6 +147,24 @@ class APITests(unittest.TestCase):
         self.assertEqual([4],[r['id'] for r in inventory.comments[1]])
         self.assertTrue(any('type=issues' in c[1] for c in self.calls))
         self.assertFalse(any('/issues/2/comments' in c[1] for c in self.calls))
+
+    def test_source_label_inventory_checks_identity_and_complete_pagination(self):
+        next_url='https://forgejo.example.test/api/v1/repos/example/project/labels?limit=50&page=2'
+        client=self.client([(200,{'id':7,'full_name':'example/project'},{}),
+            (200,[{'id':i} for i in range(1,51)],{'Link':f'<{next_url}>; rel="next"'}),
+            (200,[{'id':51}],{})],True)
+        inventory=client.label_inventory(self.mapping)
+        self.assertEqual(list(range(1,52)),[r['id'] for r in inventory.labels])
+        self.assertTrue(inventory.complete)
+        self.assertEqual([],inventory.issues); self.assertEqual({},inventory.comments)
+        self.assertEqual(3,len(self.calls))
+        self.assertTrue(all('/labels' in c[1] for c in self.calls[1:]))
+
+    def test_source_label_inventory_rejects_identity_drift_and_incomplete_pages(self):
+        for responses in ([(200,{'id':8,'full_name':'example/project'}, {})],
+                          [(200,{'id':7,'full_name':'example/project'},{}),(500,{}, {})]):
+            with self.subTest(responses=responses):
+                with self.assertRaises(MirrorError):self.client(responses,True).label_inventory(self.mapping)
 
     def test_repository_comments_keep_issue_parents_and_exclude_pull_requests(self):
         parent='https://api.github.com/repos/example/recovery/issues/'

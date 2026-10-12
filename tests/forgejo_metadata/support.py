@@ -29,6 +29,7 @@ class FakeSource:
         self.data.issues[0]['labels']=copy.deepcopy(self.data.labels)
         self.data.issues[0]['milestone']={'id':43}
     def inventory(self,mapping): return copy.deepcopy(self.data)
+    def label_inventory(self,mapping): return Inventory(labels=copy.deepcopy(self.data.labels),complete=self.data.complete)
 
 class FakeDestination:
     def __init__(self):

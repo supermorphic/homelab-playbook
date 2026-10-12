@@ -35,7 +35,7 @@ def build_adoption_plan(mappings,store,clients):
         if max(retries.get(name,0) for name in ('*',mapping.source_credential,mapping.destination_credential))>time.time():
             raise MirrorError('rate_limited')
         source,destination=clients(mapping); destination.preflight(mapping)
-        source_data=source.inventory(mapping); inventory=destination.inventory(mapping)
+        source_data=source.label_inventory(mapping); inventory=destination.inventory(mapping)
         if not source_data.complete or not inventory.complete: raise MirrorError('incomplete_inventory')
         try: owned=discover_owned(mapping,inventory,ownership)
         except MirrorError as error:
