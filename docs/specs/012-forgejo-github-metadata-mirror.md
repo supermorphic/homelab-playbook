@@ -274,6 +274,21 @@ authorization. A `not_found` result does not prove non-creation or authorize a r
 Resume scheduling only after uncertain outcomes and conflicts are resolved and
 convergence is verified.
 
+A successful attended apply uses the control service and does not clear an
+earlier failure of the scheduled service. After authorized reconciliation passes,
+obtain the current enrollment with the observational `plan` action. Prepare an
+attended `recover-service` request with the plan fingerprint, decision reference,
+and `recover-service:<fingerprint>` confirmation. Recover the scheduled service
+through the separately authorized mutation, supplying that request as extra vars:
+
+```sh
+mise run playbook -- forgejo-metadata recover production --limit nuc4 --extra-vars @.tmp/metadata-recovery.json
+```
+
+Recovery requires current installed definitions and successful convergence before
+retrying the failed scheduled service. It repeats verification after that run;
+it does not reset failed units without running the service, or repair other units.
+
 ## Acceptance requirements
 
 Offline validation must demonstrate:

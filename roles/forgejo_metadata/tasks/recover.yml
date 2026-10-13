@@ -1,0 +1,62 @@
+---
+- name: Verify current metadata definitions and successful convergence before recovery
+  ansible.builtin.import_tasks: verify.yml
+
+- name: Require an attended scheduled service recovery request
+  ansible.builtin.assert:
+    that:
+      - forgejo_metadata_request is defined
+      - forgejo_metadata_request is mapping
+      - forgejo_metadata_request.operation | default('') == 'recover-service'
+      - forgejo_metadata_request.decision_ref | default('') is string
+      - forgejo_metadata_request.decision_ref | default('') | trim | length > 0
+    fail_msg: Supply an attended recovery request bound to the current enrollment
+
+- name: Observe the current public metadata enrollment
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/runuser
+      - -u
+      - "{{ forgejo_metadata_account }}"
+      - --
+      - /usr/bin/python3
+      - -B
+      - -m
+      - forgejo_metadata
+      - --config
+      - "{{ forgejo_metadata_config_root }}/config.json"
+      - plan
+    chdir: "{{ forgejo_metadata_helper_root }}"
+  register: forgejo_metadata_recovery_enrollment
+  changed_when: false
+
+- name: Require an execution intent bound to the current metadata enrollment
+  ansible.builtin.assert:
+    that:
+      - >-
+        forgejo_metadata_request.fingerprint | default('')
+        == (forgejo_metadata_recovery_enrollment.stdout | from_json).fingerprint
+      - >-
+        forgejo_metadata_request.confirmation | default('')
+        == 'recover-service:' ~ (forgejo_metadata_recovery_enrollment.stdout | from_json).fingerprint
+    fail_msg: Recovery request differs from the current metadata enrollment
+
+- name: Observe scheduled metadata service state
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/systemctl
+      - show
+      - forgejo-metadata.service
+      - --property=ActiveState
+      - --value
+  register: forgejo_metadata_scheduled_state
+  changed_when: false
+
+- name: Retry only the failed scheduled metadata service
+  ansible.builtin.systemd_service:
+    name: forgejo-metadata.service
+    state: started
+  when: forgejo_metadata_scheduled_state.stdout | trim == 'failed'
+
+- name: Require successful convergence after scheduled service recovery
+  ansible.builtin.import_tasks: verify.yml

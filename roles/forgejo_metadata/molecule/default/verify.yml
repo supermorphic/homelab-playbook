@@ -14,3 +14,57 @@
       ansible.builtin.import_role:
         name: forgejo_metadata
         tasks_from: verify.yml
+
+    - name: Reproduce failed scheduled service after successful attended apply
+      ansible.builtin.command:
+        argv: [/usr/bin/python3, /usr/local/libexec/forgejo-metadata-probe.py, prepare-service-recovery]
+      register: forgejo_metadata_recovery_fixture
+      changed_when: false
+
+    - name: Retain the fixture recovery intent
+      ansible.builtin.set_fact:
+        forgejo_metadata_request: "{{ forgejo_metadata_recovery_fixture.stdout | from_json }}"
+
+    - name: Require a wrong execution intent to preserve the failed service
+      block:
+        - name: Attempt recovery with an incorrect fixture confirmation
+          ansible.builtin.include_role:
+            name: forgejo_metadata
+            tasks_from: recover.yml
+          vars:
+            forgejo_metadata_request: >-
+              {{ (forgejo_metadata_recovery_fixture.stdout | from_json)
+                 | combine({'confirmation': 'incorrect-fixture-confirmation'}) }}
+
+        - name: Reject an accepted incorrect recovery intent
+          ansible.builtin.fail:
+            msg: Recovery accepted an incorrect execution intent
+      rescue:
+        - name: Require the recovery intent assertion to reject the request
+          ansible.builtin.assert:
+            that: ansible_failed_task.action == 'ansible.builtin.assert'
+
+        - name: Verify rejected recovery caused no service or metadata changes
+          ansible.builtin.command:
+            argv: [/usr/bin/python3, /usr/local/libexec/forgejo-metadata-probe.py, verify-recovery-guard]
+          changed_when: false
+
+    - name: Recover the failed scheduled service through the owning guarded role
+      ansible.builtin.import_role:
+        name: forgejo_metadata
+        tasks_from: recover.yml
+
+    - name: Verify exact service recovery and unrelated unit preservation
+      ansible.builtin.command:
+        argv: [/usr/bin/python3, /usr/local/libexec/forgejo-metadata-probe.py, verify-service-recovery]
+      changed_when: false
+
+    - name: Repeat recovery without starting a healthy service again
+      ansible.builtin.import_role:
+        name: forgejo_metadata
+        tasks_from: recover.yml
+
+    - name: Require idempotent recovery and unchanged destination metadata
+      ansible.builtin.command:
+        argv: [/usr/bin/python3, /usr/local/libexec/forgejo-metadata-probe.py, verify-service-recovery]
+      changed_when: false
