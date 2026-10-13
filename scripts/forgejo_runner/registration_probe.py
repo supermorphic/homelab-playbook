@@ -210,7 +210,9 @@ def mount_job_workspace(config, workspace, *, remap=False):
 
 
 def run_one_job(experiment, directory, application, repository, token, runtime, candidate,
-                *, controller_failure=False, workload=None, runtime_probe=False):
+                *, controller_failure=False, workload=None, runtime_probe=False, process_probe=False):
+    if process_probe and (controller_failure or workload or runtime_probe):
+        raise ValueError('Process probe cannot combine job experiments')
     if runtime_probe and (controller_failure or workload):
         raise ValueError('Runtime probe cannot combine job experiments')
     image = candidate["runner_image"]
@@ -225,12 +227,16 @@ def run_one_job(experiment, directory, application, repository, token, runtime, 
     config = {"log": {"level": "debug"}, "runner": {"capacity": 1, "labels": [f"{label}:docker://{job_image}"],
                          "timeout": "1m"},
               "container": {"docker_host": "unix://" + runtime["socket"], "network": application.network,
-                            "options": ("--tmpfs /var/lib/containers --tmpfs /home/podman/.local/share/containers "
+                            "options": ("--init --tmpfs /var/lib/containers --tmpfs /home/podman/.local/share/containers "
                                         f"--label {experiment.label}={experiment.run_id}")},
               "cache": {"enabled": False},
               "server": {"connections": {"fixture": {
                   "url": f"http://{application.app}:3000", "uuid": registration["uuid"],
                   "token": registration["token"]}}}}
+    if process_probe:
+        # The managed image is amd64 even when the workstation VM is arm64.
+        config['runner']['labels'] = [f'{label}:docker://{job_image}?platform=linux/amd64']
+        config['container']['force_pull'] = False
     if runtime.get('offline'):
         config['container']['force_pull'] = False
         config['container']['network'] = runtime['network']
@@ -257,6 +263,9 @@ def run_one_job(experiment, directory, application, repository, token, runtime, 
     if runtime_probe:
         from scripts.forgejo_runner.workload import runtime_workflow
         workflow = runtime_workflow(label, runtime['workspace'], public_probe=runtime.get('public_probe', False))
+    if process_probe:
+        from scripts.forgejo_runner.process_probe import workflow as process_workflow
+        workflow = process_workflow(label)
     if controller_failure:
         workflow = workflow.replace("echo independent-first-job", "sleep 90")
     created = application.request(path + "/contents/.forgejo/workflows/probe.yml", method="POST",

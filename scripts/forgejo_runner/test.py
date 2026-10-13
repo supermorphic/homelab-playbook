@@ -13,7 +13,7 @@ from scripts.molecule import SCENARIOS
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Test Forgejo runners with disposable fixtures")
-    parser.add_argument("mode", choices=("unit", "compatibility", "host-fixture", "job-fixture", "owner-fixture"))
+    parser.add_argument("mode", choices=("unit", "compatibility", "host-fixture", "job-fixture", "owner-fixture", "process-fixture"))
     parser.add_argument("--fixture", type=Path)
     parser.add_argument("--host-fixture", type=Path,
                         help="Explicit disposable Debian target descriptor under .tmp")
@@ -76,6 +76,9 @@ def main(argv: list[str] | None = None) -> int:
             "tests/forgejo_runner", "-p", "test_*.py", "-v",
         ], cwd=ROOT, check=False, timeout=900).returncode
     try:
+        if args.mode == 'process-fixture':
+            from scripts.forgejo_runner.process_probe import fixture
+            return fixture(args.fixture)
         if args.mode == "owner-fixture":
             if args.fixture:
                 parser.error("owner fixture uses the pinned Forgejo runtime without a job-image descriptor")

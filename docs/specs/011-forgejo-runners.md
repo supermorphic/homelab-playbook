@@ -121,6 +121,10 @@ cleanup. The original separate disposable-host test approach is superseded.
    settings. Role idempotence, verification and failure cleanup all pass.
 6. Real Forgejo workflow jobs exercise matrix outputs, conditional jobs,
    cancellation, artifacts and final gate results with the selected runner.
+7. The managed job image supplies `ps`. Job containers use the runtime's init
+   process to reap orphaned children. Repeat process workloads in one container
+   and verify that exited children disappear before the second pass; increasing
+   process limits does not satisfy this requirement.
 
 ## Containment and resource ownership
 

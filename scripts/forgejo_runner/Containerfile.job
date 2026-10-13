@@ -6,7 +6,7 @@ FROM ${PODMAN_IMAGE}
 USER root
 RUN dnf install --assumeyes git nodejs python3 gcc gcc-c++ make openssl openssl-devel \
         bison flex perl-core readline-devel zlib-devel libuuid-devel libffi-devel postgresql-devel \
-        tar gzip xz unzip findutils which \
+        tar gzip xz unzip findutils which procps-ng \
     && dnf clean all
 COPY --from=mise /usr/local/bin/mise /usr/local/bin/mise
 ENV MISE_YES=1
