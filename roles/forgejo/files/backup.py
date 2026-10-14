@@ -1,5 +1,6 @@
 """Consistent capture and independently supervised availability recovery."""
 import argparse
+import hashlib
 from datetime import datetime, timezone
 import json
 import os
@@ -14,6 +15,7 @@ import uuid
 
 import archive
 import service
+import upgrade_state
 
 
 def private_write(path, value):
@@ -40,19 +42,44 @@ def checked_intent(host):
     return intent
 
 
-def capture_locked(host):
+def capture_locked(host, *, upgrade_id=None):
+    transaction = None
+    if upgrade_id is None:
+        upgrade_state.require_idle(service.HELPERS)
+    else:
+        transaction = upgrade_state.read(service.HELPERS)
+        if (transaction is None or transaction['id'] != upgrade_id
+                or transaction['phase'] != 'quiesced' or not upgrade_state.controller_alive(transaction)
+                or transaction.get('source_generation') != host.settings['recovery_generation']
+                or transaction.get('source') != {key: host.settings[key] for key in
+                                                ('image', 'postgres_image', 'rclone_image')}):
+            raise ValueError('stopped capture requires the exact active upgrade controller')
     host.preflight()
     intent = host.state / 'restart-intent.json'
     if intent.exists() or (host.state / 'recovery-failed').exists():
         raise RuntimeError('unfinished recovery blocks capture')
-    if not host.active():
+    if transaction is not None and host.active():
+        raise RuntimeError('upgrade capture requires the source already stopped')
+    if transaction is None and not host.active():
         return {'skipped': 'application-inactive'}
-    created = datetime.now(timezone.utc).replace(microsecond=0)
-    identifier = 'forgejo-' + created.strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:16]
+    if transaction is None:
+        created = datetime.now(timezone.utc).replace(microsecond=0)
+        identifier = 'forgejo-' + created.strftime('%Y%m%dT%H%M%SZ') + '-' + uuid.uuid4().hex[:16]
+    else:
+        identifier = transaction['archive_id']
+        created = archive.archive_time(identifier)
     staging = host.backups / ('.partial-' + identifier)
+    if transaction is not None and (staging.exists() or staging.is_symlink()):
+        # The capture lock fences other controllers. Preserve interrupted bytes
+        # under a fresh name; never follow or recursively remove their contents.
+        item = staging.lstat()
+        if not stat.S_ISDIR(item.st_mode) or item.st_uid != os.geteuid() or item.st_mode & 0o077:
+            raise ValueError('interrupted upgrade capture has unsafe staging ownership')
+        staging.rename(host.backups / ('.interrupted-' + identifier + '-' + uuid.uuid4().hex))
     staging.mkdir(mode=0o700)
-    private_write(intent, intent_for(host))
-    host.stop()
+    if transaction is None:
+        private_write(intent, intent_for(host))
+        host.stop()
     host.stopped()
     host.dump(staging / 'database.dump')
     host.stopped()
@@ -63,6 +90,9 @@ def capture_locked(host):
     manifest.update(schema=1, archive_id=identifier,
         created_at=created.strftime('%Y-%m-%dT%H:%M:%SZ'), postgres_major=17, layout=archive.LAYOUT)
     archive.seal(staging, manifest)
+    if transaction is not None:
+        private_write(staging / 'COMPLETE', archive.completion(staging))
+        archive.validate_archive(staging, True)
     destination = host.backups / identifier
     if destination.exists():
         raise RuntimeError('new archive identifier unexpectedly exists')
@@ -72,6 +102,10 @@ def capture_locked(host):
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+    if transaction is not None:
+        return {'archive_id': identifier, 'source': transaction['source'],
+                'source_generation': manifest['recovery_generation'],
+                'complete_sha256': hashlib.sha256(archive.read_file(destination / 'COMPLETE')).hexdigest()}
     saved = checked_intent(host)
     saved['archive_id'] = identifier
     private_write(intent, saved)
@@ -79,6 +113,7 @@ def capture_locked(host):
 
 
 def recover_locked(host):
+    upgrade_state.require_idle(service.HELPERS)
     intent = host.state / 'restart-intent.json'
     if not intent.exists():
         if (host.state / 'recovery-failed').exists():
@@ -248,6 +283,7 @@ class Host:
 
 
 def guard(host):
+    upgrade_state.require_start(service.HELPERS, host.settings['image'])
     if not (host.state / 'restart-intent.json').exists():
         if (host.state / 'recovery-failed').exists():
             raise RuntimeError('previous recovery failed; authorize recovery separately')
@@ -264,14 +300,37 @@ def guard(host):
             raise RuntimeError('active capture still requires the application stopped')
 
 
+def inspect_upgrade(host, identifier):
+    saved = upgrade_state.read(service.HELPERS)
+    if (saved is None or saved['id'] != identifier or not upgrade_state.controller_alive(saved)
+            or saved['phase'] not in ('quiesced', 'archive-sealed', 'migration-started', 'target-verified')):
+        raise ValueError('archive inspection requires the active upgrade transaction')
+    path = host.backups / saved['archive_id']
+    manifest = archive.validate_archive(path, True)
+    source = {key: manifest[key] for key in ('image', 'postgres_image', 'rclone_image')}
+    if source != saved['source'] or manifest['recovery_generation'] != saved['source_generation']:
+        raise ValueError('archive differs from the selected source generation')
+    return {'archive_id': saved['archive_id'], 'source': source,
+            'source_generation': manifest['recovery_generation'],
+            'complete_sha256': hashlib.sha256(archive.read_file(path / 'COMPLETE')).hexdigest()}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Internal Forgejo backup lifecycle')
-    parser.add_argument('action', choices=('capture', 'recover', 'guard'))
+    parser.add_argument('action', choices=('capture', 'capture-upgrade', 'inspect-upgrade', 'recover', 'guard'))
+    parser.add_argument('--transaction-id')
     options = parser.parse_args(argv)
     os.umask(0o077)
     try:
         host = Host()
-        if options.action == 'capture':
+        if options.action in ('capture-upgrade', 'inspect-upgrade'):
+            if options.transaction_id is None:
+                raise ValueError('upgrade capture requires its transaction identifier')
+            # The controller owns the operation lock; this lock also fences orphan workers.
+            with service.operation_lock(Path('/run/forgejo/upgrade-capture.lock'), 1800):
+                result = (capture_locked(host, upgrade_id=options.transaction_id)
+                          if options.action == 'capture-upgrade' else inspect_upgrade(host, options.transaction_id))
+        elif options.action == 'capture':
             # ExecStopPost queues the independent 300-second recovery unit.
             with service.operation_lock(host.lock, 300):
                 result = capture_locked(host)

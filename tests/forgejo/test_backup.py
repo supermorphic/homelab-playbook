@@ -1,5 +1,6 @@
 """Inject capture/recovery failures at command boundaries, preserving real state."""
 import io
+import json
 import os
 from pathlib import Path
 import sys
@@ -9,6 +10,8 @@ import unittest
 from unittest.mock import patch
 
 from test_archive import ROOT, FILES, load
+from test_profiles import SOURCE
+from test_upgrade_state import journal
 sys.path.insert(0, str(FILES))
 
 
@@ -20,10 +23,7 @@ class Host:
         self.backups.mkdir(mode=0o700)
         self.lock = root / 'lock'
         self.lock.touch(mode=0o600)
-        self.settings = {'recovery_generation': 'd' * 32,
-            'image': 'codeberg.org/forgejo/forgejo:15.0.9-rootless@sha256:' + 'a' * 64,
-            'postgres_image': 'docker.io/library/postgres:17.11@sha256:' + 'b' * 64,
-            'rclone_image': 'docker.io/rclone/rclone:1.75.1@sha256:' + 'c' * 64}
+        self.settings = {**SOURCE, 'recovery_generation': 'd' * 32}
         self.running = True
         self.fail = None
         self.events = []
@@ -81,6 +81,51 @@ class BackupTests(unittest.TestCase):
         self.scratch = tempfile.TemporaryDirectory(dir=root)
         self.addCleanup(self.scratch.cleanup)
         self.host = Host(Path(self.scratch.name))
+
+    def test_upgrade_journal_blocks_capture_recovery_and_boot_start(self):
+        helpers = self.host.state.parent / 'helpers'
+        helpers.mkdir(mode=0o750)
+        path = helpers / 'upgrade-state.json'
+        path.write_text(json.dumps(journal()))
+        path.chmod(0o640)
+        self.host.running = False
+        with patch.object(self.backup.service, 'HELPERS', helpers), \
+                patch.object(self.backup.upgrade_state, 'ADMIN_UID', os.getuid()):
+            for operation in (self.backup.capture_locked, self.backup.recover_locked, self.backup.guard):
+                with self.subTest(operation=operation.__name__), self.assertRaises(RuntimeError):
+                    operation(self.host)
+        self.assertFalse(self.host.running)
+        self.assertEqual([], self.host.events)
+
+    def test_authorized_stopped_upgrade_capture_never_restarts_source(self):
+        helpers = self.host.state.parent / 'helpers'
+        helpers.mkdir(mode=0o750)
+        identifier = 'forgejo-20261013T120000Z-abcdef12'
+        saved = {**journal('quiesced'),
+                 'archive_id': identifier,
+                 'source': {key: self.host.settings[key] for key in ('image', 'postgres_image', 'rclone_image')},
+                 'source_generation': self.host.settings['recovery_generation']}
+        path = helpers / 'upgrade-state.json'
+        path.write_text(json.dumps(saved))
+        path.chmod(0o640)
+        self.host.running = False
+        with patch.object(self.backup.service, 'HELPERS', helpers), \
+                patch.object(self.backup.upgrade_state, 'ADMIN_UID', os.getuid()), \
+                patch.object(self.backup.upgrade_state, 'controller_alive', return_value=True):
+            self.host.fail = 'dump'
+            with self.assertRaises(RuntimeError):
+                self.backup.capture_locked(self.host, upgrade_id=saved['id'])
+            partial = self.host.backups / ('.partial-' + identifier)
+            self.assertTrue(partial.is_dir())
+            self.host.fail = None
+            result = self.backup.capture_locked(self.host, upgrade_id=saved['id'])
+        self.assertEqual(identifier, result['archive_id'])
+        self.assertFalse(self.host.running)
+        self.assertNotIn('start', self.host.events)
+        self.assertTrue((self.host.backups / identifier / 'COMPLETE').is_file())
+        self.assertFalse((self.host.state / 'restart-intent.json').exists())
+        interrupted = list(self.host.backups.glob('.interrupted-' + identifier + '-*'))
+        self.assertEqual(1, len(interrupted))
 
     def test_success_publishes_only_stopped_capture_then_recovers(self):
         result = self.backup.perform_capture(self.host)

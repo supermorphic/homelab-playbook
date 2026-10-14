@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import json
 import re
 import shutil
+from urllib.parse import urlsplit
 
 from scripts.forgejo.runtime import Run
 
@@ -23,10 +24,21 @@ def runtime_info(info: dict) -> dict:
         match = re.fullmatch(r"/run/user/([1-9][0-9]*)/containers", info["store"]["runRoot"])
         if match is None:
             raise ValueError("Podman runtime directory is not a rootless user directory")
+        service = host["remoteSocket"]
+        endpoint = service["path"]
+        if (service["exists"] is not True or not isinstance(endpoint, str)
+                or any(ord(character) < 32 or ord(character) == 127 for character in endpoint)):
+            raise ValueError("Podman must report an available Unix service")
+        socket = urlsplit(endpoint)
+        if (socket.scheme not in ("", "unix") or socket.netloc or socket.query or socket.fragment
+                or not socket.path.startswith(f"/run/user/{match[1]}/")
+                or any(part in (".", "..", "") for part in socket.path.split("/")[1:])
+                or not socket.path.endswith(".sock")):
+            raise ValueError("Podman socket is outside its rootless user runtime")
     except (KeyError, TypeError) as error:
         raise ValueError("Podman runtime observation is incomplete") from error
     return {"architecture": architecture,
-            "socket": f"/run/user/{match[1]}/podman/podman.sock"}
+            "socket": socket.path}
 
 
 class RunnerRun(Run):

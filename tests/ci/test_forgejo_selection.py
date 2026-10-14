@@ -48,7 +48,7 @@ class ForgejoSelectionTests(unittest.TestCase):
                 self.assertEqual('full', result['depth'])
                 self.assertIn('forgejo/default', self.selectors(result))
         commands = run_changed.commands_for(self.result('roles/forgejo/tasks/main.yml'))
-        for mode in ('compatibility', 'fixture'):
+        for mode in ('compatibility', 'fixture', 'upgrade'):
             self.assertEqual(1, commands.count(['mise', 'run', 'test:forgejo', '--', mode]))
         self.assertFalse(any('test:forgejo' in cmd for cmd in run_changed.commands_for(
             self.result('roles/system_maintenance/tasks/main.yml'))))
@@ -58,6 +58,7 @@ class ForgejoSelectionTests(unittest.TestCase):
         self.assertIn("matrix.selector == 'forgejo/default' && matrix.platform == 'debian13'", workflow)
         self.assertIn('mise run test:forgejo -- compatibility', workflow)
         self.assertIn('mise run test:forgejo -- fixture', workflow)
+        self.assertIn('mise run test:forgejo -- upgrade', workflow)
 
 
 if __name__ == '__main__':

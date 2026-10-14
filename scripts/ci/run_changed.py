@@ -29,7 +29,7 @@ def commands_for(result: dict) -> list[list[str]]:
     if "forgejo/default" in selectors:
         commands.extend(
             ["mise", "run", "test:forgejo", "--", mode]
-            for mode in ("compatibility", "fixture")
+            for mode in ("compatibility", "fixture", "upgrade")
         )
     if "forgejo_metadata/default" in selectors:
         commands.append(["mise", "run", "test:forgejo-metadata", "--", "fixture"])

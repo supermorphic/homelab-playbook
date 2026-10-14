@@ -24,7 +24,10 @@
 - name: Install persistent Forgejo operation-lock boot declaration
   ansible.builtin.copy:
     dest: /etc/tmpfiles.d/forgejo.conf
-    content: "d /run/forgejo 0750 root svc-forgejo -\nf /run/forgejo/operation.lock 0660 root svc-forgejo -\n"
+    content: |
+      d /run/forgejo 0750 root svc-forgejo -
+      f /run/forgejo/operation.lock 0660 root svc-forgejo -
+      f /run/forgejo/upgrade-capture.lock 0660 root svc-forgejo -
     owner: root
     group: root
     mode: '0644'
@@ -32,6 +35,15 @@
 - name: Establish operation lock without replacing its inode
   ansible.builtin.copy:
     dest: /run/forgejo/operation.lock
+    content: ''
+    force: false
+    owner: root
+    group: svc-forgejo
+    mode: '0660'
+
+- name: Establish upgrade capture lock without replacing its inode
+  ansible.builtin.copy:
+    dest: /run/forgejo/upgrade-capture.lock
     content: ''
     force: false
     owner: root
@@ -59,11 +71,57 @@
     - "{{ forgejo_user_unit_root }}/timers.target.wants"
     - "{{ forgejo_user_unit_root }}/default.target.wants"
 
-- name: Install trusted Forgejo lifecycle helper
-  ansible.builtin.copy:
-    src: "{{ item }}"
-    dest: "{{ forgejo_helper_root }}/{{ item }}"
-    owner: root
-    group: svc-forgejo
-    mode: '0640'
-  loop: [service.py, archive.py, backup.py, transfer.py, mirror_status.py]
+- name: Install one compatible Forgejo helper generation
+  block:
+    - name: Stage private helper bundle
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ forgejo_helper_root }}/candidates"
+        prefix: helpers-
+      register: forgejo_helper_candidate
+      changed_when: false
+
+    - name: Copy trusted helper bundle into private staging
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ forgejo_helper_candidate.path }}/{{ item }}"
+        owner: root
+        group: root
+        mode: '0600'
+      loop:
+        - profiles.py
+        - service.py
+        - archive.py
+        - backup.py
+        - transfer.py
+        - mirror_status.py
+        - upgrade_state.py
+        - install.py
+        - upgrade.py
+        - admission.py
+        - upgrade_host.py
+      changed_when: false
+
+    - name: Check installed pins and publish a compatible helper generation
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/python3
+          - -B
+          - "{{ forgejo_helper_candidate.path }}/install.py"
+          - --candidate
+          - "{{ forgejo_helper_candidate.path }}"
+          - --image
+          - "{{ forgejo_image }}"
+          - --postgres-image
+          - "{{ forgejo_postgres_image }}"
+      register: forgejo_helper_installation
+      changed_when: >-
+        forgejo_helper_installation.rc == 0
+        and (forgejo_helper_installation.stdout | from_json).changed | bool
+  always:
+    - name: Remove only this invocation's private helper candidate
+      ansible.builtin.file:
+        path: "{{ forgejo_helper_candidate.path }}"
+        state: absent
+      when: forgejo_helper_candidate.path is defined
+      changed_when: false

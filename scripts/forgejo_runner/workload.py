@@ -38,6 +38,7 @@ def registry_sources(selector=None, *, suite=None):
     if selector:
         return {platform.base_image for platform in SCENARIOS[selector].platforms}
     from scripts.forgejo.runtime import defaults
+    from scripts.forgejo.upgrade import SOURCE, TARGET, RUNNER_IMAGES, JOB_IMAGE
     from scripts.forgejo.fixture import SAMBA_IMAGE as forgejo_samba
     from scripts.semaphore.fixture import SAMBA_IMAGE as semaphore_samba
     from scripts.semaphore.test import SEMAPHORE_IMAGE, POSTGRES_IMAGE, RCLONE_IMAGE
@@ -45,7 +46,8 @@ def registry_sources(selector=None, *, suite=None):
     pins = defaults()
     return {pins['forgejo_image'], pins['forgejo_postgres_image'], pins['forgejo_rclone_image'],
             forgejo_samba, semaphore_samba, SEMAPHORE_IMAGE, POSTGRES_IMAGE, RCLONE_IMAGE,
-            restore.SEMAPHORE_IMAGE, restore.POSTGRES_IMAGE, restore.RCLONE_IMAGE} | {
+            restore.SEMAPHORE_IMAGE, restore.POSTGRES_IMAGE, restore.RCLONE_IMAGE,
+            SOURCE['image'], TARGET['image'], RUNNER_IMAGES['amd64'], JOB_IMAGE} | {
                 platform.base_image for platform in SCENARIOS['semaphore/default'].platforms}
 
 

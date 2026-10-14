@@ -1,0 +1,129 @@
+---
+- name: Validate the existing Forgejo foundation and candidate inputs
+  ansible.builtin.import_tasks: preflight.yml
+
+- name: Require explicit upgrade evidence and typed attended prerequisites
+  ansible.builtin.assert:
+    that:
+      - forgejo_upgrade_action in ['prepare', 'upgrade', 'resume', 'abort']
+      - forgejo_upgrade_source_profile in ['forgejo-15.0.9', 'forgejo-16.0.6']
+      - forgejo_upgrade_evidence_path is string and forgejo_upgrade_evidence_path | length > 0
+      - forgejo_upgrade_runners_drained is boolean
+      - forgejo_upgrade_prerequisites is mapping
+    fail_msg: >-
+      Supply completed local rehearsal evidence. Prepare requires attended runner
+      drain; upgrade/resume requires fresh transaction-bound queue and mirror prerequisites.
+
+- name: Establish the fixed upgrade capture lock without replacing its inode
+  ansible.builtin.copy:
+    dest: /run/forgejo/upgrade-capture.lock
+    content: ''
+    force: false
+    owner: root
+    group: svc-forgejo
+    mode: '0660'
+
+- name: Observe the current local rehearsal fingerprint
+  ansible.builtin.command:
+    argv: [mise, run, 'test:forgejo', '--', fingerprint]
+    chdir: "{{ playbook_dir }}/../.."
+  delegate_to: localhost
+  become: false
+  register: forgejo_rehearsal_fingerprint
+  changed_when: false
+
+- name: Stage one bounded upgrade invocation
+  block:
+    - name: Stage the private configuration candidate
+      ansible.builtin.import_tasks: configuration.yml
+
+    - name: Stage candidate runtime definitions
+      ansible.builtin.import_tasks: definitions.yml
+
+    - name: Stage candidate backup definitions
+      ansible.builtin.import_tasks: backups.yml
+
+    - name: Create private upgrade helper staging
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ forgejo_helper_root }}/candidates"
+        prefix: upgrade-helpers-
+      register: forgejo_upgrade_helpers
+      changed_when: false
+
+    - name: Copy the complete trusted upgrade helper bundle
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ forgejo_upgrade_helpers.path }}/{{ item }}"
+        owner: root
+        group: root
+        mode: '0600'
+      loop:
+        - profiles.py
+        - service.py
+        - archive.py
+        - backup.py
+        - transfer.py
+        - mirror_status.py
+        - upgrade_state.py
+        - install.py
+        - upgrade.py
+        - admission.py
+        - upgrade_host.py
+      changed_when: false
+
+    - name: Create private upgrade input staging
+      ansible.builtin.tempfile:
+        state: directory
+        path: "{{ forgejo_helper_root }}/candidates"
+        prefix: upgrade-inputs-
+      register: forgejo_upgrade_inputs
+      changed_when: false
+
+    - name: Stage non-secret rehearsal evidence privately
+      ansible.builtin.copy:
+        src: "{{ forgejo_upgrade_evidence_path }}"
+        dest: "{{ forgejo_upgrade_inputs.path }}/evidence.json"
+        owner: root
+        group: root
+        mode: '0600'
+      changed_when: false
+
+    - name: Stage attended prerequisites privately
+      ansible.builtin.copy:
+        content: "{{ forgejo_upgrade_prerequisites | to_json }}"
+        dest: "{{ forgejo_upgrade_inputs.path }}/prerequisites.json"
+        owner: root
+        group: root
+        mode: '0600'
+      changed_when: false
+
+    - name: Execute the exactly selected guarded upgrade action
+      ansible.builtin.command:
+        argv: >-
+          {{ ['/usr/bin/python3', '-B', forgejo_upgrade_helpers.path + '/upgrade_host.py',
+              forgejo_upgrade_action, '--candidate', forgejo_candidate.path,
+              '--evidence', forgejo_upgrade_inputs.path + '/evidence.json',
+              '--oracle-sha256', (forgejo_rehearsal_fingerprint.stdout | from_json).oracle_sha256,
+              '--prerequisites', forgejo_upgrade_inputs.path + '/prerequisites.json',
+              '--source-profile', forgejo_upgrade_source_profile]
+             + (['--runners-drained'] if forgejo_upgrade_runners_drained else []) }}
+      register: forgejo_upgrade_result
+      changed_when: >-
+        forgejo_upgrade_result.rc == 0
+        and (forgejo_upgrade_result.stdout | from_json).changed | bool
+
+    - name: Report only non-secret transaction outcome
+      ansible.builtin.debug:
+        msg: "{{ forgejo_upgrade_result.stdout | from_json }}"
+  always:
+    - name: Remove only this invocation's private staging
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: >-
+        {{ [forgejo_candidate.path | default(''),
+            forgejo_upgrade_helpers.path | default(''),
+            forgejo_upgrade_inputs.path | default('')] | reject('equalto', '') | list }}
+      changed_when: false
+      no_log: true

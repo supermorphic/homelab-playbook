@@ -102,6 +102,17 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(downloads, self.remote.payload_downloads)
         self.assertEqual(uploads, self.remote.uploads)
 
+    def test_protected_recovery_archive_survives_both_retention_thresholds(self):
+        self.now = datetime(2027, 1, 10, tzinfo=timezone.utc)
+        result = self.transfer.transfer(self.backups, self.remote, now=self.now,
+                                       protected=frozenset([self.path.name]))
+        self.assertFalse(result['errors'])
+        self.assertTrue(self.path.is_dir())
+        self.assertTrue((self.remote.root / self.path.name / 'COMPLETE').is_file())
+        self.assertFalse(self.run_transfer()['errors'])
+        self.assertFalse(self.path.exists())
+        self.assertFalse((self.remote.root / self.path.name).exists())
+
     def test_three_archive_outage_backlog_is_retried(self):
         self.new_archive('20260929T033000Z', 'abcdef13')
         self.new_archive('20260928T033000Z', 'abcdef14')

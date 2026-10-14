@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -15,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Test Forgejo with owned fixtures")
-    parser.add_argument("mode", choices=("unit", "compatibility", "fixture", "restore"))
+    parser.add_argument("mode", choices=("unit", "compatibility", "fixture", "restore", "upgrade", "fingerprint"))
     parser.add_argument("arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     if args.arguments and args.mode != "restore":
@@ -26,6 +27,11 @@ def main(argv=None) -> int:
             "-p", "test_*.py", "-v",
         ], cwd=ROOT, check=False, timeout=900).returncode
     try:
+        if args.mode == 'fingerprint':
+            module = importlib.import_module('scripts.forgejo.upgrade')
+            controller, oracle = module.fingerprints()
+            print(json.dumps({'controller_sha256': controller, 'oracle_sha256': oracle}))
+            return 0
         module = importlib.import_module(f"scripts.forgejo.{args.mode}")
         return module.main(args.arguments) if args.mode == "restore" else module.run()
     except ModuleNotFoundError:

@@ -19,13 +19,43 @@ class FixtureTests(unittest.TestCase):
 
     def info(self, *, rootless=True, cgroup="v2"):
         return {"host": {"security": {"rootless": rootless},
-                         "cgroupVersion": cgroup, "arch": "aarch64"},
+                         "cgroupVersion": cgroup, "arch": "aarch64",
+                         "remoteSocket": {"path": "unix:///run/user/1234/podman/podman.sock",
+                                          "exists": True}},
                 "store": {"runRoot": "/run/user/1234/containers"}}
 
-    def test_worker_socket_is_derived_from_the_observed_rootless_runtime(self):
+    def test_worker_socket_matches_the_observed_rootless_service(self):
         result = self.module.runtime_info(self.info())
         self.assertEqual("/run/user/1234/podman/podman.sock", result["socket"])
         self.assertEqual("arm64", result["architecture"])
+
+    def test_custom_worker_socket_is_preserved(self):
+        for endpoint in ("unix:///run/user/1234/podman.sock",
+                         "unix:/run/user/1234/podman.sock",
+                         "/run/user/1234/podman.sock"):
+            with self.subTest(endpoint=endpoint):
+                info = self.info()
+                info["host"]["remoteSocket"]["path"] = endpoint
+                self.assertEqual("/run/user/1234/podman.sock",
+                                 self.module.runtime_info(info)["socket"])
+
+    def test_missing_or_unavailable_service_is_rejected(self):
+        for socket in (None, {}, {"path": "unix:///run/user/1234/podman.sock", "exists": False}):
+            with self.subTest(socket=socket), self.assertRaises(ValueError):
+                info = self.info()
+                info["host"]["remoteSocket"] = socket
+                self.module.runtime_info(info)
+
+    def test_socket_must_belong_to_the_observed_rootless_runtime(self):
+        for endpoint in ("unix:///run/user/5678/podman.sock", "unix:///run/podman/podman.sock",
+                         "tcp://127.0.0.1:8080", "ssh://user@example.invalid/run/user/1234/podman.sock",
+                         "unix:///run/user/1234/../5678/podman.sock", "relative.sock",
+                         "unix:///run/user/1234/podman.sock?token=synthetic",
+                         "unix:///run/user/1234/podman.sock#fragment"):
+            with self.subTest(endpoint=endpoint), self.assertRaises(ValueError):
+                info = self.info()
+                info["host"]["remoteSocket"]["path"] = endpoint
+                self.module.runtime_info(info)
 
     def test_rootful_runtime_is_rejected(self):
         with self.assertRaises(ValueError):

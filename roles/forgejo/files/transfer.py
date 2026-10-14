@@ -11,6 +11,7 @@ import sys
 import archive
 import backup
 import service
+import upgrade_state
 
 
 def remote_complete(remote, identifier, expected=None):
@@ -62,7 +63,7 @@ def remove_local(path):
     path.rmdir()
 
 
-def transfer(backups, remote, *, now=None):
+def transfer(backups, remote, *, now=None, protected=frozenset()):
     now = now or datetime.now(timezone.utc)
     errors = []
     verified = 0
@@ -80,7 +81,7 @@ def transfer(backups, remote, *, now=None):
             complete = remote_complete(remote, identifier, expected)
             age = (now - created).total_seconds() / 86400
             if not complete:
-                if age >= 90:
+                if age >= 90 and identifier not in protected:
                     raise ValueError('expired untransferred archive requires operator resolution')
                 remote.copy(path, identifier)
                 remote.check(path, identifier)
@@ -90,7 +91,7 @@ def transfer(backups, remote, *, now=None):
                     raise RuntimeError('completion publication could not be verified')
                 transferred += 1
             verified += 1
-            if age >= 7:
+            if age >= 7 and identifier not in protected:
                 remove_local(path)
         except (OSError, ValueError, RuntimeError, KeyError, TypeError):
             errors.append({'archive_id': identifier if archive.NAME.fullmatch(identifier) else 'unrecognized-entry',
@@ -102,6 +103,8 @@ def transfer(backups, remote, *, now=None):
         entries = {}
     for identifier, item in entries.items():
         try:
+            if identifier in protected:
+                continue
             created = archive.archive_time(identifier)
             if not item['directory'] or item['link'] or created > now:
                 raise ValueError('unexpected remote generation')
@@ -237,7 +240,8 @@ def main(argv=None):
         os.close(descriptor)
         service.regular(lock, private=True, owner=allocation['uid'])
         with service.operation_lock(lock, 1):
-            result = transfer(service.STATE / 'backups', remote)
+            result = transfer(service.STATE / 'backups', remote,
+                              protected=upgrade_state.protected_archives(service.HELPERS))
             backup.private_write(service.STATE / 'transfer-status.json', result)
         print(json.dumps({'verified': result['verified'], 'transferred': result['transferred'],
                           'errors': len(result['errors'])}))

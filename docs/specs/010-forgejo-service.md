@@ -5,6 +5,11 @@ Issue: [#7 Forgejo self-hosted Git](https://github.com/supermorphic/homelab-play
 Status: approved design, implemented locally. Offline validation and live service
 acceptance are separate evidence; live acceptance remains pending.
 
+The guarded application upgrade design for
+[#118](https://forgejo.infra.supermorphic.com/supermorphic/homelab-playbook/issues/118)
+is implemented locally. Production execution and live acceptance require separate
+operator authorization.
+
 ## Purpose and delivery boundary
 
 Deploy a recoverable, Ansible-managed Forgejo service on the existing Debian 13
@@ -49,12 +54,21 @@ and full Forgejo backups remain the recovery boundaries described here.
 ## Runtime and database decision
 
 Use the maintained upstream rootless Forgejo image and a dedicated PostgreSQL 17
-container under `svc-forgejo`. Select the supported Forgejo LTS line. Research on
+container under `svc-forgejo`. The original deployment selected the supported
+Forgejo LTS line. Research on
 2026-09-30 selected Forgejo 15.0.9-rootless, PostgreSQL 17.11 and rclone 1.75.1.
 Reviewed immutable multi-architecture image digests are recorded in role defaults.
 Stock-container compatibility checks cover protected initialization, database
 privileges, persistence and native HTTPS mirroring. No floating image updates or
 custom application image is introduced.
+
+Issue #118 selects the latest published, supported stable release at implementation.
+Review the release index, intervening release notes and maintenance window again
+before each subsequent immutable rootless image change.
+A scheduled major release is not a published stable release. Moving from LTS to
+the stable release line requires recurring attended upgrades within its shorter
+support window; dependency discovery remains a proposal mechanism, not deployment
+authority. Preserve the original LTS generation as a reviewed recovery target.
 
 SQLite is supported and recommended upstream for low to moderate activity. The
 operator chose PostgreSQL to reuse the existing database operating pattern and
@@ -323,6 +337,225 @@ state until the replacement is accepted. Application upgrades require a usable
 pre-upgrade archive; reverting an image does not reverse a database migration.
 PostgreSQL major upgrades need their own validated migration procedure.
 
+## Guarded application upgrade
+
+The workstation remains the upgrade authority through
+`mise run playbook -- forgejo upgrade <inventory> [ansible-args...]`.
+Ordinary provisioning continues to reject application or database image changes.
+An upgrade changes only the reviewed application pin; keep the PostgreSQL major
+and immutable pin, foundation identity, storage boundary, private ingress and
+runner registration scope. Do not combine unrelated configuration or credential
+changes with migration. Keep staging inactive.
+
+Use an archive-backed upgrade of the existing application storage. This preserves
+a reconstructable source generation, rather than intact original source volumes.
+It avoids introducing a second production database and a general cutover system
+for each application upgrade. Actual recovery still preserves failed or migrated
+storage while reconstructing a replacement separately, as required above.
+
+### Preparation and recovery evidence
+
+Keep reviewed exact recovery profiles independently of the active deployment
+default. A profile identifies the immutable runtime and matching database clients,
+compatible controller and helpers, and the source controls needed to reconstruct
+that generation. Preserve prior definitions and protected configuration/key
+generation references with the selected archive. An archive must match a reviewed
+profile; its contents cannot select arbitrary executable images. Runtime and
+archive validators must support the reviewed target and retained source profiles
+without weakening digest, integrity, ownership or storage checks.
+
+Preserve the repository/controller revision, recovery tools and source images
+outside dependence on the working Forgejo service or runners. Recover old archives
+using their reviewed source profile, rather than substituting current role
+defaults. Keep protected values within the existing SOPS and private runtime
+boundaries; evidence and public logs contain only non-secret references.
+
+Require a completed synthetic migration and independent source recovery rehearsal
+for the exact proposed transition. Bind its evidence to the runtime pins, relevant
+controller and configuration content, and the independent fixture/oracle.
+Require successful cleanup as part of completion. Reject missing, incomplete or
+changed-candidate evidence. A synthetic rehearsal establishes procedure behavior;
+it does not prove that a particular production archive has been restored.
+
+Under the operation lock, repeat installed source, allocation, storage capacity,
+candidate identity and pending-operation checks immediately before mutation.
+Capture a fresh archive while source writers remain stopped. Require matching
+source/profile/key-generation references, complete payload and checksum
+validation, readable database dump, and durable publication before migration.
+Checksum validation alone is not proof of successful application recovery.
+
+Protect the transaction's recovery archive from both local and remote retention.
+Coordinate protection with the transfer lock as well as the service operation
+lock, using a fixed lock order. Keep transfers available. Preserve the archive and
+source controls through acceptance and until explicit release; normal retention
+must not make an interrupted upgrade unrecoverable.
+
+### Transaction and admission boundaries
+
+Stage helpers and definitions privately. Reject incompatible ordinary provisioning
+and pending transactions before replacing active helpers. Activate a complete,
+compatible helper/definition generation under the operation lock. Safely install
+upgrade-aware guards for the source generation before starting the transaction;
+their installation must not rely on replacing an executing recovery helper or
+bypassing the existing image-change guard.
+
+Use a durable administrator-owned transaction record. All application start,
+provisioning, capture, backup recovery, boot recovery and upgrade resume paths
+must consult it. Preserve it through process death, timeout and reboot. Malformed
+or inconsistent state blocks ordinary activation and requires operator diagnosis.
+
+| State | Required boundary |
+| --- | --- |
+| Source ready | Installed source generation is consistent; no pending service operation exists. |
+| Prepared | Exact transition and rehearsal match; independent recovery material and compatible guards are available. |
+| Quiesced | Transaction is durable; new work is blocked; existing workers and queues are handled; application writers are stopped. |
+| Archive sealed | Fresh source archive and controls are durable, validated and protected from retention. |
+| Migration started | Irreversible boundary is durable before any target process opens writable source storage. |
+| Target verified, gated | Bounded target checks pass while normal client admission and external background effects remain blocked. |
+| Target accepted | Temporary writers have stopped; target definitions are published; the durable decision permits normal target activation. |
+| Target committed | Declared and running target agree; intended client access and application schedules resume. |
+
+Prevent new work before draining existing workers and application work. Use the
+established runner drain boundary where authorized; do not implicitly cancel
+jobs or change registration scope. Establish queue compatibility before shutdown.
+Verify Forgejo and its child writers have stopped before capture, and do not
+restart the source between archive capture and migration.
+
+The existing backup availability-recovery mechanism must not restart an
+application during an upgrade merely because a capture process died or the host
+rebooted. Give the authorized upgrade process narrowly bound permission to start
+the exact target. A recorded migration phase alone must not permit an ordinary
+restart. If the controller dies while the target is running, preserve the journal
+and admission restrictions; do not infer acceptance from HTTP health.
+
+Before migration starts, a defined, explicitly authorized abort may restore
+verified source availability and prior admission settings. At or after migration
+starts, failure or interruption before acceptance keeps the service gated and requires an explicit
+resume or recovery action. Never automatically start the old image against
+possibly migrated state. Repeating a completed upgrade with the same candidate
+is observational and does not recapture or migrate; compatible provisioning
+after completion remains idempotent.
+
+Run bounded technical acceptance while normal ingress, mirror/webhook egress and
+worker activity remain gated. Persist the target acceptance decision only after
+runtime, database, configuration and continuity checks pass and temporary writers
+have stopped. Activation then restores declared schedules and access; confirmed
+native readiness completes the transaction. Interruption after acceptance resumes
+target activation and cannot authorize an old-image restart. This durable decision
+precedes access, so a crash after reopening admission cannot imply lossless rollback.
+Detailed private Actions API acceptance
+requires separate authority, or explicit inclusion in the same attended window;
+it is not implied by technical readiness.
+
+Once normal writes or external effects resume, the pre-upgrade archive is a
+historical recovery point. Restoring it can lose subsequent work or repeat
+external effects. It is no longer a lossless rollback. Recover into fresh storage
+with external effects isolated, retain the failed generation, and require separate
+authority before replacing the active service or enabling recovered egress.
+
+### Attended preparation and interruption recovery
+
+Admission control uses Caddy's existing protected Unix administration socket.
+Save the exact single-host route and replace only its declared loopback proxy
+handler with a maintenance response. Preserve client access restrictions and other
+services. Conditional updates reject concurrent configuration changes; restoration
+requires the exact saved gate or already-restored original. Caddy restart can reload
+the original route. Repeat preparation and fresh queue prerequisites after that
+event; reapplying the gate advances its recorded time and invalidates earlier
+queue attestations, even within their freshness window. The application startup
+guard independently blocks pending transactions.
+
+Migration runs the database without networking and the application inside only
+that database's loopback namespace. Preserve their respective user mappings and
+storage ownership. Neither temporary container publishes ports or restarts on
+reboot. Disable application cron. The journal blocks ordinary application starts
+until explicit pre-migration abort or durable target acceptance.
+
+Use this sequence in an explicitly authorized maintenance window:
+
+1. Retain this checkout and the reviewed source images independently of Forgejo.
+   Run `mise run test:forgejo -- upgrade`. Select its completed evidence file under
+   `.tmp/forgejo/` through `forgejo_upgrade_evidence_path`. Evidence hashes the helper
+   cohort, fixture/oracle, templates and defaults before execution and rejects
+   changed files or incomplete cleanup.
+2. Drain the authorized runners using their owning workflow. Verify running jobs
+   finish and polling stays stopped. Invoke
+   `mise run playbook -- forgejo upgrade-prepare <inventory> [ansible-args...]`
+   with typed `forgejo_upgrade_runners_drained: true` and the selected evidence.
+   The source remains running behind maintenance ingress. Save the returned
+   transaction identity and its source generation from the private journal.
+3. The attended operator handles outstanding mirrors and flushes source queues.
+   In the existing `svc-forgejo` rootless session, upstream's command is
+   `podman exec forgejo forgejo --config /etc/gitea/app.ini manager flush-queues`.
+   Require successful completion; resolve a timeout before continuing. This
+   server-side command is an operator prerequisite, outside agent authority.
+4. Supply `forgejo_upgrade_prerequisites` with the transaction identity, source
+   generation, current UTC observation time and successful runner/queue/mirror
+   observations. Use the field contract in
+   [the prerequisite validator](../../roles/forgejo/files/upgrade_host.py).
+   Invoke the canonical `forgejo upgrade` action within the freshness window.
+   It checks the gate and absence of running Actions tasks again before stopping
+   the source. An attestation is an execution guard, not authorization.
+5. After interruption, retain the journal and storage. Use `forgejo upgrade-resume`
+   with the same candidate and completed evidence. A pre-migration retry needs
+   fresh prerequisites; incomplete capture bytes are quarantined and a complete
+   archive is reused. Use explicitly authorized `forgejo upgrade-abort` only before
+   migration. After migration begins, never manually start the old image on that
+   storage. Accepted target activation is resumable even if readiness failed.
+6. Verify the target, then separately authorize resuming the declared runners
+   through their [owning workflow](011-forgejo-runners.md). The service upgrade
+   leaves drained runner polling stopped; runner provisioning restores its declared
+   timers. Confirm post-upgrade backup and normal nightly mirrors before live
+   acceptance. Do not force synchronization to manufacture acceptance evidence.
+
+Private recovery inputs live beneath the helper root's `recovery/<transaction>/`:
+source controls, complete compatible helpers, protected settings and generation.
+A final checksum record seals all required inputs; resume rejects damaged sealed
+material. The journal identifies the protected archive. Preserve these inputs
+and source images off-host before relying on them for disaster recovery. Discover
+the independent archive restore arguments with
+`mise run test:forgejo -- restore --help`; reconstruct into fresh isolated storage
+using the matching reviewed profile and protected generation. Authorize cutover
+and egress separately after acceptance. These steps require this checkout and the
+archive, not working Forgejo, runners or Semaphore.
+
+The root-owned retained-archive references survive transaction completion. Release
+one only through an explicitly authorized operator change serialized with the
+service operation lock followed by the transfer lock, after reviewing remaining
+recovery coverage. Never delete the journal to bypass a pending migration.
+
+### Upgrade acceptance
+
+Exercise populated synthetic Git, issues/PRs, attachments, authentication and
+database state through the actual migration. Compare independent expected refs,
+content and credentials. Then restore the pre-upgrade archive into fresh
+source-version storage independently of the migrated service. Demonstrate network
+isolation and absence of outbound effects with actual boundaries and sentinels.
+
+Synthetic files in Actions storage prove file preservation only. Use actual
+synthetic workflow runs to prove known logs, artifact hashes, correlated
+run/job/attempt identities and observable cancellation. Check the selected API's
+rerun and same-owner custom-fork PR behavior without assuming support or replacing
+the configured CLI. Keep consumer CI and runner corrections within their owning
+issues.
+
+The reviewed target API exposes no rerun operation. The populated synthetic probe
+creates a same-owner fork with a custom name and a branch present only in that fork;
+creating its PR through `head: owner:branch` returns HTTP 404. These are consumer
+limitations, not upgrade failures. Report the observed capability results with
+the rehearsal evidence. These API checks do not select a CLI. Client selection
+requires the shortlist assessment and native comparison specified in issue #118;
+retain the configured metadata client until that comparison supports a change.
+
+Test interruption at each publication/start boundary, including controller death
+while the target runs, reboot, invalid journals, stale evidence, concurrent
+capture/transfer and retention protection. Verify ordinary provision rejection
+leaves the source helper generation intact. Run the selected offline CI and
+existing real-runtime compatibility, backup and restore workflows before live
+execution. After separate exact authorization, check native service verification,
+post-upgrade backup/recovery evidence, normal nightly Git/metadata mirror results
+and consumer acceptance. Live results remain separate from CI evidence.
+
 ## Operator interface and observational verification
 
 Expose `forgejo provision` and `forgejo verify` through the canonical playbook
@@ -423,6 +656,10 @@ consumer repository Forgejo-authoritative or claim CI parity for future runners.
 - [Semaphore service and recovery pattern](009-semaphore-infrastructure-automation.md)
 - [Repository command lifecycle](001-agentic-development-modernization.md#repository-command-lifecycle)
 - [Forgejo LTS releases](https://forgejo.org/releases/15.x/)
+- [Forgejo release index](https://forgejo.org/releases/)
+- [Forgejo release schedule](https://forgejo.org/docs/latest/admin/release-schedule/)
+- [Stable-release upgrade and maintenance policy](https://forgejo.org/docs/latest/admin/upgrade/)
+- [Forgejo 16 changes](https://forgejo.org/2026-07-release-v16-0/)
 - [Upstream rootless container deployment](https://forgejo.org/docs/v15.0/admin/installation/docker/)
 - [Database recommendations](https://forgejo.org/docs/v15.0/admin/setup/recommendations/#databasedb_type)
 - [Database preparation](https://forgejo.org/docs/v15.0/admin/installation/database-preparation/)

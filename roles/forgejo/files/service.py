@@ -22,6 +22,8 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 import mirror_status
+import profiles
+import upgrade_state
 
 STATE = Path("/var/lib/svc-forgejo/forgejo")
 HELPERS = Path("/usr/local/libexec/forgejo")
@@ -84,7 +86,7 @@ def validate_candidate(candidate: Path, allocation: dict) -> dict:
     if type(port) is not int or not 1024 <= port <= 65535:
         raise ValueError("invalid backend port")
     patterns = {
-        "image": r"codeberg[.]org/forgejo/forgejo:15[.]\d+[.]\d+-rootless@sha256:[0-9a-f]{64}",
+        "image": profiles.IMAGE_PATTERN,
         "postgres_image": r"docker[.]io/library/postgres:17[.]\d+@sha256:[0-9a-f]{64}",
         "rclone_image": r"docker[.]io/rclone/rclone:\d+[.]\d+[.]\d+@sha256:[0-9a-f]{64}",
     }
@@ -113,6 +115,29 @@ def operation_lock(path: Path, timeout_seconds: float):
         yield
     finally:
         os.close(descriptor)
+
+
+@contextmanager
+def transfer_operation_lock(allocation: dict):
+    path = STATE / 'transfer.lock'
+    parent = open_directory(STATE)
+    try:
+        try:
+            descriptor = os.open(path.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                 0o600, dir_fd=parent)
+        except FileExistsError:
+            pass
+        else:
+            try:
+                os.fchown(descriptor, allocation['uid'], allocation['gid'])
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+    finally:
+        os.close(parent)
+    regular(path, private=True, owner=allocation['uid'])
+    with operation_lock(path, 300):
+        yield
 
 
 def check_stable_inputs(candidate: Path, targets: dict[str, Path]):
@@ -459,6 +484,7 @@ def reconcile(candidate: Path) -> dict:
     with operation_lock(LOCK, 300):
         allocation = account_allocation()
         check_boundaries(allocation)
+        upgrade_state.require_idle(HELPERS)
         if (STATE / "restart-intent.json").exists() or (STATE / "recovery-failed").exists():
             raise RuntimeError("unfinished backup recovery must complete before reconciliation")
         settings = validate_candidate(candidate, allocation)
@@ -623,6 +649,8 @@ def verify_effective_units():
 
 
 def verify(*, completing_activation=False) -> dict:
+    if not completing_activation:
+        upgrade_state.require_idle(HELPERS)
     if not completing_activation and (HELPERS / 'activation-pending.json').exists():
         raise RuntimeError('configuration activation must complete before verification')
     stored = HELPERS / "desired.json"

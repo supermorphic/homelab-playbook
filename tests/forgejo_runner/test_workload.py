@@ -97,6 +97,14 @@ esac
         self.assertIn('docker.io/library/debian:13', sources)
         self.assertNotIn('docker.io/library/debian', sources)
 
+    def test_stock_policy_permits_images_consumed_by_the_upgrade_rehearsal(self):
+        from scripts.forgejo import upgrade
+        sources = self.module().registry_sources(suite='stock-runtime')
+        for image in (upgrade.SOURCE['image'], upgrade.TARGET['image'],
+                      upgrade.RUNNER_IMAGES['amd64'], upgrade.JOB_IMAGE):
+            with self.subTest(image=image):
+                self.assertIn(image, sources)
+
 
     def test_native_workflow_clones_the_private_loopback_application(self):
         import yaml

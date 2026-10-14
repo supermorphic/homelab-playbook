@@ -16,7 +16,7 @@ import tempfile
 from urllib.parse import urlsplit
 
 from scripts.forgejo.runtime import ROOT, Run, defaults
-from scripts.forgejo.shared import archive, backup, service
+from scripts.forgejo.shared import archive, backup, service, profiles
 
 KEYS = ('database-password', 'secret-key', 'internal-token', 'lfs-jwt-secret', 'oauth2-jwt-secret')
 
@@ -213,7 +213,9 @@ class Client:
         return self.hash_download(path, '/tmp/forgejo-lfs-object', auth='/tmp/forgejo-lfs.conf')
 
 
-def assert_expected(client, expected):
+def assert_expected(client, expected, *, write_branch='restored-write'):
+    if re.fullmatch(r'[A-Za-z0-9_-]+', write_branch) is None:
+        raise ValueError('unsafe restore write-probe branch')
     user = client.request('/user')
     if user['login'] != expected['username']:
         raise RuntimeError('restored credential identifies a different user')
@@ -244,14 +246,14 @@ def assert_expected(client, expected):
     if client.lfs_hash(expected['username'], expected['repository'], expected['lfs']['sha256'], expected['lfs']['size']) != expected['lfs']['sha256']:
         raise RuntimeError('restored LFS object content differs')
     assert_actions_data(client, expected)
-    client.git('-C', '/tmp/forgejo-restored-client', 'checkout', '-b', 'restored-write')
+    client.git('-C', '/tmp/forgejo-restored-client', 'checkout', '-b', write_branch)
     client.command(['/bin/sh', '-ec', "printf 'restored fixture write\\n' > /tmp/forgejo-restored-client/recovery-write.txt"])
     client.git('-C', '/tmp/forgejo-restored-client', 'add', 'recovery-write.txt')
     client.git('-C', '/tmp/forgejo-restored-client', 'commit', '-m', 'Prove restored write')
     revision = client.git('-C', '/tmp/forgejo-restored-client', 'rev-parse', 'HEAD').strip()
-    client.git('-C', '/tmp/forgejo-restored-client', 'push', 'origin', 'HEAD:refs/heads/restored-write')
+    client.git('-C', '/tmp/forgejo-restored-client', 'push', 'origin', 'HEAD:refs/heads/' + write_branch)
     client.git('-C', '/tmp/forgejo-restored-client', 'fetch', 'origin')
-    if client.refs(url).get('refs/heads/restored-write') != revision:
+    if client.refs(url).get('refs/heads/' + write_branch) != revision:
         raise RuntimeError('restored fetch/push failed independent ref comparison')
 
 
@@ -283,7 +285,8 @@ def extract(path, destination):
 
 
 def restore_local(experiment, path, options, expected, *, ownership=None):
-    pins = {key: defaults()['forgejo_' + key] for key in ('image', 'postgres_image', 'rclone_image')}
+    active = {key: defaults()['forgejo_' + key] for key in profiles.KEYS}
+    pins = profiles.recovery_pins(json.loads(archive.read_file(path / 'manifest.json')), active)
     manifest = preflight_archive(path, options.settings_dir, pins, options.destination)
     checked_destination(options.destination)
     options.destination.mkdir(mode=0o700)

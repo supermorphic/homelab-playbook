@@ -25,7 +25,7 @@
 - name: Validate public Forgejo configuration
   ansible.builtin.assert:
     that:
-      - forgejo_image is match('^codeberg[.]org/forgejo/forgejo:15[.][0-9]+[.][0-9]+-rootless@sha256:[0-9a-f]{64}$')
+      - forgejo_image is match('^codeberg[.]org/forgejo/forgejo:(15|16)[.][0-9]+[.][0-9]+-rootless@sha256:[0-9a-f]{64}$')
       - forgejo_postgres_image is match('^docker[.]io/library/postgres:17[.][0-9]+@sha256:[0-9a-f]{64}$')
       - forgejo_rclone_image is match('^docker[.]io/rclone/rclone:[0-9]+[.][0-9]+[.][0-9]+@sha256:[0-9a-f]{64}$')
       - forgejo_postgres_major | string == '17'

@@ -488,28 +488,42 @@ def _compatibility() -> int:
                 )
 
             probe_name = run.name("probe")
+            probe_arguments = _container(
+                run,
+                probe_name,
+                [],
+                _required_shell(
+                    "id",
+                    "uname -m",
+                    "cat /etc/alpine-release",
+                    "ldd /bin/sh",
+                    'for path in /home/semaphore /opt/semaphore /var/lib/semaphore /etc/semaphore /tmp/semaphore; do touch "$path/.compat"; rm "$path/.compat"; done',
+                    'for tool in sh bash curl git python3 pip3 ansible ansible-galaxy ssh jq tar unzip; do command -v "$tool"; done',
+                    "/usr/local/bin/semaphore version",
+                    'test "$(id -u)" = 1001',
+                    'test "$(id -g)" = 0',
+                    "grep -F 'StrictHostKeyChecking no' /etc/ssh/ssh_config.d/semaphore.conf",
+                ),
+            )
+            # Native rootless overlay copies a cold image for keep-id's UID
+            # mapping during creation. Keep that bulk setup outside the shell
+            # probe's execution budget and report the failing phase separately.
+            preparation_started = time.monotonic()
+            print("Preparing Semaphore runtime probe image", flush=True)
+            prepared = run.command(
+                "runtime probe image preparation",
+                [probe_arguments[0], "create", *probe_arguments[2:]],
+                capture=True, timeout=DOWNLOAD_TIMEOUT,
+            )
+            _must(prepared, "Semaphore runtime probe image preparation failed")
+            print(f"Semaphore runtime probe image preparation passed in "
+                  f"{time.monotonic() - preparation_started:.1f}s", flush=True)
             probe = run.command(
                 "runtime identity, writable paths, and bundled tools",
-                _container(
-                    run,
-                    probe_name,
-                    [],
-                    _required_shell(
-                        "id",
-                        "uname -m",
-                        "cat /etc/alpine-release",
-                        "ldd /bin/sh",
-                        'for path in /home/semaphore /opt/semaphore /var/lib/semaphore /etc/semaphore /tmp/semaphore; do touch "$path/.compat"; rm "$path/.compat"; done',
-                        'for tool in sh bash curl git python3 pip3 ansible ansible-galaxy ssh jq tar unzip; do command -v "$tool"; done',
-                        "/usr/local/bin/semaphore version",
-                        'test "$(id -u)" = 1001',
-                        'test "$(id -g)" = 0',
-                        "grep -F 'StrictHostKeyChecking no' /etc/ssh/ssh_config.d/semaphore.conf",
-                    ),
-                ),
-                capture=True,
+                ["podman", "start", "--attach", probe_name], capture=True,
             )
-            run.discard_exited(probe_name)
+            # A start error can precede auto-removal of the created container.
+            # Keep its intent tracked until cleanup independently checks absence.
             # This probe contains only image identity, paths, and tool metadata.
             # Keep captured output private by default for all other commands.
             _must(probe, "Semaphore runtime probe failed", include_output=True)

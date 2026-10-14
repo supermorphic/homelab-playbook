@@ -39,12 +39,12 @@ class Application:
 
     def __init__(self, run: Run, directory: Path, *, suffix: str = "source", auth_dir: Path | None = None,
                  extra_environment: tuple[str, ...] = (), additional_volumes: tuple[str, ...] = (),
-                 access_log: bool = False):
+                 access_log: bool = False, runtime_pins: dict | None = None):
         self.run = run
         self.directory = directory
         self.suffix = suffix
         self.access_log = access_log
-        self.pins = defaults()
+        self.pins = defaults() if runtime_pins is None else dict(runtime_pins)
         self.user = "fixture-admin"
         self.password = secrets.token_urlsafe(32)
         self.db_password = secrets.token_urlsafe(32)

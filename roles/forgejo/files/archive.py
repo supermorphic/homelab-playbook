@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 import re
 import stat
 import tarfile
+import profiles
 
 PAYLOADS = ('database.dump', 'files.tar.gz', 'manifest.json', 'SHA256SUMS')
 LAYOUT = {'data': '/var/lib/gitea', 'config': '/etc/gitea'}
@@ -144,7 +145,7 @@ def validate_manifest(manifest: dict):
             or re.fullmatch(r'[0-9a-f]{32}', manifest.get('recovery_generation', '')) is None):
         raise ValueError('incompatible archive manifest')
     patterns = {
-        'image': r'codeberg[.]org/forgejo/forgejo:15[.]\d+[.]\d+-rootless@sha256:[0-9a-f]{64}',
+        'image': profiles.IMAGE_PATTERN,
         'postgres_image': r'docker[.]io/library/postgres:17[.]\d+@sha256:[0-9a-f]{64}',
         'rclone_image': r'docker[.]io/rclone/rclone:\d+[.]\d+[.]\d+@sha256:[0-9a-f]{64}',
     }
