@@ -11,8 +11,9 @@ import sys
 import tempfile
 
 
-def plan_labels(config=Path('/etc/forgejo-metadata/config.json'),runner=subprocess.run):
+def observe_plan(mode,config,runner):
     from forgejo_metadata.model import load_config, positive
+    if mode not in ('labels-plan','pending-plan'): raise ValueError
     with open(config) as stream: document=json.load(stream)
     mappings=load_config(document); timeout=document.get('timeout_seconds',600)
     if not positive(timeout) or timeout>1800: raise ValueError
@@ -27,15 +28,25 @@ def plan_labels(config=Path('/etc/forgejo-metadata/config.json'),runner=subproce
     for name in sorted({name for mapping in mappings for name in (mapping.source_credential,mapping.destination_credential)}):
         properties.append(f'LoadCredential={name}:/etc/forgejo-metadata/credentials/{name}')
     command=['systemd-run','--quiet','--wait','--collect','--pipe','--service-type=oneshot',
-        '--unit=forgejo-metadata-labels-plan']+['--property='+value for value in properties]+[
-        '/usr/bin/python3','-B','-m','forgejo_metadata','--config','/etc/forgejo-metadata/config.json','labels-plan']
+        '--unit=forgejo-metadata-'+mode]+['--property='+value for value in properties]+[
+        '/usr/bin/python3','-B','-m','forgejo_metadata','--config','/etc/forgejo-metadata/config.json',mode]
     result=runner(command,check=False,capture_output=True,text=True,timeout=timeout+60,
         env={'PATH':'/usr/sbin:/usr/bin:/sbin:/bin'})
-    if result.returncode: print('label_plan_failed'); return 1
+    if result.returncode: print('observation_failed'); return 1
     if len(result.stdout.encode())>1024*1024: raise ValueError
     value=json.loads(result.stdout)
-    if not isinstance(value,dict) or not isinstance(value.get('mappings'),list) or not isinstance(value.get('digest'),str): raise ValueError
+    if not isinstance(value,dict): raise ValueError
+    if mode=='labels-plan' and (not isinstance(value.get('mappings'),list) or not isinstance(value.get('digest'),str)): raise ValueError
+    if mode=='pending-plan' and not isinstance(value.get('pending'),list): raise ValueError
     print(json.dumps(value,sort_keys=True)); return 0
+
+
+def plan_labels(config=Path('/etc/forgejo-metadata/config.json'),runner=subprocess.run):
+    return observe_plan('labels-plan',config,runner)
+
+
+def plan_pending(config=Path('/etc/forgejo-metadata/config.json'),runner=subprocess.run):
+    return observe_plan('pending-plan',config,runner)
 
 
 def submit(request,root=Path('/run/forgejo-metadata'),runner=subprocess.run):
@@ -72,6 +83,7 @@ def main():
     if os.geteuid()!=0: print('root_submission_required'); return 1
     try:
         if sys.argv[1:]==['labels-plan']: return plan_labels()
+        if sys.argv[1:]==['pending-plan']: return plan_pending()
         if sys.argv[1:]: raise ValueError
         data=sys.stdin.buffer.read(16385)
         if len(data)>16384: raise ValueError

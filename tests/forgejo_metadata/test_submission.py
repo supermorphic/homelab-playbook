@@ -23,6 +23,25 @@ class SubmissionTests(unittest.TestCase):
             self.assertEqual(1,module.submit({'operation':'manual-apply'},root,runner=runner))
             self.assertFalse((root/'control.json').exists())
 
+    def test_pending_plan_uses_scoped_credentials_and_read_only_state(self):
+        module=self.module()
+        with tempfile.TemporaryDirectory() as directory:
+            config=Path(directory)/'config.json'
+            config.write_text(json.dumps(dict(CONFIG,timeout_seconds=60)))
+            calls=[]
+            def runner(command,**kwargs):
+                calls.append(command)
+                return type('Result',(),{'returncode':0,'stdout':'{"pending":[]}', 'stderr':''})()
+            self.assertTrue(hasattr(module,'plan_pending'),'pending-create inspection gateway missing')
+            output=io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(0,module.plan_pending(config,runner))
+            self.assertEqual({'pending':[]},json.loads(output.getvalue()))
+            self.assertEqual(['--config','/etc/forgejo-metadata/config.json','pending-plan'],calls[0][-3:])
+            self.assertIn('--property=ReadOnlyPaths=/var/lib/forgejo-metadata',calls[0])
+            self.assertIn('--property=LoadCredential=destination:/etc/forgejo-metadata/credentials/destination',calls[0])
+            self.assertFalse(any(arg.startswith('--property=ReadWritePaths') for arg in calls[0]))
+
     def test_plan_uses_fixed_read_only_service_and_returns_review_output(self):
         module=self.module()
         with tempfile.TemporaryDirectory() as directory:

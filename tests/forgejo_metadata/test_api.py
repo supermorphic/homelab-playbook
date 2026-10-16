@@ -27,6 +27,25 @@ class APITests(unittest.TestCase):
             with self.assertRaises(MirrorError): client.request(method,path)
         self.assertEqual([],self.calls)
 
+    def test_request_metrics_count_elapsed_operations_without_payloads(self):
+        client=self.client([(200,[],{}),(200,{'body':'private response'}, {})])
+        with patch.object(self.api.time,'monotonic',side_effect=[10,12,20,23]):
+            client.request('GET','/issues')
+            client.request('PATCH','/issues/1',{'body':'private request'})
+        self.assertTrue(hasattr(client,'requests'),'sanitized request metrics missing')
+        self.assertEqual({'GET':{'count':1,'seconds':2},'PATCH':{'count':1,'seconds':3}},client.requests)
+        self.assertNotIn('private',json.dumps(client.requests))
+        self.assertNotIn('synthetic-token',json.dumps(client.requests))
+
+    def test_failed_transport_is_included_in_sanitized_metrics(self):
+        def unavailable(*args): raise self.api.APIError('transport_failure')
+        client=self.api.DestinationAPI(self.mapping,'synthetic-token',transport=unavailable)
+        with patch.object(self.api.time,'monotonic',side_effect=[10,14]):
+            with self.assertRaisesRegex(MirrorError,'transport_failure'):
+                client.request('GET','/issues')
+        self.assertTrue(hasattr(client,'requests'),'sanitized request metrics missing')
+        self.assertEqual({'GET':{'count':1,'seconds':4}},client.requests)
+
     def test_temporary_dns_failure_retries_before_request_is_sent(self):
         for method,path,payload in [('GET','/issues',None),('POST','/issues',{'title':'Example'}),
                                     ('PATCH','/issues/1',{'state':'closed'})]:

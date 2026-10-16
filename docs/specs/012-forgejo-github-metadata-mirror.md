@@ -144,10 +144,16 @@ fails, but any failure makes the overall run fail. Partial work and backlog neve
 advance last-converged evidence, which describes observed source data rather than
 an atomic snapshot across both services.
 
+Reserve time for verification before admitting another write, using the observed
+write-cycle cost while retaining the hard run deadline. If the remaining budget
+is insufficient, retain progress and report incomplete convergence for a later
+authorized run. Real interruptions still preserve uncertain-create evidence.
+
 Pace serial requests and respect primary and secondary rate limits. Persist retry
 deadlines by credential so restarts cannot bypass throttling and independent
 credentials can progress. Report sanitized operation results and convergence
-freshness; never log credentials, API payloads, raw error bodies, or source content.
+freshness, including request counts and elapsed time by method for diagnosis;
+never log credentials, API payloads, raw error bodies, or source content.
 Freshness must account for the nightly schedule, clock changes, and bounded run time.
 
 ## Interrupted creation and rebuild safety
@@ -246,6 +252,12 @@ acceptance.
 
 Stop previous writers before resolving ownership or creation conflicts. Earlier
 convergence cannot authorize writes when safety state is missing or invalid.
+Use `mise run playbook -- forgejo-metadata pending-plan production --limit nuc4`
+to inspect uncertain creates through the existing scoped service credentials with
+read-only safety state. The report contains identities and ownership observations,
+not issue or comment content, and never resolves an intent. A `found` result permits
+review of exactly one marked destination; reconciliation still requires its own
+authorization. A `not_found` result does not prove non-creation or authorize a retry.
 Resume scheduling only after uncertain outcomes and conflicts are resolved and
 convergence is verified.
 

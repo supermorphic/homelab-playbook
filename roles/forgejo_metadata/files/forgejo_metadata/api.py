@@ -24,6 +24,7 @@ class Client:
     def __init__(self,mapping,token,*,transport=None,sleep=time.sleep,clock=time.time):
         self.mapping=mapping; self._token=token; self.sleep=sleep; self.clock=clock
         self.next_write=0; self.retry_at=0
+        self.requests={}
         self.retry_key=mapping.source_credential if self.source else mapping.destination_credential
         self.origin=mapping.source_origin if self.source else mapping.destination_origin
         self.prefix=('/api/v1' if self.source else '')+'/repos/'+(mapping.source_repo if self.source else mapping.destination_repo)
@@ -85,7 +86,13 @@ class Client:
         headers={'Authorization':('token ' if self.source else 'Bearer ')+self._token,
                  'Accept':'application/json' if self.source else 'application/vnd.github+json',
                  'Content-Type':'application/json','X-GitHub-Api-Version':'2022-11-28'}
-        status,body,received=self.transport(method,url,headers,payload)
+        started=time.monotonic()
+        try:
+            status,body,received=self.transport(method,url,headers,payload)
+        finally:
+            measured=self.requests.setdefault(method,{'count':0,'seconds':0})
+            measured['count']+=1
+            measured['seconds']+=time.monotonic()-started
         received={k.lower():v for k,v in received.items()}
         if len(body)>MAX_RESPONSE: raise APIError('response_limit')
         try: value=json.loads(body)

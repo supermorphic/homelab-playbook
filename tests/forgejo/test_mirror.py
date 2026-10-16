@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import importlib
 import io
 import itertools
+import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -106,6 +107,26 @@ class MirrorTests(unittest.TestCase):
         failed = [dict(before[0], failed=True, last_attempt=int(self.now.timestamp()))]
         with patch.object(self.mirror, 'rows', return_value=failed):
             self.mirror.wait_for_attempts(object(), before)
+
+    def test_stored_refs_do_not_depend_on_https_credentials(self):
+        from scripts.forgejo.runtime import Run
+        run = Run()
+        with tempfile.TemporaryDirectory() as directory:
+            repository = str(Path(directory) / 'destination.git')
+            run.command(['git', 'init', '--bare', repository])
+            tree = run.command(['git', '--git-dir=' + repository, 'mktree'], input_text='').stdout.strip()
+            identity = {'GIT_AUTHOR_NAME': 'Fixture', 'GIT_AUTHOR_EMAIL': 'fixture@example.invalid',
+                        'GIT_COMMITTER_NAME': 'Fixture', 'GIT_COMMITTER_EMAIL': 'fixture@example.invalid',
+                        'GIT_ASKPASS': '/nonexistent-fixture-credential-helper', 'GIT_TERMINAL_PROMPT': '0'}
+            with patch.dict(os.environ, identity):
+                revision = run.command(['git', '--git-dir=' + repository, 'commit-tree', tree],
+                                       input_text='Fixture commit\n').stdout.strip()
+                for name in ('refs/heads/main', 'refs/tags/fixture'):
+                    run.command(['git', '--git-dir=' + repository, 'update-ref', name, revision])
+                self.assertEqual({'refs/heads/main': revision, 'refs/tags/fixture': revision},
+                                 self.mirror.stored_refs(run, repository))
+                run.command(['git', '--git-dir=' + repository, 'update-ref', '-d', 'refs/tags/fixture'])
+                self.assertEqual({'refs/heads/main': revision}, self.mirror.stored_refs(run, repository))
 
 
 if __name__ == '__main__':
