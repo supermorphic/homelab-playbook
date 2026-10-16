@@ -64,6 +64,20 @@ class CLITests(unittest.TestCase):
         self.assertEqual(before,{p.name:p.read_bytes() for p in self.root.iterdir()})
         with self.assertRaises(SystemExit) as error: self.run_cli('unknown')
         self.assertEqual(2,error.exception.code)
+
+    def test_pending_plan_reports_found_comment_without_resolving_or_writing(self):
+        from forgejo_metadata.model import SourceKey
+        from forgejo_metadata.state import StateStore
+        store=StateStore(self.root/'state.json',enrollment_fingerprint(load_config(CONFIG)))
+        store.bootstrap('initial','fixture')
+        self.assertEqual(0,self.run_cli('apply'))
+        store.begin_create(SourceKey('fixture',7,'comment',24))
+        before={p.name:p.read_bytes() for p in self.root.iterdir()}
+        writes=list(self.destination.writes); self.output=io.StringIO()
+        self.assertEqual(0,self.run_cli('pending-plan'))
+        self.assertEqual('found',json.loads(self.output.getvalue())['pending'][0]['status'])
+        self.assertEqual(before,{p.name:p.read_bytes() for p in self.root.iterdir()})
+        self.assertEqual(writes,self.destination.writes)
     def test_credentials_have_no_ambient_fallback(self):
         with patch.dict('os.environ',{'GITHUB_TOKEN':'synthetic-token'},clear=True):
             with self.assertRaisesRegex(Exception,'credentials_unavailable'): self.module.credential('destination')

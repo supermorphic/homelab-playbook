@@ -10,6 +10,7 @@ import time
 from .api import SourceAPI, DestinationAPI
 from .api import APIError
 from .labels import build_adoption_plan, adopt_labels
+from .pending import build_pending_plan
 from .model import MirrorError, SourceKey, load_config, enrollment_fingerprint, positive
 from .reconcile import reconcile, discover_owned
 from .state import StateStore, atomic_json, operation_lock, read_private
@@ -125,6 +126,7 @@ def main(argv=None):
     sub=parser.add_subparsers(dest='mode',required=True)
     sub.add_parser('plan',help='Print public enrollment and its confirmation fingerprint without changing state.')
     sub.add_parser('labels-plan',help='Read APIs and list exact label adoption pairs, conflicts and review digest without changing safety state.')
+    sub.add_parser('pending-plan',help='Read complete destination inventories and report pending creates without changing the journal or destinations. Absence does not authorize recreation.')
     sub.add_parser('apply',help='Reconcile enrolled destination metadata (writes).')
     sub.add_parser('check',help='Observe initialization and convergence status without repairs.')
     attended=sub.add_parser('control',help='Execute a root-owned, attended request.')
@@ -159,6 +161,9 @@ def main(argv=None):
         def deadline(signum,frame): raise MirrorError('run_timeout')
         deadline_at=time.monotonic()+timeout
         previous_handler=signal.signal(signal.SIGALRM,deadline); signal.alarm(timeout)
+        if args.mode=='pending-plan':
+            print(json.dumps(build_pending_plan(mappings,store,clients),sort_keys=True))
+            return 0
         if args.mode=='labels-plan':
             print(json.dumps(build_adoption_plan(mappings,store,clients),sort_keys=True))
             return 0

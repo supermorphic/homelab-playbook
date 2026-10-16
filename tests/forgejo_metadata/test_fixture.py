@@ -8,7 +8,7 @@ import sys
 import time
 import unittest
 from support import CONFIG
-from forgejo_metadata.model import load_config,enrollment_fingerprint
+from forgejo_metadata.model import load_config,enrollment_fingerprint,SourceKey
 from forgejo_metadata.state import StateStore
 from forgejo_metadata.api import SourceAPI
 from forgejo_metadata.api import DestinationAPI
@@ -55,6 +55,21 @@ class FixtureTests(unittest.TestCase):
         self.fixture.source_data['milestones'][0]['due_on']='2026-01-01T17:00:00-07:00'
         self.assertEqual(0,self.apply())
         self.assertEqual('2026-01-02T00:00:00Z',self.fixture.snapshot()['milestones'][0]['due_on'])
+
+    def test_pending_plan_reads_real_tls_without_resolving_or_writing(self):
+        self.assertEqual(0,self.apply())
+        self.store.begin_create(SourceKey('fixture',7,'comment',24))
+        before={p.name:p.read_bytes() for p in (self.root/'runtime').iterdir()}
+        writes=list(self.fixture.writes())
+        command=self.command(); command[-1]='pending-plan'
+        result=subprocess.run(command,env=self.environment,cwd=self.package,capture_output=True,text=True,timeout=45)
+        self.assertEqual(0,result.returncode,result.stderr)
+        plan=json.loads(result.stdout)
+        self.assertEqual('found',plan['pending'][0]['status'])
+        self.assertEqual(before,{p.name:p.read_bytes() for p in (self.root/'runtime').iterdir()})
+        self.assertEqual(writes,self.fixture.writes())
+        self.assertNotIn('Original comment',result.stdout)
+        self.assertNotIn('synthetic-fixture-token',result.stdout+result.stderr)
     def test_killed_after_accepted_post_rediscovered_without_duplicate(self):
         self.fixture.mode={'hang_after_post':True}
         process=subprocess.Popen(self.command(),env=self.environment,cwd=self.package,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

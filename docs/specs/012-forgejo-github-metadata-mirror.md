@@ -246,6 +246,12 @@ acceptance.
 
 Stop previous writers before resolving ownership or creation conflicts. Earlier
 convergence cannot authorize writes when safety state is missing or invalid.
+Use `mise run playbook -- forgejo-metadata pending-plan production --limit nuc4`
+to inspect uncertain creates through the existing scoped service credentials with
+read-only safety state. The report contains identities and ownership observations,
+not issue or comment content, and never resolves an intent. A `found` result permits
+review of exactly one marked destination; reconciliation still requires its own
+authorization. A `not_found` result does not prove non-creation or authorize a retry.
 Resume scheduling only after uncertain outcomes and conflicts are resolved and
 convergence is verified.
 
