@@ -94,7 +94,7 @@ def comment_parent(mapping,owned,parent_id,target):
         raise MirrorError('ownership_conflict')
     return parent
 
-def reconcile(mapping,source,destination,store,write_budget):
+def reconcile(mapping,source,destination,store,write_budget,*,deadline=None):
     result=RunResult()
     try:
         store.require_initialized(); destination.preflight(mapping)
@@ -112,6 +112,7 @@ def reconcile(mapping,source,destination,store,write_budget):
                 objects.append((kind,row,None))
                 if kind=='issue': objects.extend(('comment',c,row['id']) for c in source_data.comments.get(row['id'],[]))
         for kind,row,parent_id in objects:
+            started=None
             try:
                 projection=render_projection(mapping,kind,row)
                 parent=None
@@ -131,6 +132,7 @@ def reconcile(mapping,source,destination,store,write_budget):
                     try: verify_projection(projection,target.fields); continue
                     except MirrorError: pass
                 if result.writes>=write_budget: result.backlog+=1; continue
+                if deadline is not None: started=deadline.begin()
                 destination.preflight(mapping)
                 fresh=discover_recorded(mapping,destination,store,source_data.labels)
                 observed=fresh.get(projection.key)
@@ -139,6 +141,7 @@ def reconcile(mapping,source,destination,store,write_budget):
                 if kind=='comment': parent=comment_parent(mapping,fresh,parent_id,target)
                 if target is None:
                     destination.preflight(mapping)
+                    if deadline is not None: deadline.require_write()
                     store.begin_create(projection.key)
                     try:
                         result.writes+=1
@@ -161,6 +164,7 @@ def reconcile(mapping,source,destination,store,write_budget):
                         if current is None: raise MirrorError('ownership_conflict')
                         if kind=='comment': parent=comment_parent(mapping,fresh,parent_id,current)
                         destination.preflight(mapping)
+                        if deadline is not None: deadline.require_write()
                         result.writes+=1
                         destination.update(current,projection)
                         locator='/labels/'+quote(projection.fields['name'],safe='') if kind=='label' else current.locator
@@ -173,7 +177,12 @@ def reconcile(mapping,source,destination,store,write_budget):
             except (MirrorError,KeyError,TypeError,ValueError) as error:
                 result.errors.append(str(error) if isinstance(error,MirrorError) else 'invalid_source_or_response')
                 if isinstance(error,APIError) and error.retry_at: store.defer(error.retry_at,error.retry_key)
+                if isinstance(error,MirrorError) and str(error)=='run_budget_exhausted':
+                    result.backlog+=1
+                    return result
                 if isinstance(error,MirrorError) and str(error) in ('run_timeout','ownership_conflict','label_name_collision','unsupported_label_name'): return result
+            finally:
+                if deadline is not None and started is not None: deadline.finish(started)
         if any(intent['key']['instance']==mapping.instance and intent['key']['repository_id']==mapping.source_id for intent in store.load()['pending'].values()): result.errors.append('create_outcome_unresolved')
         if not result.errors and not result.backlog: result.converged_at=time.time()
     except MirrorError as error:

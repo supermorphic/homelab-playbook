@@ -11,6 +11,7 @@ from .api import SourceAPI, DestinationAPI
 from .api import APIError
 from .labels import build_adoption_plan, adopt_labels
 from .pending import build_pending_plan
+from .deadline import RunDeadline
 from .model import MirrorError, SourceKey, load_config, enrollment_fingerprint, positive
 from .reconcile import reconcile, discover_owned
 from .state import StateStore, atomic_json, operation_lock, read_private
@@ -54,15 +55,17 @@ def apply(mappings,store,root,budget,deadline_at):
     if not isinstance(previous,dict) or previous.get('fingerprint')!=store.fingerprint or not isinstance(previous.get('mappings'),list): previous={}
     old={row['source']:row for row in previous.get('mappings',[]) if isinstance(row,dict) and 'source' in row}
     status={'fingerprint':store.fingerprint,'attempted_at':time.time(),'mappings':[]}; success=True
+    deadline=RunDeadline(deadline_at)
     remaining=budget; timed_out=False
     for mapping in mappings:
+        source=destination=None
         identity=f'{mapping.instance}:{mapping.source_id}'
         last=old.get(identity,{}).get('last_converged')
         try:
             if timed_out or time.monotonic()>=deadline_at: raise MirrorError('run_timeout')
             if store.deferred(mapping): raise MirrorError('rate_limited')
             source,destination=clients(mapping)
-            result=reconcile(mapping,source,destination,store,remaining)
+            result=reconcile(mapping,source,destination,store,remaining,deadline=deadline)
             remaining-=result.writes
             timed_out='run_timeout' in result.errors
             errors=dict(Counter(result.errors)); backlog=result.backlog
@@ -72,7 +75,9 @@ def apply(mappings,store,root,budget,deadline_at):
             errors={str(error) if isinstance(error,MirrorError) else 'invalid_source_or_response':1}; backlog=0; writes=0; success=False
             timed_out=timed_out or 'run_timeout' in errors
         status['mappings'].append({'source':identity,'last_attempted':time.time(),
-            'last_converged':last,'writes':writes,'backlog':backlog,'errors':errors})
+            'last_converged':last,'writes':writes,'backlog':backlog,'errors':errors,
+            'requests':{'source':getattr(source,'requests',{}),
+                        'destination':getattr(destination,'requests',{})}})
     status['unresolved_intents']=len(store.load()['pending'])
     success=success and not status['unresolved_intents']
     atomic_json(root/'status.json',status)

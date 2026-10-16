@@ -6,7 +6,7 @@ from .reconcile import discover_owned
 
 def build_pending_plan(mappings, store, clients):
     journal = store.load()
-    report = {'fingerprint': enrollment_fingerprint(mappings), 'pending': []}
+    report = {'fingerprint': enrollment_fingerprint(mappings), 'pending': [], 'observations': []}
     enrolled = {(mapping.instance, mapping.source_id) for mapping in mappings}
     for mapping in mappings:
         keys = [SourceKey(**intent['key']) for intent in journal['pending'].values()
@@ -19,6 +19,8 @@ def build_pending_plan(mappings, store, clients):
         _, destination = clients(mapping)
         destination.preflight(mapping)
         inventory = destination.inventory(mapping)
+        report['observations'].append({'source': f'{mapping.instance}:{mapping.source_id}',
+                                       'requests': getattr(destination, 'requests', {})})
         conflict = False
         try:
             owned = discover_owned(mapping, inventory, journal.get('ownership', {}))
