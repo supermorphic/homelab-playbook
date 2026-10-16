@@ -18,6 +18,13 @@ evaluate_status = mirror_status.evaluate_status
 summarize = mirror_status.summarize
 
 
+def stored_refs(client, repository):
+    """Inspect the owned destination storage independently of source credentials."""
+    output = client.command(['git', '--git-dir=' + repository, 'for-each-ref',
+                             '--format=%(objectname) %(refname)']).stdout
+    return {name: revision for revision, name in (line.split() for line in output.splitlines())}
+
+
 def fixture_timezone(now, *, seconds=20):
     """A fixed-offset TZif v1 file; epoch time and shipped cron stay unchanged."""
     utc = now.astimezone(timezone.utc)
@@ -225,9 +232,13 @@ def run_fixture(run):
                 raise RuntimeError('native authentication failure was not visible')
             if hashlib.sha256((source.config / 'mirror-credentials').read_bytes()).hexdigest() != credential_hash:
                 raise RuntimeError('failed Git authentication changed declared credential inputs')
-            write(source.config / 'mirror-credentials', credentials)
-            if destination_refs() != changed:
+            # The source credentials are still invalid. Inspect destination data
+            # independently; the next native HTTPS scan proves credential recovery.
+            from scripts.forgejo.restore import Client
+            repository = '/var/lib/gitea/git/repositories/' + target.user + '/nightly.git'
+            if stored_refs(Client(run, target.app), repository) != changed:
                 raise RuntimeError('failed authentication changed destination refs')
+            write(source.config / 'mirror-credentials', credentials)
             phase = 'retry at next eligible native scan'
             source.sql('\\connect forgejo\nUPDATE push_mirror SET last_update=extract(epoch from now())::bigint-9*3600;')
             scan(run, source, zone_file)
