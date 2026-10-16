@@ -10,7 +10,30 @@ import stat
 from urllib.parse import quote
 
 
+class ConfigurationResponse(http.client.HTTPResponse):
+    def _read_and_discard_trailer(self):
+        # Caddy 2.6 sends its configuration identity as a declared trailer.
+        # Python normally discards trailers; retain only this required identity.
+        trailers = http.client.parse_headers(self.fp)
+        values = trailers.get_all('Etag', [])
+        if trailers.defects:
+            raise ValueError('Caddy returned malformed response trailers')
+        if not values:
+            return
+        declared = {name.strip().lower()
+                    for line in self.headers.get_all('Trailer', [])
+                    for name in line.split(',')}
+        current = self.headers.get_all('Etag', [])
+        if ('etag' not in declared or len(values) != 1 or not values[0].strip()
+                or len(current) > 1 or (current and current[0] != values[0])):
+            raise ValueError('Caddy returned an ambiguous configuration identity')
+        if not current:
+            self.headers['Etag'] = values[0]
+
+
 class UnixConnection(http.client.HTTPConnection):
+    response_class = ConfigurationResponse
+
     def __init__(self, path):
         super().__init__('localhost', timeout=15)
         self.path = path
@@ -30,7 +53,7 @@ class Client:
             raise ValueError('Caddy administration requires its protected local socket')
 
     def request(self, method, path, body=None, etag=None):
-        headers = {'Content-Type': 'application/json'}
+        headers = {'Content-Type': 'application/json', 'Host': ''}
         if etag is not None:
             headers['If-Match'] = etag
         connection = UnixConnection(self.path)
@@ -41,6 +64,8 @@ class Client:
             if response.status != 200 or len(content) > 16 * 1024 * 1024:
                 raise RuntimeError('Caddy route operation did not complete safely')
             return json.loads(content) if content else None, response.getheader('Etag')
+        except http.client.HTTPException:
+            raise RuntimeError('Caddy route operation did not complete safely') from None
         finally:
             connection.close()
 
@@ -51,6 +76,8 @@ class Client:
         return content, etag
 
     def replace(self, path, body, etag):
+        if not isinstance(etag, str) or not etag.strip():
+            raise ValueError('Caddy replacement requires a configuration identity')
         self.request('PATCH', path, body, etag)
 
 
