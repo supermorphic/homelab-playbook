@@ -13,9 +13,14 @@ from lifecycle import private_directory, verify_file, read_checkpoint
 
 
 SCOPES = {'user:supermorphic', 'organization:supermorphic'}
-LIMITS = {'memory_bytes': 2 * 1024**3, 'disk_bytes': 24 * 1024**3,
+LIMITS = {'memory_bytes': 4 * 1024**3, 'disk_bytes': 24 * 1024**3,
           'pids': 768, 'cpu_percent': 200, 'idle_seconds': 300, 'job_seconds': 10800}
 FIELDS = {'name', 'scope', 'enabled', 'label', 'state_root', 'controller', 'worker', 'limits'}
+# Host reserves for Forgejo, PostgreSQL, Semaphore and management. CPU overcommit
+# only slows jobs, so enabled workers may claim three quarters of host CPU.
+MEMORY_RESERVE = 2 * 1024**3
+DISK_RESERVE = 4 * 1024**3
+CPU_SHARE = (3, 4)
 
 
 def read_json(root, name, maximum, *, authority_uid=0):
@@ -37,8 +42,8 @@ def read_registry(slot, *, authority_uid=0):
     value = read_json(root, 'slots.json', 65536, authority_uid=authority_uid)
     if (not isinstance(value, dict) or set(value) != {'schema', 'slots'}
             or type(value['schema']) is not int or value['schema'] != 1
-            or not isinstance(value['slots'], list) or len(value['slots']) != 2):
-        raise ValueError('Host registry must declare exactly two shared workers')
+            or not isinstance(value['slots'], list) or not value['slots']):
+        raise ValueError('Host registry must declare its shared workers')
     slots = value['slots']
     for candidate in slots:
         if (not isinstance(candidate, dict) or set(candidate) != FIELDS
@@ -56,7 +61,7 @@ def read_registry(slot, *, authority_uid=0):
             raise ValueError('Host worker declaration is outside its qualified boundary')
     declared = slot
     if (sum(candidate == declared for candidate in slots) != 1
-            or len({candidate['name'] for candidate in slots}) != 2
+            or len({candidate['name'] for candidate in slots}) != len(slots)
             or len({candidate['label'] for candidate in slots}) != 1
             or len({candidate['scope'] for candidate in slots}) != 1):
         raise ValueError('Worker differs from its shared host registry')
@@ -151,14 +156,28 @@ def validate_capacity(slot, slots, observed, *, peer_anon_bytes, peer_disk_bytes
     peers = [candidate for candidate in slots if candidate['name'] != slot['name'] and candidate['enabled']]
     allowance = sum(candidate['limits']['memory_bytes'] for candidate in peers)
     credit = min(max(peer_anon_bytes, 0), allowance)
-    memory = slot['limits']['memory_bytes'] + allowance + 2 * 1024**3 - credit
+    memory = slot['limits']['memory_bytes'] + allowance + MEMORY_RESERVE - credit
     disk_allowance = sum(candidate['limits']['disk_bytes'] for candidate in peers)
-    disk = sum(candidate['limits']['disk_bytes'] for candidate in slots) + 4 * 1024**3
+    disk = sum(candidate['limits']['disk_bytes'] for candidate in slots) + DISK_RESERVE
     disk -= min(max(peer_disk_bytes, 0), disk_allowance)
-    cpu = sum(candidate['limits']['cpu_percent'] for candidate in slots if candidate['enabled'])
     if (observed['memory_available'] < memory or observed['memory_total'] < memory + credit
-            or observed['disk_available'] < disk or cpu > observed['cpu_count'] * 50):
+            or observed['disk_available'] < disk or not cpu_fits(slots, observed['cpu_count'])):
         raise ValueError('Shared worker budgets and the host service reserve are unavailable')
+
+
+def cpu_fits(slots, cpu_count):
+    cpu = sum(candidate['limits']['cpu_percent'] for candidate in slots if candidate['enabled'])
+    return cpu * CPU_SHARE[1] <= cpu_count * 100 * CPU_SHARE[0]
+
+
+def validate_budget(slots, capacity):
+    """Reject a declaration that could never be admitted on an otherwise idle host."""
+    memory = sum(candidate['limits']['memory_bytes'] for candidate in slots if candidate['enabled'])
+    disk = sum(candidate['limits']['disk_bytes'] for candidate in slots)
+    if (capacity['memory_total'] < memory + MEMORY_RESERVE
+            or capacity['disk_total'] < disk + DISK_RESERVE
+            or not cpu_fits(slots, capacity['cpu_count'])):
+        raise ValueError('Declared workers exceed the host admission budget')
 
 
 def peer_anonymous_memory(slot, state):
@@ -218,8 +237,8 @@ def require_manager_health(slot, *, execute):
 
 
 def service_baseline(slot):
-    # The private registry reserves the exact systemd namespaces of the two
-    # disposable workers. Their normal completion must not look like an
+    # The private registry reserves the exact systemd namespaces of every
+    # disposable worker. Their normal completion must not look like an
     # unrelated host service disappearing, including during snapshot races.
     from scripts.forgejo_runner.host_resources import active_services
     slots = read_registry(slot)

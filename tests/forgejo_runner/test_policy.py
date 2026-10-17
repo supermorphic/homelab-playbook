@@ -14,7 +14,7 @@ def slot(index=0, scope='user:supermorphic'):
         return {'name': name, 'uid': 2200 + offset, 'gid': 2200 + offset,
                 'subuid_start': 1000000 + offset * 65536, 'subuid_count': 65536,
                 'subgid_start': 1000000 + offset * 65536, 'subgid_count': 65536}
-    name = ('worker-1', 'worker-2', 'worker-3')[index]
+    name = ('worker-1', 'worker-2', 'worker-3', 'worker-4')[index]
     return {'name': name, 'scope': scope, 'enabled': False,
             'label': 'homelab-podman-amd64',
             'state_root': '/var/lib/forgejo-runner/' + name,
@@ -95,9 +95,50 @@ class SlotPolicyTests(unittest.TestCase):
         self.assertEqual([slot(scope='organization:supermorphic')],
                          self.policy.validate_slots([slot(scope='organization:supermorphic')]))
 
-    def test_a_third_worker_exceeds_the_two_worker_resource_budget(self):
+    def enabled(self, count, memory=4 * 1024**3):
+        slots = [slot(index) for index in range(count)]
+        for item in slots:
+            item['enabled'] = True
+            item['limits']['memory_bytes'] = memory
+        return slots
+
+    def test_three_workers_with_four_gib_fit_the_measured_host_budget(self):
+        capacity = {'cpu_count': 8, 'memory_total': 31 * 1024**3, 'disk_total': 400 * 1024**3}
+        desired = self.enabled(3)
+        self.assertEqual(desired, self.policy.validate_slots(desired))
+        self.assertEqual(desired, self.policy.validate_budget(desired, capacity))
+
+    def test_declared_workers_beyond_the_admission_budget_are_rejected(self):
+        capacity = {'cpu_count': 8, 'memory_total': 31 * 1024**3, 'disk_total': 400 * 1024**3}
+        # A fourth 200% worker exceeds 75% of eight CPUs; disabling it releases CPU and memory.
         with self.assertRaises(ValueError):
-            self.policy.validate_slots([slot(), slot(1), slot(2)])
+            self.policy.validate_budget(self.enabled(4), capacity)
+        disabled = self.enabled(4)
+        disabled[3]['enabled'] = False
+        self.assertEqual(disabled, self.policy.validate_budget(disabled, capacity))
+        for changed in ({'cpu_count': 7}, {'memory_total': 14 * 1024**3 - 1},
+                        {'disk_total': 3 * 24 * 1024**3 + 4 * 1024**3 - 1}):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                self.policy.validate_budget(self.enabled(3), {**capacity, **changed})
+        self.policy.validate_budget(self.enabled(3), {**capacity, 'memory_total': 14 * 1024**3,
+                                                      'disk_total': 3 * 24 * 1024**3 + 4 * 1024**3})
+        for observed in ({}, {**capacity, 'cpu_count': True}, {**capacity, 'extra': 1},
+                         {**capacity, 'memory_total': 0}):
+            with self.subTest(observed=observed), self.assertRaises(ValueError):
+                self.policy.validate_budget(self.enabled(3), observed)
+
+    def test_a_new_worker_adds_identities_without_releasing_existing_reservations(self):
+        reserved = {'schema': 1, 'accounts': [slot(index)[key] for index in (0, 1)
+                                              for key in ('worker', 'controller')]}
+        desired = [slot(), slot(1), slot(2)]
+        self.assertEqual(desired, self.policy.validate_reservation(desired, reserved))
+        self.assertEqual(desired, self.policy.validate_reservation(desired, {'schema': 1, 'accounts': []}))
+        changed = copy.deepcopy(desired)
+        changed[1]['worker']['uid'] += 100
+        for candidate, reservation in (([slot(), slot(2)], reserved), (changed, reserved),
+                                       (desired, {**reserved, 'schema': 2}), (desired, {'accounts': []})):
+            with self.subTest(reservation=reservation), self.assertRaises(ValueError):
+                self.policy.validate_reservation(candidate, reservation)
 
     def test_shared_workers_cannot_poll_different_owner_scopes(self):
         with self.assertRaises(ValueError):
@@ -147,7 +188,7 @@ class SlotPolicyTests(unittest.TestCase):
                     self.policy.validate_slots([declaration])
 
     def test_limits_cannot_exceed_the_qualified_runtime_profile(self):
-        for key, value in {'memory_bytes': 2147483649, 'disk_bytes': 25769803777,
+        for key, value in {'memory_bytes': 4294967297, 'disk_bytes': 25769803777,
                            'pids': 769, 'cpu_percent': 201, 'idle_seconds': 301,
                            'job_seconds': 10801}.items():
             declaration = slot()

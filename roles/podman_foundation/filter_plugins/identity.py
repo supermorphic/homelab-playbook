@@ -198,7 +198,7 @@ def validate_reservations(accounts, reservation):
     """Keep disposable private-image identities out of host service accounts."""
     if (not isinstance(reservation, dict) or set(reservation) != {'schema', 'accounts'}
             or reservation['schema'] != 1 or isinstance(reservation['schema'], bool)
-            or not isinstance(reservation['accounts'], list) or len(reservation['accounts']) > 6):
+            or not isinstance(reservation['accounts'], list)):
         raise ValueError('unsupported runner identity reservation')
     reserved = reservation['accounts']
     # The same independent cross-account oracle checks declarations and all

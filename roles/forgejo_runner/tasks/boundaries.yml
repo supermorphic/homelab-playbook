@@ -50,10 +50,8 @@
 - name: Preserve reserved identities across updates and retirement
   ansible.builtin.assert:
     that:
-      - (forgejo_runner_existing_reservation.content | b64decode | from_json).schema == 1
       - >-
-        (forgejo_runner_existing_reservation.content | b64decode | from_json).accounts | sort(attribute='name')
-        == ((forgejo_runner_slots | map(attribute='worker') | list)
-            + (forgejo_runner_slots | map(attribute='controller') | list)) | sort(attribute='name')
+        forgejo_runner_slots | forgejo_runner_validate_reservation(
+          forgejo_runner_existing_reservation.content | b64decode | from_json) == forgejo_runner_slots
     fail_msg: Runner identity changes require an attended migration; reserved identities are not recycled
   when: forgejo_runner_existing_reservation.content is defined

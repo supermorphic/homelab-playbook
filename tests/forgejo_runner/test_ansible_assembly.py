@@ -14,7 +14,7 @@ WORKTREE = Path.cwd()
 
 
 class AnsibleAssemblyTests(unittest.TestCase):
-    def test_actual_inputs_and_templates_assemble_two_shared_workers_without_host_mutation(self):
+    def test_actual_inputs_and_templates_assemble_three_shared_workers_without_host_mutation(self):
         self.assemble(False)
 
     def test_enabled_workers_receive_private_shared_owner_authority(self):
@@ -35,7 +35,7 @@ class AnsibleAssemblyTests(unittest.TestCase):
                 (directory / asset).write_bytes(payload)
                 artifacts[asset] = {'size': len(payload), 'sha256': hashlib.sha256(payload).hexdigest()}
             variables = {
-                'forgejo_runner_slots': [slot(), slot(1)],
+                'forgejo_runner_slots': [slot(), slot(1), slot(2)],
                 'forgejo_runner_asset_directory': str(directory.resolve()),
                 'forgejo_runner_source_commit': 'a'*40,
                 'forgejo_runner_asset_manifest': {'schema': 1, 'architecture': 'amd64', 'source_tree': 'b'*40,
@@ -72,14 +72,19 @@ class AnsibleAssemblyTests(unittest.TestCase):
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
             files = json.loads(result_file.read_text())
             configurations = [json.loads(row['content']) for row in files if row['path'].endswith('/config.json')]
-            self.assertEqual(2, len(configurations))
+            self.assertEqual(3, len(configurations))
             for row in configurations:
                 self.assertEqual('user:supermorphic', row['slot']['scope'])
             self.assertTrue(all(row['slot']['enabled'] is enabled for row in configurations))
             self.assertTrue(all(row['mode'] == 0o600 for row in files if row['path'].endswith('.json')))
-            self.assertEqual(2, sum(row['path'].endswith('.service') for row in files))
+            self.assertEqual(3, sum(row['path'].endswith('.service') for row in files))
+            reservation = [json.loads(row['content']) for row in files
+                           if row['path'] == '/etc/forgejo-runner-reservations.json']
+            self.assertEqual(6, len(reservation[0]['accounts']))
+            registry = [json.loads(row['content']) for row in files if row['path'] == '/var/lib/forgejo-runner/slots.json']
+            self.assertEqual(['worker-1', 'worker-2', 'worker-3'], [row['name'] for row in registry[0]['slots']])
             tokens = [row for row in files if '/enrollment-' in row['path']]
-            self.assertEqual(2 if enabled else 0, len(tokens))
+            self.assertEqual(3 if enabled else 0, len(tokens))
             if enabled:
                 for worker in variables['forgejo_runner_slots']:
                     expected = worker['state_root'] + '/enrollment-' + hashlib.sha256(b'user:supermorphic').hexdigest()
