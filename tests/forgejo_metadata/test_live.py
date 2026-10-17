@@ -45,13 +45,13 @@ class LiveGuardTests(unittest.TestCase):
             experiment=self.module.Experiment(target,Path(root)/'receipt.json')
             experiment.preflight=lambda: None
             def forbidden(*arguments): self.fail('A fixture POST was sent before its intent was durable')
-            experiment.tea=forbidden
+            experiment.forge=forbidden
             original=os.fsync
             def fsync(fd):
                 if stat.S_ISDIR(os.fstat(fd).st_mode): raise OSError('directory persistence failed')
                 return original(fd)
             with patch.object(self.module.os,'fsync',side_effect=fsync):
-                with self.assertRaises(OSError): experiment.create('issue','issue','create')
+                with self.assertRaises(OSError): experiment.create('issue','POST','/issues',{'title':'x'})
 
     def test_comment_create_rechecks_parent_ownership_after_preflight(self):
         with tempfile.TemporaryDirectory() as root:
@@ -61,12 +61,12 @@ class LiveGuardTests(unittest.TestCase):
             parent={'id':42,'body':experiment.state['prefix']+': fixture'}
             def preflight(): parent['body']='Unrelated replacement'
             experiment.preflight=preflight
-            def tea(*arguments):
-                if arguments[:2]==('issue','get'): return parent
+            def forge(method,path,payload=None):
+                if (method,path)==('GET','/issues/5'): return parent
                 self.fail('Comment POST was sent to an unowned parent')
-            experiment.tea=tea
+            experiment.forge=forge
             with self.assertRaisesRegex(ValueError,'fixture_ownership_changed'):
-                experiment.create('comment','issue','comment','create','example/project','5')
+                experiment.create('comment','POST','/issues/5/comments',{'body':'x'})
 
     def test_receipt_lock_excludes_a_second_writer_and_releases(self):
         with tempfile.TemporaryDirectory() as root:
@@ -85,9 +85,23 @@ class LiveGuardTests(unittest.TestCase):
             sent=[]
             experiment.mutate=lambda kind,*arguments: sent.append(arguments)
             experiment.run('finish')
-            self.assertIn(('milestone','update','example/project','42','--due-date','9999-12-31'),sent)
-            self.assertIn(('issue','label','clear','example/project','5'),sent)
-            self.assertIn(('issue','update','example/project','5','--milestone','0'),sent)
+            self.assertIn(('PATCH','/milestones/42',{'due_on':'9999-12-31T00:00:00Z'}),sent)
+            self.assertIn(('DELETE','/issues/5/labels'),sent)
+            self.assertIn(('PATCH','/issues/5',{'milestone':0}),sent)
+
+    def test_forge_sends_exact_rest_request_through_fj(self):
+        with tempfile.TemporaryDirectory() as root:
+            experiment=self.module.Experiment({'fingerprint':'a'*64,'mappings':[{'source_repo':'example/project',
+                'source_origin':'https://forgejo.example.test'}]},Path(root)/'receipt.json')
+            calls=[]
+            def command(arguments,stdin=None): calls.append((arguments,stdin)); return '{"id": 7}'
+            with patch.object(self.module,'command',side_effect=command):
+                self.assertEqual({'id':7},experiment.forge('PATCH','/issues/5',{'state':'closed'}))
+                experiment.forge('GET','/labels/3')
+            self.assertEqual((['fj','api','--no-pager','--host','forgejo.example.test','-X','PATCH',
+                '/repos/example/project/issues/5','--input','-'],'{"state": "closed"}'),calls[0])
+            self.assertEqual((['fj','api','--no-pager','--host','forgejo.example.test','-X','GET',
+                '/repos/example/project/labels/3'],None),calls[1])
 
 
 if __name__=='__main__': unittest.main()
