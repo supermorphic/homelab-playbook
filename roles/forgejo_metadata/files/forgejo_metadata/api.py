@@ -107,7 +107,9 @@ class Client:
             except (ValueError,KeyError): retry=self.clock()+60
             self.retry_at=max(self.retry_at,retry)
             outcome='not_created' if status in (400,401,403,404,410,422,429) and isinstance(value,dict) else 'unknown'
-            raise APIError(f'http_{status}',outcome,self.retry_at,self.retry_key)
+            # GitHub signals primary and secondary limits with 403 or 429 plus limit headers.
+            limited=status==429 or status==403 and (bool(delay) or received.get('x-ratelimit-remaining')=='0')
+            raise APIError('rate_limited' if limited else f'http_{status}',outcome,self.retry_at,self.retry_key)
         if not isinstance(value,(dict,list)): raise APIError('invalid_response')
         return value,received
 

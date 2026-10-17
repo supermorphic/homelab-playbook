@@ -81,19 +81,30 @@ class FixtureTests(unittest.TestCase):
         original=self.fixture.source_data['comments'][0]
         self.fixture.source_data['comments']=[dict(original,id=identity) for identity in range(24,36)]
         self.fixture.mode={'delay':.01}
-        self.assertEqual(1,self.apply())
+        # A bounded stop retains progress and exits successfully for the next run.
+        self.assertEqual(0,self.apply())
         status=json.loads((self.root/'runtime/status.json').read_text())
+        self.assertEqual('deferred',status['outcome'])
         self.assertIn('run_budget_exhausted',status['mappings'][0]['errors'])
         self.assertNotIn('run_timeout',status['mappings'][0]['errors'])
         self.assertEqual(0,status['unresolved_intents'])
         self.assertIsNone(status['mappings'][0]['last_converged'])
         for _ in range(5):
-            if self.apply()==0: break
+            self.assertEqual(0,self.apply())
+            if json.loads((self.root/'runtime/status.json').read_text())['outcome']=='converged': break
         else: self.fail('bounded backfill did not finish after resumed runs')
         self.assertEqual(1,len(self.fixture.snapshot()['issues']))
         self.assertEqual(12,len(self.fixture.snapshot()['comments']))
         self.assertEqual(13,sum(method=='POST' for method,_ in self.fixture.writes()))
         self.assertEqual({},self.store.load()['pending'])
+    def test_tls_rate_limit_defers_without_failure_or_writes(self):
+        self.fixture.mode={'rate_limit':True}
+        self.assertEqual(0,self.apply())
+        status=json.loads((self.root/'runtime/status.json').read_text())
+        self.assertEqual('deferred',status['outcome']); self.assertEqual({'rate_limited':1},status['mappings'][0]['errors'])
+        self.assertEqual([],self.fixture.writes()); self.assertEqual({},self.store.load()['pending'])
+        self.fixture.mode={}; self.assertEqual(0,self.apply()); self.assertEqual([],self.fixture.writes())
+        self.assertGreater(min(self.store.load()['retry_deadlines'].values()),time.time())
     def test_killed_after_accepted_post_rediscovered_without_duplicate(self):
         self.fixture.mode={'hang_after_post':True}
         process=subprocess.Popen(self.command(),env=self.environment,cwd=self.package,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -108,8 +119,8 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual({},self.store.load()['pending'])
     def test_rejection_lost_state_untrusted_tls_redirect_and_budget(self):
         self.fixture.mode={'reject':True}; self.assertEqual(1,self.apply()); self.assertEqual({},self.store.load()['pending'])
-        before=len(self.fixture.writes()); self.fixture.mode={}; self.document['write_budget']=1; self.save(); self.assertEqual(1,self.apply())
-        self.assertEqual(before+1,len(self.fixture.writes())); self.document['write_budget']=20; self.save(); self.assertEqual(0,self.apply())
+        before=len(self.fixture.writes()); self.fixture.mode={}; self.document['write_budget']=1; self.save(); self.assertEqual(0,self.apply())
+        self.assertEqual(before+1,len(self.fixture.writes())); self.assertEqual('deferred',json.loads((self.root/'runtime/status.json').read_text())['outcome']); self.document['write_budget']=20; self.save(); self.assertEqual(0,self.apply())
         before=len(self.fixture.writes()); self.store.path.unlink(); self.assertEqual(1,self.apply()); self.assertEqual(before,len(self.fixture.writes()))
         self.store.bootstrap('recover','fixture-only'); self.document['mappings'][0]['ca_file']=''; self.environment.pop('SSL_CERT_FILE'); self.save()
         self.assertEqual(1,self.apply()); self.assertEqual(before,len(self.fixture.writes()))

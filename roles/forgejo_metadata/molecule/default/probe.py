@@ -35,6 +35,22 @@ def start(success=True):
     run('systemctl','reset-failed')
     return run('systemctl','start',UNIT,success=success)
 
+def unit_state():
+    # Runner admission rejects work while any unrelated host unit is failed.
+    return subprocess.run(['systemctl','is-failed',UNIT],capture_output=True,text=True,timeout=10).stdout.strip()
+
+def check(success):
+    return run('runuser','-u',ACCOUNT,'--','env','PYTHONPATH=/usr/local/libexec/forgejo-metadata',
+        '/usr/bin/python3','-B','-m','forgejo_metadata','--config',str(CONFIG),'check',success=success)
+
+def outcome():
+    return json.loads((ROOT/'status.json').read_text())['outcome']
+
+def configured(**values):
+    original=CONFIG.read_bytes(); document=json.loads(original); document.update(values)
+    CONFIG.write_text(json.dumps(document))
+    return original
+
 def control(operation,key=None,plan_digest=None):
     fingerprint=enrollment_fingerprint(load_config(json.loads(CONFIG.read_text())))
     value={'operation':operation,'fingerprint':fingerprint,'decision_ref':'disposable-systemd-acceptance',
@@ -68,7 +84,15 @@ def main():
     (ROOT/'state.json').unlink()
     start(success=False); assert not snapshot()['issues']; assert not (ROOT/'state.json').exists()
     # Both units must load their credentials to authenticate against the fixture APIs.
-    control('bootstrap-initial'); control('manual-apply')
+    control('bootstrap-initial')
+    # A write-budget stop retains progress without failing the unit; verification stays pending.
+    original=configured(write_budget=1)
+    try: start()
+    finally: CONFIG.write_bytes(original)
+    assert unit_state()!='failed' and outcome()=='deferred'
+    data=snapshot(); assert len(data['labels'])==1 and not data['issues']
+    check(success=False)
+    control('manual-apply')
     data=snapshot(); assert len(data['issues'])==len(data['comments'])==len(data['labels'])==len(data['milestones'])==1
     assert data['issues'][0]['state']=='closed' and data['issues'][0]['labels']==['bug'] and data['issues'][0]['milestone']==102
     assert 'original' in data['issues'][0]['body'] and 'commenter' in data['comments'][0]['body']
@@ -95,7 +119,18 @@ def main():
     lock=ROOT/'operation.lock'; fd=os.open(lock,os.O_RDWR); fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
     try: start(success=False)
     finally: os.close(fd)
-    assert before==(FIXTURE/'destination.json').read_bytes()
+    assert before==(FIXTURE/'destination.json').read_bytes() and unit_state()=='failed'
+    # Rate-limit deferral persists across runs without failing the unit or writing.
+    (FIXTURE/'mode.json').write_text(json.dumps({'rate_limit':True}))
+    try: start()
+    finally: (FIXTURE/'mode.json').unlink()
+    assert unit_state()!='failed' and outcome()=='deferred'
+    start(); assert unit_state()!='failed' and outcome()=='deferred'
+    check(success=False)
+    journal=json.loads((ROOT/'state.json').read_text()); assert journal['retry_deadlines']
+    journal['retry_deadlines']={}; atomic_json(ROOT/'state.json',journal); os.chown(ROOT/'state.json',account.pw_uid,account.pw_gid)
+    start(); assert outcome()=='converged' and before==(FIXTURE/'destination.json').read_bytes()
+    check(success=True)
     # Loss of safety state cannot create; attended recovery rediscovers the same objects.
     (ROOT/'state.json').unlink(); start(success=False); assert before==(FIXTURE/'destination.json').read_bytes()
     control('bootstrap-recover'); start(); assert before==(FIXTURE/'destination.json').read_bytes()
@@ -105,6 +140,7 @@ def main():
     started=time.monotonic()
     try: start(success=False); assert time.monotonic()-started<10
     finally: CONFIG.write_bytes(original); (FIXTURE/'mode.json').unlink()
+    assert unit_state()=='failed'
     start()
     # Observe a missed calendar event through Persistent=true, without changing the clock.
     drop=Path('/etc/systemd/system/forgejo-metadata.timer.d'); drop.mkdir(exist_ok=True)
@@ -120,7 +156,7 @@ def main():
         run('systemctl','stop','forgejo-metadata.timer'); (drop/'fixture.conf').unlink(); run('systemctl','daemon-reload')
     journal=run('journalctl','-u',UNIT,'-u','forgejo-metadata-control.service','--no-pager','--output=cat')
     assert 'Original text' not in journal and 'Original comment' not in journal
-    print('PASS: effective credentials, sandbox, locks, recovery, timeout and persistent timer')
+    print('PASS: effective credentials, sandbox, locks, recovery, run outcomes, timeout and persistent timer')
 
 def seed():
     from forgejo_metadata.state import StateStore

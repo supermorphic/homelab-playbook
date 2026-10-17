@@ -152,14 +152,77 @@ class CLITests(unittest.TestCase):
         store=StateStore(self.root/'state.json',enrollment_fingerprint(load_config(document))); store.bootstrap('initial','fixture-only')
         independent=FakeDestination(); calls=[]
         def denied(mapping):
-            calls.append(mapping.instance); raise APIError('http_429','not_created',self.module.time.time()+60,'destination')
+            calls.append(mapping.instance); raise APIError('rate_limited','not_created',self.module.time.time()+60,'destination')
         self.destination.preflight=denied
         def clients(mapping): return self.source,self.destination if mapping.instance=='fixture' else independent
         with contextlib.redirect_stdout(self.output),patch.object(self.module,'clients',side_effect=clients):
-            self.assertEqual(1,self.module.main(['--config',str(self.config),'apply']))
+            # A deferral is resumable: the scheduled unit succeeds but verification stays pending.
+            self.assertEqual(0,self.module.main(['--config',str(self.config),'apply']))
             self.assertTrue(independent.writes)
-            self.assertEqual(1,self.module.main(['--config',str(self.config),'apply']))
+            self.assertEqual(0,self.module.main(['--config',str(self.config),'apply']))
+            self.assertEqual(1,self.module.main(['--config',str(self.config),'check']))
         self.assertEqual(['fixture'],calls)
+        status=json.loads((self.root/'status.json').read_text())
+        self.assertEqual('deferred',status['outcome'])
+        self.assertEqual({'rate_limited':1},status['mappings'][0]['errors'])
+        self.assertIsNone(status['mappings'][0]['last_converged'])
+    def bootstrap(self):
+        request=self.request('bootstrap-initial')
+        with patch.object(self.module,'trusted_request',return_value=json.loads(request.read_text())):
+            self.assertEqual(0,self.run_cli('control','--request',str(request)))
+    def test_write_budget_backlog_succeeds_and_next_run_resumes_without_duplicates(self):
+        document=json.loads(self.config.read_text()); document['write_budget']=1; self.config.write_text(json.dumps(document))
+        self.bootstrap()
+        self.assertEqual(0,self.run_cli('apply')); self.assertEqual(1,len(self.destination.writes))
+        status=json.loads((self.root/'status.json').read_text())
+        self.assertEqual('deferred',status['outcome']); self.assertTrue(status['mappings'][0]['backlog'])
+        self.assertIsNone(status['mappings'][0]['last_converged']); self.assertIn('convergence_deferred',self.output.getvalue())
+        self.assertEqual(1,self.run_cli('check'))
+        document['write_budget']=30; self.config.write_text(json.dumps(document))
+        self.assertEqual(0,self.run_cli('apply'))
+        self.assertEqual('converged',json.loads((self.root/'status.json').read_text())['outcome'])
+        posts=[locator for method,locator in self.destination.writes if method=='POST']
+        self.assertEqual(len(posts),len(set(posts))); self.assertEqual(4,len(posts))
+        self.assertEqual(0,self.run_cli('check'))
+    def test_time_budget_stop_succeeds_and_skips_later_mappings(self):
+        from forgejo_metadata.model import RunResult
+        document=json.loads(self.config.read_text()); other=copy.deepcopy(document['mappings'][0])
+        other.update(instance='other',source_id=8,destination_id=10,source_credential='other_source',destination_credential='other_destination')
+        document['mappings'].append(other); self.config.write_text(json.dumps(document))
+        from forgejo_metadata.state import StateStore
+        StateStore(self.root/'state.json',enrollment_fingerprint(load_config(document))).bootstrap('initial','fixture')
+        calls=[]
+        def stopped(mapping,*args,**kwargs):
+            calls.append(mapping.instance); return RunResult(writes=1,backlog=1,errors=['run_budget_exhausted'])
+        with patch.object(self.module,'reconcile',side_effect=stopped):
+            self.assertEqual(0,self.run_cli('apply'))
+        self.assertEqual(['fixture'],calls)
+        status=json.loads((self.root/'status.json').read_text())
+        self.assertEqual('deferred',status['outcome'])
+        self.assertEqual([{'run_budget_exhausted':1}]*2,[row['errors'] for row in status['mappings']])
+    def test_attention_outcomes_fail_even_beside_resumable_ones(self):
+        from forgejo_metadata.model import RunResult
+        self.bootstrap()
+        for errors in (['run_timeout'],['readback_mismatch'],['transport_failure'],['create_outcome_unresolved'],
+                       ['http_403'],['rate_limited','ownership_conflict'],['run_budget_exhausted','invalid_source_or_response']):
+            with self.subTest(errors=errors), patch.object(self.module,'reconcile',return_value=RunResult(errors=list(errors))):
+                self.assertEqual(1,self.run_cli('apply'))
+                self.assertEqual('attention',json.loads((self.root/'status.json').read_text())['outcome'])
+    def test_unresolved_intent_fails_even_when_mapping_is_deferred(self):
+        from forgejo_metadata.model import RunResult, SourceKey
+        from forgejo_metadata.state import StateStore
+        self.bootstrap()
+        StateStore(self.root/'state.json',enrollment_fingerprint(load_config(CONFIG))).begin_create(SourceKey('fixture',7,'issue',99))
+        with patch.object(self.module,'reconcile',return_value=RunResult(errors=['rate_limited'])):
+            self.assertEqual(1,self.run_cli('apply'))
+        status=json.loads((self.root/'status.json').read_text())
+        self.assertEqual('attention',status['outcome']); self.assertEqual(1,status['unresolved_intents'])
+    def test_operation_lock_contention_fails(self):
+        from forgejo_metadata.state import operation_lock
+        self.bootstrap()
+        with operation_lock(self.root/'operation.lock'):
+            self.assertEqual(1,self.run_cli('apply'))
+        self.assertIn('operation_busy',self.output.getvalue())
     def test_reenrollment_cannot_reuse_old_convergence(self):
         from forgejo_metadata.state import StateStore
         request=self.request('bootstrap-initial')

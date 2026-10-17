@@ -157,6 +157,16 @@ class APITests(unittest.TestCase):
             self.assertEqual(expected,raised.exception.outcome)
             self.assertNotIn('never-print-this',str(raised.exception))
 
+    def test_rate_limit_responses_are_distinct_from_permission_denial(self):
+        for status,headers,expected in [(429,{},'rate_limited'),(403,{'Retry-After':'20'},'rate_limited'),
+                                        (403,{'X-RateLimit-Remaining':'0','X-RateLimit-Reset':'4102444800'},'rate_limited'),
+                                        (403,{},'http_403'),(503,{'Retry-After':'20'},'http_503')]:
+            with self.subTest(status=status,headers=headers):
+                with self.assertRaises(self.api.APIError) as raised:
+                    self.client([(status,{'message':'denied'},headers)]).request('GET','/issues')
+                self.assertEqual(expected,str(raised.exception))
+                self.assertGreater(raised.exception.retry_at,0)
+
     def test_source_inventory_excludes_prs_and_reads_issue_comments(self):
         client=self.client([(200,{'id':7,'full_name':'example/project'},{}),
             (200,[{'id':1,'number':1,'pull_request':None},{'id':2,'number':2,'pull_request':{}}],{}),
