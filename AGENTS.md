@@ -58,10 +58,8 @@ repeating it. Preserve important decisions and authorization history.
 - Never commit or push directly to `main`. Use an issue-backed feature branch.
   A runtime-managed worktree may operate at detached `HEAD`; preserve useful
   work on an appropriate branch before publication or worktree removal.
-- Publish PR branches to a fork and target the canonical repository. Keep
-  `origin` pointed at the canonical repository and use a separate `fork` remote
-  for publication. Forgejo gives fork-based `pull_request` jobs read-only
-  repository tokens; same-repository PR jobs receive write tokens.
+- Push feature branches to `origin` and open pull requests against `main`.
+  Run manual CI only on reviewed, trusted refs.
 - Never merge or enable auto-merge without explicit operator authorization for
   that specific action. General or stale approval does not count.
 - Use an isolated task worktree unless the operator explicitly authorizes work
