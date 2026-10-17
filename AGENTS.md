@@ -43,8 +43,6 @@ descriptions, and comments.
 - When the operator must decide, explain the situation with a concrete
   example and state your recommendation and its reason before listing options.
 
-### Forge posts
-
 Post comments only when they add a material finding, decision, changed
 blocker, requested answer, or acceptance outcome. Skip routine progress,
 duplicate information, and session-end recaps.
