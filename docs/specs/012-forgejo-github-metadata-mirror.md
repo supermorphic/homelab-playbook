@@ -140,14 +140,27 @@ not the retained label or unrelated history.
 Use full comparison rather than relying on issue timestamps to discover comment
 or label changes. Deterministic progress and skipped converged objects let bounded
 backfill continue across runs. Independent mappings can progress after another
-fails, but any failure makes the overall run fail. Partial work and backlog never
-advance last-converged evidence, which describes observed source data rather than
-an atomic snapshot across both services.
+fails. Partial work and backlog never advance last-converged evidence, which
+describes observed source data rather than an atomic snapshot across both
+services.
+
+A run's exit status reports whether it needs attention, not whether it converged.
+A failed scheduled unit blocks runner admission on a shared host, so a run that
+stops only for a bounded, resumable reason exits successfully: a used-up write or
+time budget, a rate-limit deferral, or the backlog that remains after either. The
+status file records the run outcome and per-mapping errors and backlog, and the
+next scheduled run continues from retained progress. Any other error fails the
+run, including unresolved creates, ownership or label conflicts, read-back
+mismatches, permission failures, invalid responses or state, transport failures,
+and lock contention. A hard run deadline also fails the run because it can
+interrupt a create before its outcome is recorded. Verification, not the exit
+status, remains the convergence and freshness oracle; it fails for any
+incomplete or stale run.
 
 Reserve time for verification before admitting another write, using the observed
 write-cycle cost while retaining the hard run deadline. If the remaining budget
 is insufficient, retain progress and report incomplete convergence for a later
-authorized run. Real interruptions still preserve uncertain-create evidence.
+scheduled run. Real interruptions still preserve uncertain-create evidence.
 
 Pace serial requests and respect primary and secondary rate limits. Persist retry
 deadlines by credential so restarts cannot bypass throttling and independent
@@ -275,7 +288,9 @@ Offline validation must demonstrate:
 - Missing or invalid initialization blocks writes, and provisioning and recovery
   preserve surviving ownership and uncertainty evidence.
 - Incomplete discovery, dropped fields, identity or visibility drift, permission
-  failures, outages, rate limits, and exhausted budgets remain observable failures.
+  failures, and outages fail the run. Rate limits and exhausted budgets exit
+  successfully, resume without duplicates, and still fail verification until
+  convergence.
 - Credential isolation, mutual exclusion, bounded execution, persistent scheduling,
   and observational verification hold in the installed host service; diagnostics
   expose neither tokens nor source content.

@@ -48,21 +48,29 @@ def clients(mapping):
     return SourceAPI(mapping,credential(mapping.source_credential)), DestinationAPI(mapping,credential(mapping.destination_credential))
 
 
+# Bounded stops that retain progress for the next scheduled run. Every other
+# error, including a hard run_timeout that can interrupt a create before its
+# outcome is recorded, needs attention and fails the unit.
+RESUMABLE_ERRORS=frozenset({'run_budget_exhausted','rate_limited'})
+
+
 def apply(mappings,store,root,budget,deadline_at):
     store.require_initialized()
     try: previous=read_private(root/'status.json')
     except (OSError,ValueError,MirrorError): previous={}
     if not isinstance(previous,dict) or previous.get('fingerprint')!=store.fingerprint or not isinstance(previous.get('mappings'),list): previous={}
     old={row['source']:row for row in previous.get('mappings',[]) if isinstance(row,dict) and 'source' in row}
-    status={'fingerprint':store.fingerprint,'attempted_at':time.time(),'mappings':[]}; success=True
+    status={'fingerprint':store.fingerprint,'attempted_at':time.time(),'mappings':[]}
     deadline=RunDeadline(deadline_at)
-    remaining=budget; timed_out=False
+    remaining=budget; timed_out=exhausted=False
     for mapping in mappings:
         source=destination=None
         identity=f'{mapping.instance}:{mapping.source_id}'
         last=old.get(identity,{}).get('last_converged')
         try:
             if timed_out or time.monotonic()>=deadline_at: raise MirrorError('run_timeout')
+            # Reads for another mapping could outlast the verification reserve.
+            if exhausted: raise MirrorError('run_budget_exhausted')
             if store.deferred(mapping): raise MirrorError('rate_limited')
             source,destination=clients(mapping)
             result=reconcile(mapping,source,destination,store,remaining,deadline=deadline)
@@ -70,19 +78,22 @@ def apply(mappings,store,root,budget,deadline_at):
             timed_out='run_timeout' in result.errors
             errors=dict(Counter(result.errors)); backlog=result.backlog
             writes=result.writes; last=result.converged_at or last
-            success=success and bool(result.converged_at)
         except (MirrorError,KeyError,TypeError,ValueError,AttributeError) as error:
-            errors={str(error) if isinstance(error,MirrorError) else 'invalid_source_or_response':1}; backlog=0; writes=0; success=False
+            errors={str(error) if isinstance(error,MirrorError) else 'invalid_source_or_response':1}; backlog=0; writes=0
             timed_out=timed_out or 'run_timeout' in errors
+        exhausted=exhausted or 'run_budget_exhausted' in errors
         status['mappings'].append({'source':identity,'last_attempted':time.time(),
             'last_converged':last,'writes':writes,'backlog':backlog,'errors':errors,
             'requests':{'source':getattr(source,'requests',{}),
                         'destination':getattr(destination,'requests',{})}})
     status['unresolved_intents']=len(store.load()['pending'])
-    success=success and not status['unresolved_intents']
+    rows=status['mappings']
+    if status['unresolved_intents'] or any(set(row['errors'])-RESUMABLE_ERRORS for row in rows): status['outcome']='attention'
+    elif any(row['errors'] or row['backlog'] for row in rows): status['outcome']='deferred'
+    else: status['outcome']='converged'
     atomic_json(root/'status.json',status)
-    print('converged' if success else 'convergence_incomplete')
-    return 0 if success else 1
+    print({'converged':'converged','deferred':'convergence_deferred','attention':'convergence_incomplete'}[status['outcome']])
+    return 1 if status['outcome']=='attention' else 0
 
 
 def control(request,mappings,store,fingerprint,budget=100):
@@ -132,7 +143,7 @@ def main(argv=None):
     sub.add_parser('plan',help='Print public enrollment and its confirmation fingerprint without changing state.')
     sub.add_parser('labels-plan',help='Read APIs and list exact label adoption pairs, conflicts and review digest without changing safety state.')
     sub.add_parser('pending-plan',help='Read complete destination inventories and report pending creates without changing the journal or destinations. Absence does not authorize recreation.')
-    sub.add_parser('apply',help='Reconcile enrolled destination metadata (writes).')
+    sub.add_parser('apply',help='Reconcile enrolled destination metadata (writes). Exits 0 when converged or stopped only by a write or time budget or rate limit; check still reports pending convergence.')
     sub.add_parser('check',help='Observe initialization and convergence status without repairs.')
     attended=sub.add_parser('control',help='Execute a root-owned, attended request.')
     attended.add_argument('--request',required=True,help='Root-owned JSON: operation, fingerprint, decision_ref, confirmation=operation:fingerprint. Bootstrap and resolve require previous_writers_stopped=true and outcomes_resolved=true; resolve adds the exact SourceKey as key. adopt-labels requires previous_writers_stopped=true and the reviewed labels-plan digest as plan_digest.')
