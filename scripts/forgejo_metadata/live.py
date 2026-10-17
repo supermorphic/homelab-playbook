@@ -13,6 +13,7 @@ import re
 import stat
 import subprocess
 import tempfile
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 import uuid
 
@@ -80,8 +81,8 @@ def save(path,document):
         if temporary: os.unlink(temporary)
 
 
-def command(arguments):
-    result=subprocess.run(arguments,cwd=ROOT,text=True,capture_output=True,timeout=120)
+def command(arguments,stdin=None):
+    result=subprocess.run(arguments,cwd=ROOT,input=stdin,text=True,capture_output=True,timeout=120)
     if result.returncode: raise ValueError('acceptance_command_failed')
     return result.stdout
 
@@ -95,8 +96,12 @@ class Experiment:
                         'objects':{},'pending':None}
         if self.state['fingerprint']!=target['fingerprint']: raise ValueError('fixture_enrollment_changed')
 
-    def tea(self,*arguments):
-        output=command(['mise','exec','--','teacli',*arguments,'--format','json'])
+    def forge(self,method,path,payload=None):
+        # Exact REST calls through fj keep fixture requests independent of CLI flag mappings.
+        arguments=['fj','api','--no-pager','--host',urlsplit(self.mapping['source_origin']).hostname,
+                   '-X',method,'/repos/'+self.mapping['source_repo']+path]
+        if payload is not None: arguments+=['--input','-']
+        output=command(arguments,None if payload is None else json.dumps(payload))
         return json.loads(output) if output.strip() else None
 
     def preflight(self):
@@ -108,7 +113,7 @@ class Experiment:
         installed=json.loads(output.split('>>',1)[1])
         if installed!={key:self.target[key] for key in ('fingerprint','mappings')}:
             raise ValueError('installed_enrollment_changed')
-        source=self.tea('repo','get',self.mapping['source_repo'])
+        source=self.forge('GET','')
         if (source.get('id')!=int(self.mapping['source'].split(':')[1])
             or source.get('full_name')!=self.mapping['source_repo'] or source.get('private')
             or not source.get('html_url','').startswith(self.mapping['source_origin']+'/')):
@@ -121,10 +126,10 @@ class Experiment:
             or destination.get('visibility')!='public'): raise ValueError('destination_enrollment_changed')
 
     def owned(self,kind):
-        row=self.state['objects'][kind]; repo=self.mapping['source_repo']
-        number=row['number'] if kind=='issue' else row['id']
-        arguments=('issue','comment','get',repo,str(number)) if kind=='comment' else (kind,'get',repo,str(number))
-        observed=self.tea(*arguments); require_owned(observed,row['id'],self.state['prefix'])
+        row=self.state['objects'][kind]
+        path={'issue':'/issues/'+str(row['number']),'comment':'/issues/comments/'+str(row['id']),
+              'label':'/labels/'+str(row['id']),'milestone':'/milestones/'+str(row['id'])}[kind]
+        observed=self.forge('GET',path); require_owned(observed,row['id'],self.state['prefix'])
         return row
 
     def create(self,kind,*arguments):
@@ -132,44 +137,46 @@ class Experiment:
         self.preflight()
         if kind=='comment': self.owned('issue')
         self.state['pending']=kind; save(self.path,self.state)
-        row=self.tea(*arguments)
+        row=self.forge(*arguments)
         require_owned(row,row['id'],self.state['prefix'])
         self.state['objects'][kind]={'id':row['id'],'number':row.get('number',row['id'])}
         self.state['pending']=None; save(self.path,self.state)
 
     def mutate(self,kind,*arguments):
-        self.preflight(); self.owned(kind); self.tea(*arguments)
+        self.preflight(); self.owned(kind); self.forge(*arguments)
 
     def run(self,action):
-        self.preflight(); repo=self.mapping['source_repo']; prefix=self.state['prefix']
+        self.preflight(); prefix=self.state['prefix']
         text=prefix+': bounded live acceptance for the metadata mirror. Forgejo remains authoritative.'
         if action=='create':
-            self.create('label','label','create',repo,'--name',prefix,'--color','abcdef','--description',text)
-            self.create('milestone','milestone','create',repo,'--title',prefix,'--description',text)
-            self.create('issue','issue','create',repo,'--title',prefix,'--body',text,'--label',prefix)
-            issue=str(self.state['objects']['issue']['number'])
-            self.mutate('issue','issue','update',repo,issue,'--milestone',str(self.state['objects']['milestone']['id']))
-            self.create('comment','issue','comment','create',repo,issue,'--body',text)
+            self.create('label','POST','/labels',{'name':prefix,'color':'#abcdef','description':text})
+            self.create('milestone','POST','/milestones',{'title':prefix,'description':text})
+            self.create('issue','POST','/issues',{'title':prefix,'body':text,
+                'labels':[self.state['objects']['label']['id']]})
+            issue='/issues/'+str(self.state['objects']['issue']['number'])
+            self.mutate('issue','PATCH',issue,{'milestone':self.state['objects']['milestone']['id']})
+            self.create('comment','POST',issue+'/comments',{'body':text})
         elif action=='edit':
-            issue=str(self.owned('issue')['number']); label=str(self.owned('label')['id'])
-            milestone=str(self.owned('milestone')['id']); comment=str(self.owned('comment')['id'])
+            issue='/issues/'+str(self.owned('issue')['number']); label='/labels/'+str(self.owned('label')['id'])
+            milestone='/milestones/'+str(self.owned('milestone')['id'])
+            comment='/issues/comments/'+str(self.owned('comment')['id'])
             edited=prefix+': edited fixture content.'
-            self.mutate('label','label','update',repo,label,'--name',prefix+'-edited','--color','123abc','--description',edited)
-            self.mutate('milestone','milestone','update',repo,milestone,'--title',prefix+'-edited',
-                        '--description',edited,'--due-date','2026-12-31')
-            self.mutate('comment','issue','comment','update',repo,comment,'--body',edited)
-            self.mutate('issue','issue','update',repo,issue,'--title',prefix+'-edited','--body',edited,'--state','closed')
-            self.mutate('milestone','milestone','close',repo,milestone)
+            self.mutate('label','PATCH',label,{'name':prefix+'-edited','color':'#123abc','description':edited})
+            self.mutate('milestone','PATCH',milestone,{'title':prefix+'-edited','description':edited,
+                'due_on':'2026-12-31T00:00:00Z'})
+            self.mutate('comment','PATCH',comment,{'body':edited})
+            self.mutate('issue','PATCH',issue,{'title':prefix+'-edited','body':edited,'state':'closed'})
+            self.mutate('milestone','PATCH',milestone,{'state':'closed'})
         elif action in ('reopen','finish'):
-            issue=str(self.owned('issue')['number']); milestone=str(self.owned('milestone')['id'])
-            verb='reopen' if action=='reopen' else 'close'
-            self.mutate('issue','issue',verb,repo,issue)
-            self.mutate('milestone','milestone',verb,repo,milestone)
+            issue='/issues/'+str(self.owned('issue')['number']); milestone='/milestones/'+str(self.owned('milestone')['id'])
+            state='open' if action=='reopen' else 'closed'
+            self.mutate('issue','PATCH',issue,{'state':state})
+            self.mutate('milestone','PATCH',milestone,{'state':state})
             if action=='finish':
                 # Forgejo represents an absent deadline with a year-9999 date.
-                self.mutate('milestone','milestone','update',repo,milestone,'--due-date','9999-12-31')
-                self.mutate('issue','issue','label','clear',repo,issue)
-                self.mutate('issue','issue','update',repo,issue,'--milestone','0')
+                self.mutate('milestone','PATCH',milestone,{'due_on':'9999-12-31T00:00:00Z'})
+                self.mutate('issue','DELETE',issue+'/labels')
+                self.mutate('issue','PATCH',issue,{'milestone':0})
         elif action=='interrupt':
             host=self.target['host']
             def unit(arguments):

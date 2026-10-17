@@ -1,6 +1,6 @@
 """Bounded, owner-scoped ephemeral runner enrollment and reconciliation.
 
-Runner management is absent from the configured teacli action commands. This
+Runner management is absent from the configured fj commands. This
 client uses the supported user and organization runner REST endpoints.
 """
 

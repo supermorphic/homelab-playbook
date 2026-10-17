@@ -27,51 +27,37 @@ match code.
 
 ## Communication style
 
-Communicate with the operator in clear, concrete English.
+Write clear, concrete English for a software engineer who may not know the
+tool, subsystem, or domain. These rules follow ASD-STE100 Simplified Technical
+English principles. They apply to operator messages, issue bodies, PR
+descriptions, and comments.
 
-Apply principles inspired by ASD-STE100 Simplified Technical English:
+- Lead with the outcome. Keep important details; omit repetition and
+  incidental process narration. Expand only when asked or necessary.
+- Use plain words, active voice, and short sentences. Present steps in order.
+- Prefer concrete behavior and examples over abstract labels.
+- Reuse established terms. Define a project-specific term briefly the first
+  time it matters.
+- Simplify the wording, not the technical content. Do not rewrite literal
+  APIs, identifiers, commands, configuration fields, or quoted text.
+- When the operator must decide, explain the situation with a concrete
+  example and state your recommendation and its reason before listing options.
 
-- Use plain language when doing so preserves the same meaning.
-- Avoid unnecessary jargon and abstract terminology.
-- Prefer concrete descriptions of behavior over abstract labels.
-- Reuse terminology already established in the conversation or task.
-- Provide relevant context when needed to explain an implementation or recommendation.
-- Briefly explain specialized or project-specific terms when their meaning may not be
-  obvious from context.
-- Prefer concrete examples when they help explain an abstract concept.
-- Present sequential steps in their logical order.
-- Break up long or complex sentences when doing so improves clarity.
-- Prefer active voice.
-- Be concise and direct. Avoid unnecessary verbosity while keeping important details.
-- Lead with the outcome. Omit repetition and incidental process detail. Expand only when
-  requested or necessary.
-- Simplify the wording, not the technical content.
+Post comments only when they add a material finding, decision, changed
+blocker, requested answer, or acceptance outcome. Skip routine progress,
+duplicate information, and session-end recaps.
 
-Write for a software engineer who may be unfamiliar with the specific tool, subsystem, or
-domain.
-
-Do not rewrite literal APIs, identifiers, commands, configuration fields, or quoted text
-solely to satisfy these style rules.
-
-Apply these communication rules to issue bodies, PR descriptions, and comments.
-
-Post comments only when they add a material finding, decision, changed blocker,
-requested answer, or acceptance outcome. Skip routine progress, duplicate
-information, and session-end recaps.
-
-Write for readers without the agent conversation. Explain the problem, outcome,
-and necessary rationale; link retrievable evidence instead of repeating it.
-Preserve important decisions and authorization history.
+Write for readers without the agent conversation. Explain the problem,
+outcome, and necessary rationale; link retrievable evidence instead of
+repeating it. Preserve important decisions and authorization history.
 
 ## Git and worktrees
 
 - Never commit or push directly to `main`. Use an issue-backed feature branch.
   A runtime-managed worktree may operate at detached `HEAD`; preserve useful
   work on an appropriate branch before publication or worktree removal.
-- Publish PR branches to a fork and target the canonical repository. Keep
-  `origin` pointed at the canonical repository and use a separate `fork` remote
-  for publication. Forgejo gives fork-based `pull_request` jobs read-only
-  repository tokens; same-repository PR jobs receive write tokens.
+- Push feature branches to `origin` and open pull requests against `main`.
+  Run manual CI only on reviewed, trusted refs.
 - Never merge or enable auto-merge without explicit operator authorization for
   that specific action. General or stale approval does not count.
 - Use an isolated task worktree unless the operator explicitly authorizes work
@@ -93,13 +79,13 @@ Preserve important decisions and authorization history.
 - Run established repository workflows through their pinned Mise tasks. Use
   `mise exec -- <tool> ...` when no task exists and the pinned version matters.
   Ordinary read-only filesystem and Git inspection may use standard commands.
-- Use Git for repository content. Use the configured `teacli` client for issues,
+- Use Git for repository content. Use the configured `fj` client for issues,
   pull requests, reviews, comments, labels, and other forge metadata.
 - Do not manipulate Forgejo's database or invoke its server-side CLI directly.
-- Use the Forgejo REST API only when `teacli` does not expose the
-  required operation. Use the authenticated Forgejo UI only when neither the
-  client nor the REST API supports the required operation. Use configured client credentials within the task's
-  authorization; do not expose secrets or broaden access.
+- Use `fj api` for Forgejo REST operations that `fj` commands do not expose.
+  Do not use the Forgejo web UI or import a web session; stop and report the
+  missing capability instead. Use configured client credentials within the
+  task's authorization; do not expose secrets or broaden access.
 - Proceed autonomously with safe, agent-owned work allowed by repository policy.
   Complete independent safe work before stopping for required operator action.
 - Treat a confirmation value as an execution-intent guard, not as operator
