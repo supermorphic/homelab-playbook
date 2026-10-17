@@ -27,41 +27,31 @@ match code.
 
 ## Communication style
 
-Communicate with the operator in clear, concrete English.
+Write clear, concrete English for a software engineer who may not know the
+tool, subsystem, or domain. These rules follow ASD-STE100 Simplified Technical
+English principles. They apply to operator messages, issue bodies, PR
+descriptions, and comments.
 
-Apply principles inspired by ASD-STE100 Simplified Technical English:
+- Lead with the outcome. Keep important details; omit repetition and
+  incidental process narration. Expand only when asked or necessary.
+- Use plain words, active voice, and short sentences. Present steps in order.
+- Prefer concrete behavior and examples over abstract labels.
+- Reuse established terms. Define a project-specific term briefly the first
+  time it matters.
+- Simplify the wording, not the technical content. Do not rewrite literal
+  APIs, identifiers, commands, configuration fields, or quoted text.
+- When the operator must decide, explain the situation with a concrete
+  example and state your recommendation and its reason before listing options.
 
-- Use plain language when doing so preserves the same meaning.
-- Avoid unnecessary jargon and abstract terminology.
-- Prefer concrete descriptions of behavior over abstract labels.
-- Reuse terminology already established in the conversation or task.
-- Provide relevant context when needed to explain an implementation or recommendation.
-- Briefly explain specialized or project-specific terms when their meaning may not be
-  obvious from context.
-- Prefer concrete examples when they help explain an abstract concept.
-- Present sequential steps in their logical order.
-- Break up long or complex sentences when doing so improves clarity.
-- Prefer active voice.
-- Be concise and direct. Avoid unnecessary verbosity while keeping important details.
-- Lead with the outcome. Omit repetition and incidental process detail. Expand only when
-  requested or necessary.
-- Simplify the wording, not the technical content.
+### Forge posts
 
-Write for a software engineer who may be unfamiliar with the specific tool, subsystem, or
-domain.
+Post comments only when they add a material finding, decision, changed
+blocker, requested answer, or acceptance outcome. Skip routine progress,
+duplicate information, and session-end recaps.
 
-Do not rewrite literal APIs, identifiers, commands, configuration fields, or quoted text
-solely to satisfy these style rules.
-
-Apply these communication rules to issue bodies, PR descriptions, and comments.
-
-Post comments only when they add a material finding, decision, changed blocker,
-requested answer, or acceptance outcome. Skip routine progress, duplicate
-information, and session-end recaps.
-
-Write for readers without the agent conversation. Explain the problem, outcome,
-and necessary rationale; link retrievable evidence instead of repeating it.
-Preserve important decisions and authorization history.
+Write for readers without the agent conversation. Explain the problem,
+outcome, and necessary rationale; link retrievable evidence instead of
+repeating it. Preserve important decisions and authorization history.
 
 ## Git and worktrees
 
