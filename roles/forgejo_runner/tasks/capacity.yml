@@ -1,0 +1,26 @@
+---
+- name: Observe host CPU, memory and runner filesystem capacity
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -B
+      - -c
+      - >-
+        import json,os,pathlib;
+        p=pathlib.Path('/var/lib/forgejo-runner');
+        p=next(c for c in (p,*p.parents) if c.exists());
+        s=os.statvfs(p);
+        m=dict(l.split(':',1) for l in pathlib.Path('/proc/meminfo').read_text().splitlines());
+        print(json.dumps({'cpu_count':os.cpu_count(),'memory_total':int(m['MemTotal'].split()[0])*1024,
+        'disk_total':s.f_blocks*s.f_frsize}))
+  register: forgejo_runner_host_capacity
+  changed_when: false
+  check_mode: false
+
+- name: Require declared workers to fit the host admission budget
+  ansible.builtin.assert:
+    that:
+      - >-
+        forgejo_runner_slots | forgejo_runner_validate_budget(forgejo_runner_host_capacity.stdout | from_json)
+        == forgejo_runner_slots
+    fail_msg: Enabled workers must fit 75% of host CPU and leave the memory and disk host reserves

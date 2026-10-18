@@ -47,9 +47,16 @@ class SharedPoolTests(unittest.TestCase):
                 self.pool.write_assignment(store, self.slots[0], 'user:other', 'other-job')
         self.assertEqual(result, self.pool.read_assignment(self.slots[0], authority_uid=os.getuid()))
 
-    def test_registry_rejects_a_third_worker_or_changed_declaration(self):
+    def test_registry_accepts_declared_workers_and_rejects_changed_declarations(self):
         self.assertEqual(self.slots, self.pool.read_registry(self.slots[0], authority_uid=os.getuid()))
-        for changed in (self.slots + [slot(2)], [{**self.slots[0], 'label': 'other'}, self.slots[1]]):
+        third = {**slot(2), 'enabled': True, 'state_root': str(self.root / 'worker-3')}
+        (self.root / 'slots.json').write_text(json.dumps({'schema': 1, 'slots': self.slots + [third]}))
+        self.assertEqual(self.slots + [third], self.pool.read_registry(third, authority_uid=os.getuid()))
+        duplicate = {**third, 'name': 'worker-1', 'state_root': self.slots[0]['state_root']}
+        for changed in ([], self.slots + [duplicate], self.slots + [{**third, 'label': 'other'}],
+                        [{**self.slots[0], 'label': 'other'}, self.slots[1]],
+                        [{**self.slots[0], 'limits': {**self.slots[0]['limits'], 'memory_bytes': 4*1024**3+1}},
+                         self.slots[1]]):
             (self.root / 'slots.json').write_text(json.dumps({'schema': 1, 'slots': changed}))
             with self.subTest(changed=changed), self.assertRaises(ValueError):
                 self.pool.read_registry(self.slots[0], authority_uid=os.getuid())
@@ -66,6 +73,45 @@ class SharedPoolTests(unittest.TestCase):
             self.pool.validate_capacity(self.slots[0], self.slots,
                                         {**observed, 'memory_available': 4*1024**3-1},
                                         peer_anon_bytes=2*1024**3)
+
+    def three_workers(self):
+        slots = [{**slot(index), 'enabled': True} for index in range(3)]
+        for item in slots:
+            item['limits'] = {**item['limits'], 'memory_bytes': 4*1024**3}
+        return slots
+
+    def test_three_workers_are_admitted_within_three_quarters_of_host_cpu(self):
+        slots = self.three_workers()
+        # Each new worker reserves 4 GiB for itself, 8 GiB for its peers and the 2 GiB host reserve.
+        idle = {'memory_total': 31*1024**3, 'memory_available': 14*1024**3,
+                'disk_available': 76*1024**3, 'cpu_count': 8}
+        self.pool.validate_capacity(slots[2], slots, idle, peer_anon_bytes=0)
+        for changed in ({'cpu_count': 7}, {'memory_available': 14*1024**3-1}, {'disk_available': 76*1024**3-1}):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                self.pool.validate_capacity(slots[2], slots, {**idle, **changed}, peer_anon_bytes=0)
+        fourth = [*slots, {**slot(3), 'enabled': True, 'limits': slots[0]['limits']}]
+        with self.assertRaises(ValueError):
+            self.pool.validate_capacity(fourth[3], fourth, {**idle, 'memory_available': 31*1024**3,
+                                        'disk_available': 400*1024**3}, peer_anon_bytes=0)
+        fourth[3]['enabled'] = False
+        self.pool.validate_capacity(slots[2], fourth, {**idle, 'disk_available': 100*1024**3},
+                                    peer_anon_bytes=0)
+
+    def test_busy_peers_receive_only_bound_memory_and_disk_credit(self):
+        slots = self.three_workers()
+        # Two busy peers have consumed 3 GiB of anonymous memory and 40 GiB of image blocks.
+        busy = {'memory_total': 31*1024**3, 'memory_available': 11*1024**3,
+                'disk_available': 36*1024**3, 'cpu_count': 8}
+        self.pool.validate_capacity(slots[2], slots, busy, peer_anon_bytes=3*1024**3,
+                                    peer_disk_bytes=40*1024**3)
+        for changed, credit in (({'memory_available': 11*1024**3-1}, {}),
+                                ({'disk_available': 36*1024**3-1}, {}),
+                                ({}, {'peer_anon_bytes': 3*1024**3-1}),
+                                ({'memory_total': 14*1024**3-1}, {}),
+                                ({'cpu_count': 7}, {})):
+            arguments = {'peer_anon_bytes': 3*1024**3, 'peer_disk_bytes': 40*1024**3, **credit}
+            with self.subTest(changed=changed, credit=credit), self.assertRaises(ValueError):
+                self.pool.validate_capacity(slots[2], slots, {**busy, **changed}, **arguments)
 
     def test_memory_credit_cannot_exceed_the_other_workers_full_allowance(self):
         observed = {'memory_total': 8*1024**3, 'memory_available': 3*1024**3,
@@ -86,18 +132,23 @@ class SharedPoolTests(unittest.TestCase):
         with self.assertRaises(OSError):
             self.pool.read_assignment(self.slots[0], authority_uid=os.getuid())
 
-    def test_two_workers_run_distinct_jobs_from_the_same_repository_concurrently(self):
+    def test_three_workers_run_distinct_jobs_from_the_same_repository_concurrently(self):
         # Real locks, assignment files, checkpoints and registration client;
         # replace only the remote API and workload execution boundaries.
-        first_running = threading.Event()
-        both_running = threading.Barrier(2)
+        entered = threading.Semaphore(0)
+        third = {**slot(2), 'enabled': True, 'state_root': str(self.root / 'worker-3')}
+        Path(third['state_root']).mkdir(mode=0o700)
+        self.slots.append(third)
+        (self.root / 'slots.json').write_text(json.dumps({'schema': 1, 'slots': self.slots}))
+        all_running = threading.Barrier(3)
         executed = []
         registrations = {}
         api_lock = threading.Lock()
         def request(path, *, method='GET', payload=None):
             with api_lock:
                 if path.endswith('/jobs?labels=homelab-podman-amd64'):
-                    return [{'id': 2, 'status': 'waiting', 'handle': 'job-two', 'owner_id': 1, 'repo_id': 902},
+                    return [{'id': 3, 'status': 'waiting', 'handle': 'job-three', 'owner_id': 1, 'repo_id': 902},
+                            {'id': 2, 'status': 'waiting', 'handle': 'job-two', 'owner_id': 1, 'repo_id': 902},
                             {'id': 1, 'status': 'waiting', 'handle': 'job-one', 'owner_id': 1, 'repo_id': 902}]
                 if '/actions/runners' not in path:
                     return {'id': 1, 'login': 'supermorphic'}
@@ -121,8 +172,8 @@ class SharedPoolTests(unittest.TestCase):
             def run(self, registration, *, registration_present):
                 assert registration_present()
                 executed.append((self.handle, registration.scope))
-                first_running.set()
-                both_running.wait(timeout=5)
+                entered.release()
+                all_running.wait(timeout=5)
         values = [{'slot': item, 'installation': 'synthetic', 'assets_root': 'synthetic', 'manifest': {}}
                   for item in self.slots]
         with patch.object(control, 'CheckpointStore', store), \
@@ -131,13 +182,15 @@ class SharedPoolTests(unittest.TestCase):
                 patch.object(control, 'RegistrationClient', side_effect=client), \
                 patch.object(control, 'OwnedRuntime', Runtime), \
                 patch.object(self.pool, 'require_capacity', create=True), \
-                concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            first = executor.submit(control.perform, 'cycle', values[0])
-            self.assertTrue(first_running.wait(timeout=5), 'First worker never entered its job')
-            second = executor.submit(control.perform, 'cycle', values[1])
-            self.assertEqual([0, 0], [first.result()[1], second.result()[1]])
-        self.assertCountEqual([('job-one', 'user:supermorphic'),
-                               ('job-two', 'user:supermorphic')], executed)
+                concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            # Admission is serial: submit each worker after its predecessor holds a job.
+            futures = []
+            for value in values:
+                futures.append(executor.submit(control.perform, 'cycle', value))
+                self.assertTrue(entered.acquire(timeout=5), value['slot']['name'] + ' never entered its job')
+            self.assertEqual([0, 0, 0], [future.result()[1] for future in futures])
+        self.assertCountEqual([('job-one', 'user:supermorphic'), ('job-two', 'user:supermorphic'),
+                               ('job-three', 'user:supermorphic')], executed)
         self.assertEqual({}, registrations)
         for item in self.slots:
             self.assertEqual('clean', lifecycle.read_checkpoint(item['state_root'], authority_uid=os.getuid())['phase'])

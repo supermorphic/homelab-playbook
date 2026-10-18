@@ -18,6 +18,9 @@
 - name: Validate complete inputs before any host change
   ansible.builtin.import_tasks: inputs.yml
 
+- name: Validate the declared pool against measured host capacity
+  ansible.builtin.import_tasks: capacity.yml
+
 - name: Bind public artifacts and helpers to the exact committed candidate
   ansible.builtin.assert:
     that:

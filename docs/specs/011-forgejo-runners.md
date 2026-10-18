@@ -135,6 +135,34 @@ for CPU, memory and process limits, and an external wall-clock watchdog. Account
 for all sibling containers in these limits. Reserve capacity for Forgejo,
 PostgreSQL, Semaphore and host management before enabling slots.
 
+### Shared pool capacity
+
+The operator declares the slot count. No fixed number limits it. Provisioning
+and standalone verification measure host CPU, memory and runner filesystem size,
+and reject a declaration that could not be admitted on an idle host. Serial
+admission repeats the check against currently available resources before each
+allocation:
+
+- Enabled workers may claim up to 75% of host CPU. CPU overcommit slows jobs but
+  does not make host services fail.
+- Memory stays strict. A new worker reserves its own limit, the full limit of each
+  enabled peer and 2 GiB for host services. Only the anonymous memory of a peer's
+  bound worker unit reduces that reservation; file cache never does.
+- Disk stays strict. Admission reserves every declared worker image plus 4 GiB.
+  Only the verified allocated blocks of an active peer image count as already used.
+
+A new slot adds identities to the retained reservation. Existing reserved
+identities must remain declared unchanged.
+
+After NUC4's upgrade to 32 GiB of memory (8 hardware threads), the operator
+selected three shared workers with 200% CPU and 4 GiB of memory each. Process,
+disk and wall-clock limits did not change. Two larger workers would leave CPU
+idle while jobs wait. Four half-speed workers would make each job slower.
+
+Historical: the first shared pool allowed exactly two workers with 2 GiB of
+memory each and a 50% CPU rule. On 8 hardware threads, two 200% workers used the
+whole CPU budget.
+
 Give each execution account a disposable, size-bounded filesystem for its home,
 container graph, workspace and scratch space. Use an independently bounded
 filesystem or enforced filesystem quota; periodic pruning and free-space checks

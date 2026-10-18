@@ -3,12 +3,11 @@
   ansible.builtin.assert:
     that:
       - forgejo_runner_slots | forgejo_runner_validate_slots == forgejo_runner_slots
-      - forgejo_runner_slots | length == 2
-      - forgejo_runner_slots[0].scope == forgejo_runner_scope
-      - forgejo_runner_slots[1].scope == forgejo_runner_scope
+      - forgejo_runner_slots | length > 0
+      - forgejo_runner_slots | map(attribute='scope') | unique | list == [forgejo_runner_scope]
       - forgejo_runner_source_commit is match('^[0-9a-f]{40}$')
       - forgejo_runner_helper_root == '/usr/local/libexec/forgejo-runner/' ~ forgejo_runner_source_commit
-    fail_msg: Declare two shared workers serving the supermorphic owner scope with unused identities and finite limits
+    fail_msg: Declare shared workers serving the supermorphic owner scope with unused identities and finite limits
 
 - name: Validate the public deployment artifact manifest
   ansible.builtin.assert:

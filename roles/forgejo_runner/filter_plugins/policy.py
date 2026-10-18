@@ -14,13 +14,14 @@ SLOT_FIELDS = {'name', 'scope', 'enabled', 'label', 'state_root',
 SCOPES = {'user:supermorphic', 'organization:supermorphic'}
 LIMIT_FIELDS = {'memory_bytes', 'disk_bytes', 'pids', 'cpu_percent',
                'idle_seconds', 'job_seconds'}
-LIMIT_MAXIMUMS = {'memory_bytes': 2 * 1024**3, 'disk_bytes': 24 * 1024**3,
+LIMIT_MAXIMUMS = {'memory_bytes': 4 * 1024**3, 'disk_bytes': 24 * 1024**3,
                   'pids': 768, 'cpu_percent': 200, 'idle_seconds': 300, 'job_seconds': 10800}
 
 
 def validate_slots(slots):
-    if not isinstance(slots, list) or len(slots) > 2:
-        raise ValueError('Declare at most two shared worker slots')
+    # The measured host budget, not a fixed count, bounds the number of slots.
+    if not isinstance(slots, list):
+        raise ValueError('Declare shared worker slots as a list')
     accounts = []
     for slot in slots:
         if not isinstance(slot, dict) or set(slot) != SLOT_FIELDS:
@@ -65,6 +66,35 @@ def validate_slots(slots):
     foundation.validate_accounts(accounts, '', '', '', '')
     if any(account['uid'] < 1000 or account['gid'] < 1000 for account in accounts):
         raise ValueError('Runner identity must match the qualified runtime UID and GID floor')
+    return slots
+
+
+def validate_budget(slots, capacity):
+    validate_slots(slots)
+    if (not isinstance(capacity, dict) or set(capacity) != {'cpu_count', 'memory_total', 'disk_total'}
+            or any(type(value) is not int or value <= 0 for value in capacity.values())):
+        raise ValueError('Host capacity observation is incomplete')
+    files = str(Path(__file__).resolve().parent.parent / 'files')
+    sys.path.insert(0, files)
+    try:
+        spec = importlib.util.spec_from_file_location('runner_pool_budget', files + '/pool.py')
+        pool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pool)
+    finally:
+        sys.path.remove(files)
+    pool.validate_budget(slots, capacity)
+    return slots
+
+
+def validate_reservation(slots, reservation):
+    # A new slot may add identities; every reserved identity stays declared unchanged.
+    validate_slots(slots)
+    declared = [slot[key] for slot in slots for key in ('worker', 'controller')]
+    if (not isinstance(reservation, dict) or set(reservation) != {'schema', 'accounts'}
+            or type(reservation['schema']) is not int or reservation['schema'] != 1
+            or not isinstance(reservation['accounts'], list)
+            or any(account not in declared for account in reservation['accounts'])):
+        raise ValueError('Reserved runner identities must remain declared without change')
     return slots
 
 
@@ -194,6 +224,8 @@ def deployment_sources(helper_root):
 class FilterModule:
     def filters(self):
         return {'forgejo_runner_validate_slots': validate_slots,
+                'forgejo_runner_validate_budget': validate_budget,
+                'forgejo_runner_validate_reservation': validate_reservation,
                 'forgejo_runner_validate_unused_slots': validate_unused_slots,
                 'forgejo_runner_validate_public_assets': validate_public_assets,
             'forgejo_runner_validate_manifest': validate_manifest,
