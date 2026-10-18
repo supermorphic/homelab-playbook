@@ -86,6 +86,10 @@ repeating it. Preserve important decisions and authorization history.
   Do not use the Forgejo web UI or import a web session; stop and report the
   missing capability instead. Use configured client credentials within the
   task's authorization; do not expose secrets or broaden access.
+- When `fj` and `fj api` cannot provide a needed capability, the operator may
+  explicitly authorize Forgejo web UI use for the current task. The operator
+  signs in; never enter, store, or export credentials or session cookies. Limit
+  UI use to the authorized action and report the missing `fj` capability.
 - Proceed autonomously with safe, agent-owned work allowed by repository policy.
   Complete independent safe work before stopping for required operator action.
 - Treat a confirmation value as an execution-intent guard, not as operator
