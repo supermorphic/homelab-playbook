@@ -56,7 +56,7 @@ jobs:
       - name: Install locked tools
         run: |
           mise trust --yes
-          mise install --locked
+          env -u GITHUB_TOKEN -u FORGEJO_TOKEN mise install --locked
       - name: Classify validation depth
         id: classify
         env:
@@ -105,7 +105,7 @@ jobs:
       - name: Install locked tools
         run: |
           mise trust --yes
-          mise install --locked
+          env -u GITHUB_TOKEN -u FORGEJO_TOKEN mise install --locked
       - name: Install fast Python dependencies
         run: mise exec -- uv sync --frozen --only-group fast
       - name: Run pull request fast validation
@@ -171,7 +171,7 @@ jobs:
       - name: Install locked tools
         run: |
           mise trust --yes
-          mise install --locked
+          env -u GITHUB_TOKEN -u FORGEJO_TOKEN mise install --locked
       - name: Bootstrap controller dependencies
         run: mise run bootstrap
       - name: Run offline Ansible validation
@@ -230,7 +230,7 @@ jobs:
       - name: Install locked tools
         run: |
           mise trust --yes
-          mise install --locked
+          env -u GITHUB_TOKEN -u FORGEJO_TOKEN mise install --locked
       - name: Bootstrap controller dependencies
         run: mise run bootstrap
       - name: Run Molecule platform validation
@@ -285,7 +285,7 @@ jobs:
       - name: Install locked tools
         run: |
           mise trust --yes
-          mise install --locked
+          env -u GITHUB_TOKEN -u FORGEJO_TOKEN mise install --locked
       - name: Reconcile validation results
         env:
           SELECTED_DEPTH: ${{ needs.classify.outputs.depth }}

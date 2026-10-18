@@ -1,4 +1,4 @@
-min_version = { hard = "2026.7.5" }
+min_version = { hard = "2026.9.4" }
 
 [settings]
 lockfile = true
@@ -18,6 +18,15 @@ pre-commit = "4.6.2"
 "aqua:rhysd/actionlint" = "1.7.12"
 # Reviewed manual fastq release matches its upstream tag; its successor restores provenance.
 "npm:markdownlint-cli2" = { version = "0.23.2", trust_policy_excludes = ["fastq@1.20.2"] }
+
+# Fjord is an operator tool; Alpine controller bootstrap does not need its glibc binary.
+[tools."forgejo:rasterstate/fj"]
+version = "0.6.0"
+api_url = "https://rasterhub.com/api/v1"
+strip_components = 1
+lazy = true
+lazy_bins = ["fj"]
+install_env = { FORGEJO_TOKEN = false, GITHUB_TOKEN = false }
 
 [tasks.bootstrap]
 description = "Install the locked controller and Galaxy dependencies"
