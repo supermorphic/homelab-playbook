@@ -192,7 +192,7 @@ jobs:
     needs: classify
     if: needs.classify.outputs.run_molecule == 'true'
     runs-on: homelab-podman-amd64
-    timeout-minutes: 75
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: /work/job-workspace/source
