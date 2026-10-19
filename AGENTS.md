@@ -76,13 +76,18 @@ repeating it. Preserve important decisions and authorization history.
 
 ## Authority boundaries
 
-- Run established repository workflows through their pinned Mise tasks. Use
-  `mise exec -- <tool> ...` when no task exists and the pinned version matters.
-  Ordinary read-only filesystem and Git inspection may use standard commands.
-- Use Git for repository content. Use the configured `fj` client for issues,
-  pull requests, reviews, comments, labels, and other forge metadata.
+- Run established repository workflows through their pinned Mise tasks. Run
+  any other tool pinned in `.mise.toml` or `uv.lock` through
+  `mise exec -- <tool> ...`. Never substitute an operator-account installation
+  of a pinned tool. Only Mise, Git, OpenSSH, rootless Podman, and standard
+  operating-system utilities come from the host. Ordinary read-only filesystem
+  and Git inspection may use standard commands.
+- Use Git for repository content. Use the pinned `fj` client through
+  `mise exec -- fj ...` for issues, pull requests, reviews, comments, labels,
+  and other forge metadata.
 - Do not manipulate Forgejo's database or invoke its server-side CLI directly.
-- Use `fj api` for Forgejo REST operations that `fj` commands do not expose.
+- Use `mise exec -- fj api` for Forgejo REST operations that `fj` commands do
+  not expose.
   Do not use the Forgejo web UI or import a web session; stop and report the
   missing capability instead. Use configured client credentials within the
   task's authorization; do not expose secrets or broaden access.
