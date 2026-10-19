@@ -168,6 +168,41 @@ def seed():
     os.chown(store.path,account.pw_uid,account.pw_gid)
     (FIXTURE/'state-baseline.json').write_bytes(store.path.read_bytes())
 
+def prepare_service_recovery():
+    before=(FIXTURE/'destination.json').read_bytes()
+    fd=os.open(ROOT/'operation.lock',os.O_RDWR)
+    fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    try: start(success=False)
+    finally: os.close(fd)
+    control('manual-apply')
+    assert run('systemctl','is-failed',UNIT)=='failed'
+    assert before==(FIXTURE/'destination.json').read_bytes()
+    (FIXTURE/'recovery-destination.json').write_bytes(before)
+    (FIXTURE/'recovery-status-before.json').write_bytes((ROOT/'status.json').read_bytes())
+    run('systemd-run','--unit=metadata-unrelated-fixture','--wait','--property=Type=oneshot',
+        '/bin/false',success=False)
+    fingerprint=enrollment_fingerprint(load_config(json.loads(CONFIG.read_text())))
+    print(json.dumps({'operation':'recover-service','fingerprint':fingerprint,
+        'confirmation':'recover-service:'+fingerprint,'decision_ref':'disposable-service-recovery'}))
+
+def verify_recovery_guard():
+    assert run('systemctl','is-failed',UNIT)=='failed'
+    assert (FIXTURE/'recovery-status-before.json').read_bytes()==(ROOT/'status.json').read_bytes()
+    assert (FIXTURE/'recovery-destination.json').read_bytes()==(FIXTURE/'destination.json').read_bytes()
+
+def verify_service_recovery():
+    assert run('systemctl','show',UNIT,'--property=ActiveState','--value')=='inactive'
+    assert run('systemctl','show',UNIT,'--property=Result','--value')=='success'
+    assert run('systemctl','is-failed','metadata-unrelated-fixture.service')=='failed'
+    assert (FIXTURE/'recovery-destination.json').read_bytes()==(FIXTURE/'destination.json').read_bytes()
+    current=(ROOT/'status.json').read_bytes()
+    previous=FIXTURE/'recovery-status.json'
+    if previous.exists(): assert previous.read_bytes()==current,'healthy unit was started again'
+    else: previous.write_bytes(current)
+
 if __name__=='__main__':
     if sys.argv[1:]==['seed']: seed()
+    elif sys.argv[1:]==['prepare-service-recovery']: prepare_service_recovery()
+    elif sys.argv[1:]==['verify-recovery-guard']: verify_recovery_guard()
+    elif sys.argv[1:]==['verify-service-recovery']: verify_service_recovery()
     else: main()

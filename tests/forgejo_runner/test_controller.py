@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import shlex
 import unittest
 
 source = Path(__file__).parents[2] / 'roles/forgejo_runner/files/controller_launch.py'
@@ -24,6 +25,10 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual('unix:///run/user/2201/podman.sock', config['container']['docker_host'])
         self.assertEqual(['homelab-podman-amd64:docker://localhost/forgejo-job:approved'], config['runner']['labels'])
         self.assertEqual(['/work/job-workspace'], config['container']['valid_volumes'])
+
+    def test_job_container_uses_runtime_init_to_reap_orphaned_children(self):
+        config = module.runner_configuration(self.request())
+        self.assertIn('--init', shlex.split(config['container']['options']))
 
     def test_untrusted_label_cannot_supply_a_host_executor(self):
         for field, value in [('label', 'label:host'), ('job_image', 'image --privileged'),

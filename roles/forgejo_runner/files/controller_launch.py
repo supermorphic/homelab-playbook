@@ -35,7 +35,7 @@ def runner_configuration(request):
             'container': {'docker_host': 'unix:///run/user/' + str(request['worker_uid']) + '/podman.sock',
                           'workdir_parent': '/work/job-workspace',
                           'network': 'host', 'force_pull': False,
-                          'options': '--tmpfs /var/lib/containers --tmpfs /home/podman/.local/share/containers '
+                          'options': '--init --tmpfs /var/lib/containers --tmpfs /home/podman/.local/share/containers '
                                      '--security-opt label=disable '
                                      '--volume /work/job-workspace:/work/job-workspace:U',
                           'valid_volumes': ['/work/job-workspace']},
