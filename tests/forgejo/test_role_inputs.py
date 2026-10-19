@@ -12,6 +12,8 @@ import yaml
 from jinja2 import Template
 
 ROOT = Path(__file__).resolve().parents[2]
+# Explicit local hosts would discover a PATH interpreter; use the controller's, like implicit localhost.
+CONTROLLER_PYTHON = ("-e", "ansible_python_interpreter={{ ansible_playbook_python }}")
 INPUTS = ROOT / "roles/forgejo/tasks/inputs.yml"
 
 
@@ -59,7 +61,7 @@ class InputTests(unittest.TestCase):
             environment.update(ANSIBLE_CONFIG=str(config),
                 ANSIBLE_VARS_ENABLED="host_group_vars",
                 SOPS_ANSIBLE_AWX_DISABLE_VARS_PLUGIN_TEMPORARILY="true")
-            result = subprocess.run(["ansible-playbook", "-i", "localhost,", "-c", "local",
+            result = subprocess.run(["ansible-playbook", "-i", "localhost,", "-c", "local", *CONTROLLER_PYTHON,
                 str(playbook), "-e", "@" + str(variables)], cwd=directory,
                 env=environment, capture_output=True, text=True, check=False, timeout=30)
             self.assertNotIn("synthetic-only-not-live", result.stdout + result.stderr)

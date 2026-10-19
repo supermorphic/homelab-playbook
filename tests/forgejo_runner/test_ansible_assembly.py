@@ -10,6 +10,8 @@ import yaml
 from test_policy import slot
 
 ROOT = Path(__file__).parents[2]
+# Explicit local hosts would discover a PATH interpreter; use the controller's, like implicit localhost.
+CONTROLLER_PYTHON = ('-e', 'ansible_python_interpreter={{ ansible_playbook_python }}')
 WORKTREE = Path.cwd()
 
 
@@ -66,7 +68,7 @@ class AnsibleAssemblyTests(unittest.TestCase):
                            if not key.startswith(('SOPS_AGE_', 'ANSIBLE_SOPS_', 'ANSIBLE_VAULT_'))}
             environment.update(ANSIBLE_CONFIG=str(configuration.resolve()), ANSIBLE_VARS_ENABLED='host_group_vars',
                 SOPS_ANSIBLE_AWX_DISABLE_VARS_PLUGIN_TEMPORARILY='true', PYTHONPATH=str(WORKTREE))
-            result = subprocess.run(['ansible-playbook', '-i', 'localhost,', '-c', 'local',
+            result = subprocess.run(['ansible-playbook', '-i', 'localhost,', '-c', 'local', *CONTROLLER_PYTHON,
                 str(playbook.resolve()), '-e', '@' + str(variables_file.resolve())],
                 env=environment, capture_output=True, text=True, timeout=60, check=False)
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)

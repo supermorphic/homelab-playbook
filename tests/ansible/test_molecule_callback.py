@@ -13,6 +13,8 @@ from types import SimpleNamespace
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
+# Explicit local hosts would discover a PATH interpreter; use the controller's, like implicit localhost.
+CONTROLLER_PYTHON = ("-e", "ansible_python_interpreter={{ ansible_playbook_python }}")
 sys.path.insert(0, str(ROOT))
 
 
@@ -73,7 +75,7 @@ class CallbackTests(unittest.TestCase):
                 ANSIBLE_NOCOLOR="1",
             )
             result = subprocess.run(
-                ["ansible-playbook", "-i", "localhost,", "-c", "local", str(playbook)],
+                ["ansible-playbook", "-i", "localhost,", "-c", "local", *CONTROLLER_PYTHON, str(playbook)],
                 env=environment,
                 cwd=root,
                 capture_output=True,

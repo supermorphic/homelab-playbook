@@ -19,6 +19,8 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 
 ROOT = Path(__file__).resolve().parents[2]
+# Explicit local hosts would discover a PATH interpreter; use the controller's, like implicit localhost.
+CONTROLLER_PYTHON = ("-e", "ansible_python_interpreter={{ ansible_playbook_python }}")
 ROLE = ROOT / "roles/semaphore"
 
 
@@ -392,7 +394,7 @@ class SemaphorePlaybookTests(unittest.TestCase):
             probe.write_text(yaml.safe_dump(play))
 
             first = subprocess.run(
-                ["ansible-playbook", "-i", "localhost,", str(probe)],
+                ["ansible-playbook", "-i", "localhost,", *CONTROLLER_PYTHON, str(probe)],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,
@@ -404,7 +406,7 @@ class SemaphorePlaybookTests(unittest.TestCase):
 
             removed.unlink()
             second = subprocess.run(
-                ["ansible-playbook", "-i", "localhost,", str(probe)],
+                ["ansible-playbook", "-i", "localhost,", *CONTROLLER_PYTHON, str(probe)],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,
@@ -447,7 +449,7 @@ class SemaphoreInputValidationTests(unittest.TestCase):
             probe = Path(directory) / "probe.yml"
             probe.write_text(yaml.safe_dump(play))
             return subprocess.run(
-                ["ansible-playbook", "-i", "localhost,", str(probe)],
+                ["ansible-playbook", "-i", "localhost,", *CONTROLLER_PYTHON, str(probe)],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,

@@ -14,6 +14,8 @@ import yaml
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+# Explicit local hosts would discover a PATH interpreter; use the controller's, like implicit localhost.
+CONTROLLER_PYTHON = ("-e", "ansible_python_interpreter={{ ansible_playbook_python }}")
 
 
 def load_module(relative_path: str, name: str):
@@ -679,7 +681,7 @@ else:
                 encoding="utf-8",
             )
             result = subprocess.run(
-                ["ansible-playbook", "-i", "localhost,", str(playbook)],
+                ["ansible-playbook", "-i", "localhost,", *CONTROLLER_PYTHON, str(playbook)],
                 cwd=REPOSITORY_ROOT,
                 capture_output=True,
                 text=True,
@@ -736,7 +738,7 @@ else:
                 encoding="utf-8",
             )
             result = subprocess.run(
-                ["ansible-playbook", "-i", "localhost,", str(playbook)],
+                ["ansible-playbook", "-i", "localhost,", *CONTROLLER_PYTHON, str(playbook)],
                 cwd=REPOSITORY_ROOT,
                 capture_output=True,
                 text=True,
