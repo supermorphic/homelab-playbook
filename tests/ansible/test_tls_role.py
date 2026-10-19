@@ -10,6 +10,8 @@ import unittest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
+# Explicit local hosts would discover a PATH interpreter; use the controller's, like implicit localhost.
+CONTROLLER_PYTHON = ("-e", "ansible_python_interpreter={{ ansible_playbook_python }}")
 ROLE = ROOT / "roles/tls_automation"
 _spec = importlib.util.spec_from_file_location("tls_validation", ROLE / "filter_plugins/validation.py")
 validation = importlib.util.module_from_spec(_spec)
@@ -110,7 +112,7 @@ class RoleUnitTests(unittest.TestCase):
                            if not key.startswith(("ANSIBLE_", "SOPS_"))}
             environment.update(ANSIBLE_CONFIG=str(config), ANSIBLE_VARS_ENABLED="host_group_vars")
             result = subprocess.run([str(ROOT / ".venv/bin/ansible-playbook"), "-i", "localhost,",
-                                     "-c", "local", str(playbook)], env=environment,
+                                     "-c", "local", *CONTROLLER_PYTHON, str(playbook)], env=environment,
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=45)
             self.assertEqual(0, result.returncode, result.stdout)
 

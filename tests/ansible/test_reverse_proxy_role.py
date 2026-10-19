@@ -19,6 +19,8 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+# Explicit local hosts would discover a PATH interpreter; use the controller's, like implicit localhost.
+CONTROLLER_PYTHON = ("-e", "ansible_python_interpreter={{ ansible_playbook_python }}")
 ROLE_ROOT = REPOSITORY_ROOT / "roles/reverse_proxy"
 
 
@@ -403,7 +405,7 @@ class ProvisioningFlowTests(unittest.TestCase):
                 encoding="utf-8",
             )
             result = subprocess.run(
-                ["ansible-playbook", "-i", "localhost,", str(playbook)],
+                ["ansible-playbook", "-i", "localhost,", *CONTROLLER_PYTHON, str(playbook)],
                 cwd=REPOSITORY_ROOT,
                 capture_output=True,
                 text=True,
@@ -521,7 +523,7 @@ class ProvisioningFlowTests(unittest.TestCase):
                 encoding="utf-8",
             )
             result = subprocess.run(
-                ["ansible-playbook", "-i", "localhost,", str(playbook)],
+                ["ansible-playbook", "-i", "localhost,", *CONTROLLER_PYTHON, str(playbook)],
                 cwd=REPOSITORY_ROOT,
                 capture_output=True,
                 text=True,
@@ -611,7 +613,7 @@ class ProvisioningFlowTests(unittest.TestCase):
             environment = dict(os.environ)
             environment["ANSIBLE_ROLES_PATH"] = str(root / "roles")
             result = subprocess.run(
-                ["ansible-playbook", "-i", "localhost,", str(playbook)],
+                ["ansible-playbook", "-i", "localhost,", *CONTROLLER_PYTHON, str(playbook)],
                 cwd=REPOSITORY_ROOT,
                 capture_output=True,
                 text=True,

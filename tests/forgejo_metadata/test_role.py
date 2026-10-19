@@ -9,6 +9,8 @@ import unittest
 import yaml
 from support import CONFIG
 ROOT=Path(__file__).resolve().parents[2]
+# Explicit local hosts would discover a PATH interpreter; use the controller's, like implicit localhost.
+CONTROLLER_PYTHON=('-e','ansible_python_interpreter={{ ansible_playbook_python }}')
 class RoleTests(unittest.TestCase):
     def settings(self):
         path=ROOT/'roles/forgejo_metadata/defaults/main.yml'
@@ -26,7 +28,7 @@ class RoleTests(unittest.TestCase):
             (directory/'test.yml').write_text(yaml.safe_dump([{'name':'Synthetic role assertions','hosts':'localhost','gather_facts':False,'tasks':[{'name':'Check inputs','ansible.builtin.import_tasks':str(ROOT/'roles/forgejo_metadata/tasks'/task)}]}]))
             env={k:v for k,v in os.environ.items() if not k.startswith(('SOPS_AGE_','ANSIBLE_SOPS_','ANSIBLE_VAULT_'))}
             env.update(ANSIBLE_CONFIG=str(config),ANSIBLE_VARS_ENABLED='host_group_vars',SOPS_ANSIBLE_AWX_DISABLE_VARS_PLUGIN_TEMPORARILY='true')
-            result=subprocess.run(['ansible-playbook','-i','localhost,','-c','local',str(directory/'test.yml'),'-e','@'+str(directory/'vars.json')],env=env,capture_output=True,text=True,timeout=30)
+            result=subprocess.run(['ansible-playbook','-i','localhost,','-c','local',*CONTROLLER_PYTHON,str(directory/'test.yml'),'-e','@'+str(directory/'vars.json')],env=env,capture_output=True,text=True,timeout=30)
             self.assertNotIn('synthetic-only-not-live',result.stdout+result.stderr)
             (root/'role-assertions.log').write_text(result.stdout+result.stderr)
             return result.returncode

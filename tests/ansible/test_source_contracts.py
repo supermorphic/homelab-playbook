@@ -18,6 +18,8 @@ from ansible.template import Templar, trust_as_template
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+# Explicit local hosts would discover a PATH interpreter; use the controller's, like implicit localhost.
+CONTROLLER_PYTHON = ("-e", "ansible_python_interpreter={{ ansible_playbook_python }}")
 
 
 def load_yaml_documents(relative_path: str) -> list[object]:
@@ -868,6 +870,7 @@ class SourceContractTests(unittest.TestCase):
                         "os_managed,",
                         "--connection",
                         "local",
+                        *CONTROLLER_PYTHON,
                         "--limit",
                         "os_managed",
                         "--check",
@@ -1161,6 +1164,7 @@ class SourceContractTests(unittest.TestCase):
                         str(playbook_path),
                         "--inventory",
                         "localhost,",
+                        *CONTROLLER_PYTHON,
                     ],
                     cwd=REPOSITORY_ROOT,
                     check=False,
@@ -1396,6 +1400,7 @@ class SourceContractTests(unittest.TestCase):
                 "os_managed,",
                 "--connection",
                 "local",
+                *CONTROLLER_PYTHON,
                 "--limit",
                 "os_managed",
                 "--start-at-task",

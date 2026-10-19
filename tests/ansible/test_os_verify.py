@@ -12,6 +12,8 @@ import yaml
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+# Explicit local hosts would discover a PATH interpreter; use the controller's, like implicit localhost.
+CONTROLLER_PYTHON = ("-e", "ansible_python_interpreter={{ ansible_playbook_python }}")
 VERIFY_PLAYBOOK = REPOSITORY_ROOT / "playbooks/os/verify.yml"
 
 
@@ -238,7 +240,7 @@ class StandaloneOsVerifyTests(unittest.TestCase):
             yaml.safe_dump(probe, source, sort_keys=False)
             source.flush()
             result = subprocess.run(
-                ["ansible-playbook", source.name, "--inventory", "localhost,"],
+                ["ansible-playbook", source.name, "--inventory", "localhost,", *CONTROLLER_PYTHON],
                 cwd=REPOSITORY_ROOT,
                 check=False,
                 capture_output=True,

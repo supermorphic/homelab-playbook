@@ -8,6 +8,8 @@ import tempfile
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
+# Explicit local hosts would discover a PATH interpreter; use the controller's, like implicit localhost.
+CONTROLLER_PYTHON = ("-e", "ansible_python_interpreter={{ ansible_playbook_python }}")
 SOURCE = ROOT / "roles/podman_foundation/filter_plugins/identity.py"
 
 
@@ -228,7 +230,7 @@ class SudoVerificationTests(unittest.TestCase):
                 path = Path(directory) / "probe.yml"
                 path.write_text(yaml.safe_dump(play))
                 result = subprocess.run(
-                    ["ansible-playbook", "-i", "localhost,", str(path)],
+                    ["ansible-playbook", "-i", "localhost,", *CONTROLLER_PYTHON, str(path)],
                     cwd=ROOT,
                     capture_output=True,
                     text=True,
@@ -301,7 +303,7 @@ class PodmanPlaybookCredentialGuardTests(unittest.TestCase):
                     probe = Path(directory) / "probe.yml"
                     probe.write_text(yaml.safe_dump(play))
                     result = subprocess.run(
-                        ["ansible-playbook", "-i", "localhost,", str(probe)],
+                        ["ansible-playbook", "-i", "localhost,", *CONTROLLER_PYTHON, str(probe)],
                         cwd=ROOT,
                         capture_output=True,
                         text=True,
