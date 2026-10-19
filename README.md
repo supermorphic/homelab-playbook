@@ -5,8 +5,9 @@ Production contains active hosts; staging is reserved for future deployments.
 
 ## Start
 
-Install [Mise](https://mise.jdx.dev/), Git, and SSH configuration for the hosts
-you are authorized to operate. After checkout or dependency changes:
+Install [Mise](https://mise.jdx.dev/), Git, rootless Podman for local container
+validation, and SSH configuration for the hosts you are authorized to operate.
+Mise provides every other pinned tool. After checkout or dependency changes:
 
 ```bash
 mise install
