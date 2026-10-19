@@ -76,12 +76,14 @@ repeating it. Preserve important decisions and authorization history.
 
 ## Authority boundaries
 
-- Run established repository workflows through their pinned Mise tasks. Run
-  any other tool pinned in `.mise.toml` or `uv.lock` through
-  `mise exec -- <tool> ...`. Never substitute an operator-account installation
-  of a pinned tool. Only Mise, Git, OpenSSH, rootless Podman, and standard
-  operating-system utilities come from the host. Ordinary read-only filesystem
-  and Git inspection may use standard commands.
+- Run established repository workflows through their pinned Mise tasks. When
+  no task exists, run a tool pinned in `.mise.toml` through
+  `mise exec -- <tool> ...` and a Python tool locked in `uv.lock`, such as
+  `ansible-playbook`, through `mise exec -- uv run --frozen --no-sync <tool> ...`.
+  Never substitute an operator-account installation of a pinned tool. Only Mise,
+  Git, OpenSSH, rootless Podman, and standard operating-system utilities come
+  from the host; ordinary read-only filesystem and Git inspection may use those
+  utilities directly.
 - Use Git for repository content. Use the pinned `fj` client through
   `mise exec -- fj ...` for issues, pull requests, reviews, comments, labels,
   and other forge metadata.
