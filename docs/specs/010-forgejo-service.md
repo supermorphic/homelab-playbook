@@ -7,8 +7,9 @@ acceptance are separate evidence; live acceptance remains pending.
 
 The guarded application upgrade design for
 [#118](https://forgejo.infra.supermorphic.com/supermorphic/homelab-playbook/issues/118)
-is implemented locally. Production execution and live acceptance require separate
-operator authorization.
+is implemented. Production runs Forgejo 16.0.6. On 18 October 2026, native
+verification, scheduled backup validation and the nightly Git and metadata mirrors
+passed after the upgrade.
 
 ## Purpose and delivery boundary
 
@@ -543,9 +544,8 @@ The reviewed target API exposes no rerun operation. The populated synthetic prob
 creates a same-owner fork with a custom name and a branch present only in that fork;
 creating its PR through `head: owner:branch` returns HTTP 404. These are consumer
 limitations, not upgrade failures. Report the observed capability results with
-the rehearsal evidence. These API checks do not select a CLI. Client selection
-requires the shortlist assessment and native comparison specified in issue #118;
-retain the configured metadata client until that comparison supports a change.
+the rehearsal evidence. These API checks do not select a CLI; the separate
+comparison in [Forgejo client](#forgejo-client) does.
 
 Test interruption at each publication/start boundary, including controller death
 while the target runs, reboot, invalid journals, stale evidence, concurrent
@@ -555,6 +555,47 @@ existing real-runtime compatibility, backup and restore workflows before live
 execution. After separate exact authorization, check native service verification,
 post-upgrade backup/recovery evidence, normal nightly Git/metadata mirror results
 and consumer acceptance. Live results remain separate from CI evidence.
+
+## Forgejo client
+
+Repository policy selects Fjord `fj`, pinned in Mise. Use `fj api` for REST
+operations that `fj` commands do not expose. Before this decision, agents used
+teacli and fell back to the web UI for operations that Forgejo 15 did not expose
+through its API.
+
+In October 2026, issue #118 compared six clients against Forgejo 16.0.6: teacli,
+Forgejo community fj, Gitea tea, Fjord fj, fj-ex and fgh. Mutations used owned
+disposable repositories and synthetic tokens. Checks against the production
+server were read-only and used the existing credential scope.
+
+- fj-ex automates web sessions and needs web credentials, so it does not meet the
+  API-only requirement.
+- Community fj has no structured output, raw API command or Actions log, artifact
+  and cancel commands.
+- teacli and tea typed Actions output fails to decode, or omits, Forgejo 16 run,
+  job and attempt fields. Their raw API commands work.
+- fgh covered the most typed operations. It is source-only with a very small
+  maintainer base, and it needs Bash 5.
+- Fjord fj publishes checksummed release binaries. Its raw API command avoids
+  typed decoding gaps. From 0.6.0 it downloads artifacts through the Forgejo 16
+  REST API; 0.5.0 uses a web path and fails.
+
+The comparison first recommended fgh. The operator selected Fjord fj with
+`fj api` for its release provenance and exact REST access. Apply these rules:
+
+- Dispatch workflows through `fj api`. Typed dispatch in `fj` 0.6.0 creates the
+  run and then exits 1, because it expects an event field that Forgejo 16 returns
+  empty. Never retry a dispatch on exit status alone; list runs to confirm.
+- Treat a run as finished only when every job of the selected attempt is in a
+  terminal state. An aggregate run failure can coexist with running jobs.
+- Global run IDs, repository run indexes and job IDs are distinct. `fj` commands
+  that take a run number expect the repository index.
+- `fj api` returns a job log as a JSON string; decode it before comparing bytes.
+  Download artifact ZIP files with the run artifact command, not by redirecting
+  `fj api` output.
+- Forgejo 16 has no REST rerun operation, and `fj run rerun` reports that no
+  route exists. Creating a PR from a same-owner fork with a custom name returns
+  HTTP 404. Stop and report these operations; do not use the web UI.
 
 ## Operator interface and observational verification
 
