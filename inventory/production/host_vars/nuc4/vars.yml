@@ -35,6 +35,9 @@ forgejo_metadata_uid: 2003
 forgejo_metadata_gid: 2003
 # Run the enrolled mirrors nightly after attended initialization (Spec 012).
 forgejo_metadata_timer_enabled: true
+# Each GitHub write rereads the destination inventory; a nightly run needs the
+# full allowed time to copy the daily career-ops issue volume.
+forgejo_metadata_timeout_seconds: 1800
 
 # github_metadata_write: owner supermorphic; expiration none.
 # Required selected GitHub repositories: supermorphic/homelab-playbook,
