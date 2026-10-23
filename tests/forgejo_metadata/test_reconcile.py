@@ -25,6 +25,13 @@ class ReconciliationTests(unittest.TestCase):
         self.destination.writes=[]; self.assertEqual(0,self.run_mirror().writes)
         self.assertEqual([],self.destination.writes)
 
+    def test_one_complete_read_precedes_changed_object_discovery(self):
+        reads=[]; complete=self.destination.inventory
+        self.destination.inventory=lambda mapping: reads.append('complete') or complete(mapping)
+        self.destination.refresh=lambda mapping: reads.append('changed') or complete(mapping)
+        self.assertEqual([],self.run_mirror().errors)
+        self.assertEqual('complete',reads[0]); self.assertEqual({'changed'},set(reads[1:]))
+
     def test_unmarked_same_name_label_stops_without_adoption_or_creation(self):
         self.destination.data.labels.append({'id':90,'name':'bug','color':'abcdef','description':'Defect'})
         self.assertIn('label_name_collision', self.run_mirror().errors)

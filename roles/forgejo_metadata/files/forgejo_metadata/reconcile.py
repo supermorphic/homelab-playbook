@@ -63,8 +63,9 @@ def discover_owned(mapping,inventory,ownership=None):
         raise MirrorError('ownership_conflict')
     return owned
 
-def discover_recorded(mapping,destination,store,labels=()):
-    inventory=destination.inventory(mapping)
+def discover_recorded(mapping,destination,store,labels=(),*,changed=False):
+    # A changed-object refresh keeps write discovery cost independent of size.
+    inventory=destination.refresh(mapping) if changed else destination.inventory(mapping)
     owned=discover_owned(mapping,inventory,store.load().get('ownership',{}))
     names=set()
     for row in labels:
@@ -81,7 +82,7 @@ def discover_created(mapping,destination,store,key,locator):
     # Retry reads only; conflicts and the run deadline still stop immediately.
     for delay in (0,5,15,45):
         if delay: time.sleep(delay)
-        fresh=discover_recorded(mapping,destination,store)
+        fresh=discover_recorded(mapping,destination,store,changed=True)
         created=fresh.get(key)
         if created is not None:
             if created.locator!=locator: raise MirrorError('ownership_conflict')
@@ -134,7 +135,7 @@ def reconcile(mapping,source,destination,store,write_budget,*,deadline=None):
                 if result.writes>=write_budget: result.backlog+=1; continue
                 if deadline is not None: started=deadline.begin()
                 destination.preflight(mapping)
-                fresh=discover_recorded(mapping,destination,store,source_data.labels)
+                fresh=discover_recorded(mapping,destination,store,source_data.labels,changed=True)
                 observed=fresh.get(projection.key)
                 if target and observed is None: raise MirrorError('ownership_conflict')
                 target=observed
@@ -159,7 +160,7 @@ def reconcile(mapping,source,destination,store,write_budget,*,deadline=None):
                     if result.writes>=write_budget: result.backlog+=1
                     else:
                         destination.preflight(mapping)
-                        fresh=discover_recorded(mapping,destination,store,source_data.labels)
+                        fresh=discover_recorded(mapping,destination,store,source_data.labels,changed=True)
                         current=fresh.get(projection.key)
                         if current is None: raise MirrorError('ownership_conflict')
                         if kind=='comment': parent=comment_parent(mapping,fresh,parent_id,current)

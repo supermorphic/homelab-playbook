@@ -1,4 +1,5 @@
 """Bounded HTTPS API access with read-only source and metadata-only destination."""
+from email.utils import parsedate_to_datetime
 import json
 import re
 import socket
@@ -11,6 +12,9 @@ from .model import MirrorError, Inventory
 
 MAX_RESPONSE=8*1024*1024
 MAX_PAGES=1000
+# Changed-object reads overlap the previous read so GitHub's one-second
+# updated_at precision and listing lag cannot hide a change between reads.
+OVERLAP_SECONDS=300
 class APIError(MirrorError):
     def __init__(self, code, outcome='unknown', retry_at=0, retry_key='*'):
         self.outcome=outcome; self.retry_at=retry_at; self.retry_key=retry_key
@@ -113,13 +117,15 @@ class Client:
         if not isinstance(value,(dict,list)): raise APIError('invalid_response')
         return value,received
 
-    def pages(self,path):
+    def pages(self,path,first=None):
+        """Read every page; first, when given, receives the first response headers."""
         result=[]; visited=set(); seen=set(); page=1
         source_path=path
         while path is not None:
             canonical=path if path.startswith('https://') else self.origin+self.prefix+path
             if canonical in visited or len(visited)>=MAX_PAGES: raise APIError('pagination_cycle_or_limit')
             visited.add(canonical); rows,headers=self.request('GET',path)
+            if first is not None and len(visited)==1: first.update(headers)
             if not isinstance(rows,list): raise APIError('invalid_collection')
             for row in rows:
                 if not isinstance(row,dict) or row.get('id') in seen: raise APIError('invalid_or_duplicate_page')
@@ -162,17 +168,40 @@ class DestinationAPI(Client):
         actor,_=self.request('GET','@user')
         if not isinstance(actor,dict): raise APIError('invalid_response')
         if actor.get('id')!=mapping.actor_id: raise APIError('destination_actor')
+    view=None
     def inventory(self,mapping):
-        rows=self.pages('/issues?state=all&sort=created&direction=asc&per_page=100')
-        issues=[r for r in rows if 'pull_request' not in r]
-        parents={(self.origin+self.prefix+f"/issues/{r['number']}").lower():r for r in rows}
-        comments={r['id']:[] for r in issues}
-        for comment in self.pages('/issues/comments?per_page=100'):
+        """Read the complete destination and keep it as the base for refresh()."""
+        self.view=None
+        return self.collect({},{},'')
+    def refresh(self,mapping):
+        """Merge issues and comments changed since the previous complete view."""
+        if self.view is None: return self.inventory(mapping)
+        issues,comments,observed=self.view
+        since=time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime(observed-OVERLAP_SECONDS))
+        try: return self.collect(issues,comments,'&since='+since)
+        except APIError as error:
+            # A comment whose parent is unknown needs a complete read to resolve.
+            if str(error)!='incomplete_inventory': raise
+            return self.inventory(mapping)
+    def collect(self,issues,comments,query):
+        first={}
+        issues=dict(issues); comments=dict(comments)
+        issues.update((r.get('id'),r) for r in self.pages('/issues?state=all&sort=created&direction=asc&per_page=100'+query,first))
+        comments.update((r.get('id'),r) for r in self.pages('/issues/comments?per_page=100'+query))
+        parents={(self.origin+self.prefix+f"/issues/{r['number']}").lower():r for r in issues.values()}
+        grouped={r['id']:[] for r in issues.values() if 'pull_request' not in r}
+        for comment in comments.values():
             url=comment.get('issue_url')
             parent=parents.get(url.lower()) if isinstance(url,str) else None
             if parent is None: raise APIError('incomplete_inventory')
-            if 'pull_request' not in parent: comments[parent['id']].append(comment)
-        return Inventory(issues,comments,self.pages('/labels?per_page=100'),self.pages('/milestones?state=all&per_page=100'))
+            if 'pull_request' not in parent: grouped[parent['id']].append(comment)
+        result=Inventory([r for r in issues.values() if 'pull_request' not in r],grouped,
+            self.pages('/labels?per_page=100'),self.pages('/milestones?state=all&per_page=100'))
+        # Without the server time of this read, the next refresh reads everything again.
+        try: observed=parsedate_to_datetime(first['date'])
+        except (KeyError,TypeError,ValueError): observed=None
+        self.view=(issues,comments,observed.timestamp()) if observed and observed.tzinfo else None
+        return result
     def create(self,projection,parent=None):
         kind=projection.key.kind
         endpoint=f'/issues/{parent.fields["number"]}/comments' if kind=='comment' else '/'+{'issue':'issues','label':'labels','milestone':'milestones'}[kind]

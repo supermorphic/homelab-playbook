@@ -97,6 +97,9 @@ class Fixture:
                             if len(parts)==1 or parts==['issues','comments']:
                                 hidden=getattr(fixture,'hidden_issue_reads',{}) if kind=='issues' else {}
                                 visible=[row for row in rows if not hidden.get(row['id'],0)]
+                                since=parse_qs(urlsplit(self.path).query).get('since')
+                                # GitHub filters these collections by updated_at, inclusive.
+                                if since: visible=[row for row in visible if row.get('updated_at',since[0])>=since[0]]
                                 for identity in hidden: hidden[identity]=max(0,hidden[identity]-1)
                                 self.collection(visible); return
                             elif kind=='comments' and len(parts)==3 and parts[-1]=='comments': self.collection([row for row in rows if row['_parent']==int(parts[1])]); return
@@ -116,6 +119,7 @@ class Fixture:
                             # GitHub normalizes label descriptions to a single line.
                             fields['description']=' '.join(fields['description'].split())
                         if mode.get('drop'): fields.pop(mode['drop'],None)
+                        fields['updated_at']=time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())
                         if method=='POST':
                             number=101+sum(len(value) for value in fixture.data.values())
                             row=dict(fields,id=number,number=number,user={'id':11})
