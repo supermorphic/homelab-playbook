@@ -121,6 +121,20 @@ review content even where APIs mix them with issues or comments. Incomplete
 pagination, API errors, or discovery limits must not become empty or partial
 inventories accepted as complete. Bound discovery, execution, and mutation requests.
 
+Discovery before each write and after each create must not grow with the size of
+the GitHub copy, or the nightly run falls behind the source. Each mapping run
+starts with one complete destination read. Later discovery in the same run reads
+only issues and comments whose `updated_at` is at or after the previous read's
+GitHub `Date` minus a fixed overlap, merges them by numeric ID into the run's
+view, and rereads labels and milestones in full. The overlap covers one-second
+timestamp precision and listing lag, so a change by another writer between reads
+still reaches the ownership and duplicate checks. Post-create confirmation keeps
+its retry delays and its exactly-one-owned-object rule. A comment whose parent
+is not in the view forces a complete read, and a read without a valid `Date`
+makes the next discovery complete. A deletion between reads stays in the view
+until the next run's complete read; it cannot permit a create, and a write to the
+deleted object fails the run.
+
 Reconcile labels and milestones before dependent issues, then comments. Create
 missing labels under their original names; ordinary synchronization never adopts
 unmarked collisions. Rename marked labels in place, retaining their numeric GitHub
@@ -137,8 +151,8 @@ Never delete a destination object because it disappears from Forgejo, or infer
 closure solely from absence. Removing a source issue's label changes its membership,
 not the retained label or unrelated history.
 
-Use full comparison rather than relying on issue timestamps to discover comment
-or label changes. Deterministic progress and skipped converged objects let bounded
+Use full comparison of source data rather than relying on source issue
+timestamps to discover comment or label changes. Deterministic progress and skipped converged objects let bounded
 backfill continue across runs. Independent mappings can progress after another
 fails. Partial work and backlog never advance last-converged evidence, which
 describes observed source data rather than an atomic snapshot across both
@@ -302,6 +316,8 @@ Offline validation must demonstrate:
   non-creation can retry, while unknown outcomes remain blocked until resolved.
 - Missing or invalid initialization blocks writes, and provisioning and recovery
   preserve surviving ownership and uncertainty evidence.
+- Destination requests for each write stay constant as the GitHub copy grows,
+  and changes by another writer between reads still stop the mapping.
 - Incomplete discovery, dropped fields, identity or visibility drift, permission
   failures, and outages fail the run. Rate limits and exhausted budgets exit
   successfully, resume without duplicates, and still fail verification until

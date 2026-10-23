@@ -37,6 +37,7 @@ class FakeDestination:
         self.drop=None; self.failure=None; self.lost=False; self.preflights=0
     def preflight(self,mapping): self.preflights+=1
     def inventory(self,mapping): return copy.deepcopy(self.data)
+    def refresh(self,mapping): return self.inventory(mapping)
     def create(self,projection,parent=None):
         from forgejo_metadata.api import APIError
         if self.failure: raise APIError(self.failure,'not_created')

@@ -51,6 +51,20 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(1,len(data['comments']))
         self.assertEqual(1,sum(method=='POST' and path.endswith('/issues') for method,path in self.fixture.writes()))
 
+    def test_tls_write_discovery_reads_only_changed_issue_and_comment_pages(self):
+        parent=self.fixture.destination_origin+'/repos/example/recovery/issues/'
+        old='2026-01-01T00:00:00Z'
+        self.fixture.data['issues']=[{'id':n,'number':n,'body':'Human history','user':{'id':99},'updated_at':old} for n in range(100000,100450)]
+        self.fixture.data['comments']=[{'id':n+1000,'_parent':n,'issue_url':parent+str(n),'body':'Human comment','user':{'id':99},'updated_at':old} for n in range(100000,100450)]
+        self.assertEqual(0,self.apply())
+        self.assertEqual(5,len(self.fixture.writes()))
+        reads=lambda suffix:sum(method=='GET' and path=='/repos/example/recovery'+suffix for method,path in self.fixture.ledger)
+        # One complete read costs five pages; each later discovery reads one changed page.
+        discoveries=reads('/labels')
+        self.assertGreater(discoveries,4)
+        self.assertEqual(5+discoveries-1,reads('/issues'))
+        self.assertEqual(5+discoveries-1,reads('/issues/comments'))
+
     def test_tls_milestone_due_date_preserves_utc_calendar_day(self):
         self.fixture.source_data['milestones'][0]['due_on']='2026-01-01T17:00:00-07:00'
         self.assertEqual(0,self.apply())
