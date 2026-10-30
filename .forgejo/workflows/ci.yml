@@ -1,13 +1,13 @@
 ---
 name: CI
 
+# Pull requests are checked locally with `mise run ci:changed`.
 on:
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
+  # Nightly full validation of main at 03:17 UTC, before career-ops at 07:00 UTC
+  # and Forgejo's nightly backup downtime.
   schedule:
-    - cron: "17 8 * * 1"
+    - cron: "17 3 * * *"
 
 # Retain the declaration for GitHub-aware tooling; Forgejo owns job-token scope.
 permissions:
@@ -18,7 +18,8 @@ defaults:
     shell: bash
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Manual and nightly runs on the same ref do not cancel each other.
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -41,43 +42,21 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
       - name: Verify candidate revision
         env:
-          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            test "$(git rev-parse refs/remotes/origin/main)" = "$PR_BASE_SHA"
-            git merge-base --is-ancestor "$PR_BASE_SHA" "$CANDIDATE_SHA"
-          fi
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
       - name: Install locked tools
         run: |
           mise trust --yes
           env -u GITHUB_TOKEN -u FORGEJO_TOKEN mise install --locked
       - name: Classify validation depth
         id: classify
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          classify_args=(--format forgejo --summary "$GITHUB_STEP_SUMMARY")
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            classify_args+=(
-              --base "$PR_BASE_SHA"
-              --head "$PR_HEAD_SHA"
-            )
-          else
-            classify_args+=(
-              --base HEAD
-              --head HEAD
-              --force-depth full
-            )
-          fi
-          mise exec -- python scripts/ci/classify.py "${classify_args[@]}" \
+          mise exec -- python scripts/ci/classify.py \
+            --base HEAD --head HEAD --force-depth full \
+            --format forgejo --summary "$GITHUB_STEP_SUMMARY" \
             >> "$GITHUB_OUTPUT"
 
   fast:
@@ -90,42 +69,18 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
       - name: Verify candidate revision
         env:
-          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            test "$(git rev-parse refs/remotes/origin/main)" = "$PR_BASE_SHA"
-            git merge-base --is-ancestor "$PR_BASE_SHA" "$CANDIDATE_SHA"
-          fi
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
       - name: Install locked tools
         run: |
           mise trust --yes
           env -u GITHUB_TOKEN -u FORGEJO_TOKEN mise install --locked
       - name: Install fast Python dependencies
         run: mise exec -- uv sync --frozen --only-group fast
-      - name: Run pull request fast validation
-        if: github.event_name == 'pull_request'
-        env:
-          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          started_at=$SECONDS
-          validation_status=0
-          mise run validate:fast || validation_status=$?
-          elapsed_seconds=$((SECONDS - started_at))
-          {
-            printf '%s\n\n' '### fast validation'
-            printf -- "- Command: \`%s\`\n" 'mise run validate:fast'
-            printf -- '- Validation duration: %s seconds\n' "$elapsed_seconds"
-          } | tee -a "$GITHUB_STEP_SUMMARY"
-          exit "$validation_status"
       - name: Run full-history fast validation
-        if: github.event_name != 'pull_request'
         env:
           FULL_SECRET_SCAN: "1"
         run: |
@@ -156,18 +111,11 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
       - name: Verify candidate revision
         env:
-          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            test "$(git rev-parse refs/remotes/origin/main)" = "$PR_BASE_SHA"
-            git merge-base --is-ancestor "$PR_BASE_SHA" "$CANDIDATE_SHA"
-          fi
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
       - name: Install locked tools
         run: |
           mise trust --yes
@@ -192,7 +140,8 @@ jobs:
     needs: classify
     if: needs.classify.outputs.run_molecule == 'true'
     runs-on: homelab-podman-amd64
-    timeout-minutes: 120
+    # Stops a hung job below the worker slot's three-hour cap.
+    timeout-minutes: 150
     defaults:
       run:
         working-directory: /work/job-workspace/source
@@ -207,19 +156,12 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
       - name: Verify candidate revision
         working-directory: ${{ github.workspace }}
         env:
-          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            test "$(git rev-parse refs/remotes/origin/main)" = "$PR_BASE_SHA"
-            git merge-base --is-ancestor "$PR_BASE_SHA" "$CANDIDATE_SHA"
-          fi
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
       - name: Prepare checkout for the job-scoped Podman service
         working-directory: ${{ github.workspace }}
         run: |
@@ -270,18 +212,11 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
       - name: Verify candidate revision
         env:
-          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            test "$(git rev-parse refs/remotes/origin/main)" = "$PR_BASE_SHA"
-            git merge-base --is-ancestor "$PR_BASE_SHA" "$CANDIDATE_SHA"
-          fi
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
       - name: Install locked tools
         run: |
           mise trust --yes
