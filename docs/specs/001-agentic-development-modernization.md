@@ -404,9 +404,12 @@ separately; cleanup failure fails the experiment without hiding the first failur
 
 ### Objective
 
-The ordinary required pull-request gate targets approximately two minutes p95.
-Validation first provides the smallest relevant, nonduplicated, deterministic
-evidence. Deeper execution is conditional on changes that can benefit from it.
+The ordinary merge check targets approximately two minutes p95 when no Molecule
+scenario is selected. Validation first provides the smallest relevant,
+nonduplicated, deterministic evidence. Deeper execution is conditional on changes
+that can benefit from it. Since #130 the merge check runs locally; see
+[Merge check and hosted runs](#merge-check-and-hosted-runs). Before #130 the same
+objective applied to the required hosted pull-request gate.
 
 ### Validation depths
 
@@ -420,7 +423,7 @@ When multiple paths change, the deepest selected depth wins.
 
 #### `fast`
 
-Runs on every pull request and covers repository hygiene, controller-independent
+Runs for every candidate and covers repository hygiene, controller-independent
 file validation, and security checks.
 
 Initial target: no more than 60 seconds on a warm GitHub runner path.
@@ -499,8 +502,10 @@ Local classification includes the union of:
 - untracked, non-ignored files;
 - both old and new paths for renames.
 
-GitHub classification uses the pull request merge base and complete candidate.
-Missing bases, invalid output, ambiguous mappings, or unknown paths select `full`.
+Hosted pull-request classification used the pull request merge base and
+complete candidate until #130 removed hosted pull-request runs. Scheduled and
+manual hosted runs force `full`. Missing bases, invalid output, ambiguous
+mappings, or unknown paths select `full`.
 Changes to the classifier or its tests also select `full`.
 
 Initial mappings are conceptually:
@@ -518,7 +523,40 @@ The final mapping follows the implemented target tree and is covered by
 table-driven tests. The classifier should remain understandable as a small script;
 it must not become a generalized test catalog or dependency graph.
 
+### Merge check and hosted runs
+
+The merge check is local: a passing `mise run ci:changed` on the final
+candidate, a clean, committed tree rebased on the current `origin/main`. The
+command prints the tested base and head SHAs, which the pull request reports
+with the result. Any later change to the candidate, including a rebase,
+requires a new run. [AGENTS.md](../../AGENTS.md#validation) owns the exact
+agent procedure.
+
+Hosted CI does not run on pull requests. The Forgejo workflow runs the `full`
+depth, including every Molecule scenario, on `main` once each night and on
+manual dispatch. The nightly run tests merged changes together and catches
+drift, such as an upstream image change, that no single pull request caused.
+Choose its UTC cron time so a `full` run finishes before the career-ops nightly
+run at 07:00 UTC starts and before Forgejo's nightly backup stops the service at
+03:30 host-local time.
+
+No hosted job sends failure alerts. Instead, at the start of each task an agent
+checks the newest scheduled run on `main` and the GitHub recovery mirror state,
+and tells the operator about a failure. One issue tracks each nightly failure.
+Manual hosted runs occupy the runner pool that career-ops and homelab-talos also
+use, so agents start one only when it adds needed evidence.
+
+Reason: the three runner-pool workers are shared. A `full` hosted run takes about
+two and a half hours, and even a short required run waits behind other
+repositories' jobs. Agents already ran `ci:changed` locally, so a required hosted
+run repeated that work and delayed every merge. This follows the career-ops
+model (supermorphic/career-ops#208).
+
 ### GitHub Actions topology
+
+Historical: this section describes the GitHub workflow, which no longer runs,
+and its pull-request trigger. The Forgejo workflow keeps the same job graph; see
+[Forgejo workflow adoption](#forgejo-workflow-adoption).
 
 One workflow always triggers for pull requests targeting the protected branch. It
 must not use top-level path filters.
@@ -556,19 +594,31 @@ The workflow in [.forgejo/workflows/ci.yml](../../.forgejo/workflows/ci.yml)
 adapts the existing GitHub topology to the runner platform owned by
 [Specification 011](011-forgejo-runners.md). It preserves repository-owned
 classification, selected validation and merge-gate reconciliation. Each job
-checks out and verifies the declared candidate before validation. PR jobs also
-require the event's target SHA to match the fetched `main` and be an ancestor of
-the candidate. This uses an up-to-date PR head instead of GitHub's synthetic
-merge checkout. Forgejo must require the branch to remain up to date through
-merge; checkout-time checks cannot prevent the target advancing afterward.
+checks out and verifies the run's commit before validation. The workflow has
+only `schedule` and `workflow_dispatch` triggers, and both force `full`.
+`merge-gate` no longer gates merges; it remains the run's verdict. It fails the
+run when a selected job was skipped, cancelled or failed, or when the Molecule
+plan does not cover every scenario and platform. Manual and scheduled runs on
+the same ref use separate concurrency groups, so neither cancels the other.
 
-Ordinary PR validation uses feature branches pushed to the canonical
-repository, following the publication policy in [AGENTS.md](../../AGENTS.md).
-Forgejo gives these PRs, manual runs and scheduled runs repository write
-tokens; the YAML `permissions` declaration does not restrict them. Run manual
-validation only on reviewed, trusted refs; scheduled validation uses the default
-branch. These events receive no production credentials, and checkout does not
-persist the job token. Only the operator merges PRs.
+Feature branches are pushed to the canonical repository, following the
+publication policy in [AGENTS.md](../../AGENTS.md). Forgejo gives manual and
+scheduled runs repository write tokens; the YAML `permissions` declaration does
+not restrict them. Run manual validation only on reviewed, trusted refs;
+scheduled validation uses the default branch. These events receive no production
+credentials, and checkout does not persist the job token. Only the operator
+merges PRs.
+
+A scheduled run's event payload is only `{"action":"schedule"}`; it has no
+`repository` or `pull_request` field. Jobs take the commit and ref from the run
+context (`github.sha`, `github.ref`), never from the event payload
+(supermorphic/career-ops#638).
+
+Historical decision: until #130 the workflow also ran on every PR targeting
+`main`. PR jobs required the event's target SHA to match the fetched `main` and
+be an ancestor of the PR head, and `main` protection required the
+`CI / merge-gate (pull_request)` status. A shared-file change selected `full`
+and held the merge for about two hours (#123, #129).
 
 Historical decision: #111 required publication through a fork because Forgejo
 makes the automatic job token read-only for fork PRs. The REST PR-creation API
@@ -583,6 +633,12 @@ Worker-pool admission owns the concurrency bound. Forgejo does not enforce
 GitHub's matrix `max-parallel` setting; expanding the pool requires reviewing
 aggregate capacity for these jobs.
 
+The Molecule job limit stops a hung job and frees its worker; it is not a time
+budget. It must stay below the worker slot's `job_seconds` cap, so the job
+reports its own timeout before the slot stops it. #139 raised it from 120 to 150
+minutes after the slowest measured scenarios took 92.6 and 83.9 minutes. Use
+nightly run times to track scenario duration.
+
 GitHub CI is no longer operational. Its YAML is retained as an unmaintained
 fallback reference; local Mise validation remains the operational reference until the Forgejo
 workflow passes live acceptance after issue #57. Required-check activation and
@@ -596,16 +652,16 @@ shared-change coverage, and a full manual or scheduled run. Record the candidate
 SHA, run and job links, selected matrix and final status in the evidence store.
 Use disposable candidate branches for deliberate failures and cancellation;
 include a failed matrix child and confirm the final gate rejects the candidate.
-Verify event-specific job-token authority for PR, manual and scheduled runs
+Verify event-specific job-token authority for manual and scheduled runs
 without printing tokens. The retained `permissions` declaration is not evidence
 of Forgejo token scope.
 
-Under separate authorization for repository settings, require the observed
-`merge-gate` status and an up-to-date branch, preserve the intended merge method,
-and prove failed, missing, cancelled and old-candidate checks block merge. Advance
-the target after a successful run and prove the old result cannot authorize that
-merge. Offline shell tests use supplied job results; they do not prove Forgejo
-matrix aggregation, cancellation or merge enforcement.
+Forgejo `main` protection requires no status check. It requires an up-to-date
+branch and blocks direct, force and deleting pushes, including for
+administrators. Changing protection is an operator-authorized settings change.
+Historical decision: before #130, protection also required the observed
+`merge-gate` pull-request status. Offline shell tests use supplied job results;
+they do not prove Forgejo matrix aggregation, cancellation or run conclusions.
 
 ### GitHub main protection
 
@@ -731,14 +787,12 @@ The initial high-value set is:
 
 ### Scheduled/manual checks
 
-The first implementation may include:
-
-- a full-history plus current-working-tree Gitleaks scan;
-- non-blocking link validation;
-- full offline validation.
+Scheduled and manual hosted runs execute `full` validation, including every
+Molecule scenario and a full-history plus current-working-tree Gitleaks scan.
+Non-blocking link validation remains optional.
 
 Dependency-update automation, live health checks, VM staging, and hardware
-validation are outside pull-request CI.
+validation are outside offline CI.
 
 ### Measurement and activation
 

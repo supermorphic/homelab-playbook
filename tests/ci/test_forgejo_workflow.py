@@ -15,6 +15,9 @@ import yaml
 from test_classify import TemporaryGitRepository
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "roles/forgejo_runner/files"))
+import pool  # noqa: E402
+
 WORKFLOW = ROOT / ".forgejo/workflows/ci.yml"
 
 
@@ -26,13 +29,12 @@ class ForgejoWorkflowTests(unittest.TestCase):
 
     def test_validation_timings_reach_logs_without_changing_failed_exit_status(self):
         names = {
-            "Run pull request fast validation",
             "Run full-history fast validation",
             "Run offline Ansible validation",
         }
         steps = [step for name in ("fast", "ansible")
                  for step in self.jobs[name]["steps"] if step.get("name") in names]
-        self.assertEqual(3, len(steps))
+        self.assertEqual(2, len(steps))
         with tempfile.TemporaryDirectory() as directory:
             summary = Path(directory) / "summary"
             for step in steps:
@@ -51,19 +53,27 @@ class ForgejoWorkflowTests(unittest.TestCase):
                         self.assertIn("Command:", result.stdout)
                         self.assertEqual(summary.read_text(), result.stdout)
 
-    def test_pr_manual_and_scheduled_validation_use_the_shared_pool(self):
+    def test_only_manual_and_nightly_runs_use_the_shared_pool(self):
         events = self.workflow["on"]
-        self.assertEqual(["main"], events["pull_request"]["branches"])
-        self.assertNotIn("paths", events["pull_request"])
-        self.assertIn("workflow_dispatch", events)
-        self.assertTrue(events["schedule"])
+        self.assertEqual({"workflow_dispatch", "schedule"}, set(events))
+        for schedule in events["schedule"]:
+            self.assertEqual(["*", "*", "*"], schedule["cron"].split()[2:])
         self.assertEqual("bash", self.workflow["defaults"]["run"]["shell"])
         self.assertEqual("true", self.workflow["concurrency"]["cancel-in-progress"])
+        self.assertIn("github.event_name", self.workflow["concurrency"]["group"])
         self.assertEqual(
             {"classify", "fast", "ansible", "molecule", "merge-gate"}, set(self.jobs)
         )
         for job in self.jobs.values():
             self.assertEqual("homelab-podman-amd64", job["runs-on"])
+
+    def test_job_limits_stop_jobs_before_the_worker_slot_cap(self):
+        self.assertEqual("150", self.jobs["molecule"]["timeout-minutes"])
+        for name, job in self.jobs.items():
+            with self.subTest(job=name):
+                self.assertLess(
+                    int(job["timeout-minutes"]) * 60, pool.LIMITS["job_seconds"]
+                )
 
     def test_checkout_selects_and_checks_the_declared_candidate(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -98,32 +108,15 @@ class ForgejoWorkflowTests(unittest.TestCase):
                 )
                 self.assertEqual("false", checkout["with"]["persist-credentials"])
                 self.assertEqual("0", checkout["with"]["fetch-depth"])
-                self.assertEqual(
-                    "${{ github.event.pull_request.head.sha || github.sha }}",
-                    checkout["with"]["ref"],
-                )
+                self.assertEqual("${{ github.sha }}", checkout["with"]["ref"])
                 verify = steps[1]
-                self.assertEqual(
-                    "${{ github.event.pull_request.head.sha || github.sha }}",
-                    verify["env"]["CANDIDATE_SHA"],
-                )
-                self.assertEqual(
-                    "${{ github.event_name }}", verify["env"]["EVENT_NAME"]
-                )
-                self.assertEqual(
-                    "${{ github.event.pull_request.base.sha }}",
-                    verify["env"]["PR_BASE_SHA"],
-                )
+                self.assertEqual("${{ github.sha }}", verify["env"]["CANDIDATE_SHA"])
                 for sha, expected in [(candidate, 0), ("0" * 40, 1), ("", 1)]:
                     with self.subTest(job=name, candidate=sha):
                         result = subprocess.run(
                             ["bash", "-e", "-o", "pipefail", "-c", verify["run"]],
                             cwd=root,
-                            env={
-                                **os.environ,
-                                "CANDIDATE_SHA": sha,
-                                "EVENT_NAME": "workflow_dispatch",
-                            },
+                            env={**os.environ, "CANDIDATE_SHA": sha},
                             capture_output=True,
                         )
                         self.assertEqual(expected, result.returncode)
@@ -219,11 +212,7 @@ class ForgejoWorkflowTests(unittest.TestCase):
             step for step in self.jobs["classify"]["steps"]
             if step.get("id") == "classify"
         )
-        line = next(
-            line.strip() for line in step["run"].splitlines()
-            if line.strip().startswith("classify_args=(")
-        )
-        arguments = shlex.split(line.removeprefix("classify_args=(").removesuffix(")"))
+        arguments = shlex.split(step["run"].replace("\\\n", " "))
         selected_format = arguments[arguments.index("--format") + 1]
         for path, depth in (
             ("docs/example.md", "fast"),
@@ -268,113 +257,10 @@ class ForgejoWorkflowTests(unittest.TestCase):
             self.assertTrue(row["selector"])
             self.assertTrue(row["platform"])
 
-    def test_pr_candidate_must_include_the_current_target(self):
+    def test_classifier_and_gate_select_full_depth_for_every_candidate(self):
         fixture = TemporaryGitRepository()
         self.addCleanup(fixture.cleanup)
-        base = fixture.initialize_fixture()
-        fixture.write("README.md", "candidate\n")
-        candidate = fixture.commit_all("Candidate")
-        target = subprocess.check_output(
-            ["git", "-C", str(fixture.root), "rev-parse", "--abbrev-ref", "HEAD"],
-            text=True,
-        ).strip()
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(fixture.root),
-                "update-ref",
-                "refs/remotes/origin/main",
-                base,
-            ],
-            check=True,
-        )
-        for job in self.jobs.values():
-            verify = job["steps"][1]
-            env = {
-                **os.environ,
-                "EVENT_NAME": "pull_request",
-                "CANDIDATE_SHA": candidate,
-                "PR_BASE_SHA": base,
-            }
-
-            def run():
-                return subprocess.run(
-                    ["bash", "-e", "-o", "pipefail", "-c", verify["run"]],
-                    cwd=fixture.root,
-                    env=env,
-                    capture_output=True,
-                ).returncode
-
-            self.assertEqual(0, run())
-            # The fetched target advanced while this event was queued.
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(fixture.root),
-                    "update-ref",
-                    "refs/remotes/origin/main",
-                    candidate,
-                ],
-                check=True,
-            )
-            self.assertNotEqual(0, run())
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(fixture.root),
-                    "update-ref",
-                    "refs/remotes/origin/main",
-                    base,
-                ],
-                check=True,
-            )
-            # A target commit on a different branch is not in the PR head.
-            subprocess.run(
-                ["git", "-C", str(fixture.root), "checkout", "--detach", base],
-                check=True,
-                capture_output=True,
-            )
-            fixture.write("README.md", "target changes\n")
-            advanced = fixture.commit_all("Target advances")
-            subprocess.run(
-                ["git", "-C", str(fixture.root), "checkout", target],
-                check=True,
-                capture_output=True,
-            )
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(fixture.root),
-                    "update-ref",
-                    "refs/remotes/origin/main",
-                    advanced,
-                ],
-                check=True,
-            )
-            env["PR_BASE_SHA"] = advanced
-            self.assertNotEqual(0, run())
-            env["PR_BASE_SHA"] = ""
-            self.assertNotEqual(0, run())
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(fixture.root),
-                    "update-ref",
-                    "refs/remotes/origin/main",
-                    base,
-                ],
-                check=True,
-            )
-
-    def test_classifier_and_gate_execute_for_pr_manual_and_scheduled_events(self):
-        fixture = TemporaryGitRepository()
-        self.addCleanup(fixture.cleanup)
-        base = fixture.initialize_fixture()
+        fixture.initialize_fixture()
         classify = next(
             step
             for step in self.jobs["classify"]["steps"]
@@ -391,36 +277,14 @@ class ForgejoWorkflowTests(unittest.TestCase):
                 "mise exec -- python", shlex.quote(sys.executable)
             ).replace("scripts/ci/", shlex.quote(str(ROOT / "scripts/ci")) + "/")
 
-        cases = [
-            ("pull_request", "README.md", "fast", set()),
-            ("pull_request", "playbooks/example/provision.yml", "ansible", set()),
-            (
-                "pull_request",
-                "roles/semaphore/tasks/main.yml",
-                "molecule",
-                {"semaphore/default"},
-            ),
-            (
-                "pull_request",
-                "roles/podman_foundation/tasks/main.yml",
-                "molecule",
-                {"forgejo/default", "semaphore/default", "system_maintenance/baseline"},
-            ),
-            ("pull_request", ".forgejo/workflows/ci.yml", "full", None),
-            ("workflow_dispatch", "README.md", "full", None),
-            ("schedule", "README.md", "full", None),
-        ]
-        for index, (event, path, depth, selectors) in enumerate(cases):
+        for index, path in enumerate(("README.md", "roles/semaphore/tasks/main.yml")):
             fixture.write(path, f"candidate {index}\n")
-            candidate = fixture.commit_all("Candidate")
-            with self.subTest(event=event, path=path):
+            fixture.commit_all("Candidate")
+            with self.subTest(path=path):
                 output = fixture.root / ".git" / "workflow-outputs"
                 output.write_text("")
                 env = {
                     **os.environ,
-                    "EVENT_NAME": event,
-                    "PR_BASE_SHA": base,
-                    "PR_HEAD_SHA": candidate,
                     "GITHUB_OUTPUT": str(output),
                     "GITHUB_STEP_SUMMARY": str(
                         fixture.root / ".git" / "workflow-summary"
@@ -437,34 +301,20 @@ class ForgejoWorkflowTests(unittest.TestCase):
                 values = dict(
                     line.split("=", 1) for line in output.read_text().splitlines()
                 )
-                self.assertEqual(depth, values["depth"])
-                plan = json.loads(values["molecule_plan"])
-                selected = {row["selector"] for row in plan["matrix"]["include"]}
-                if selectors is not None:
-                    self.assertEqual(selectors, selected)
-                else:
-                    self.assertEqual("full", plan["mode"])
+                self.assertEqual("full", values["depth"])
+                self.assertEqual("full", json.loads(values["molecule_plan"])["mode"])
+                required = (
+                    "CLASSIFY_RESULT",
+                    "FAST_RESULT",
+                    "ANSIBLE_RESULT",
+                    "MOLECULE_RESULT",
+                )
                 gate_env = {
                     **env,
-                    "SELECTED_DEPTH": depth,
+                    "SELECTED_DEPTH": values["depth"],
                     "MOLECULE_PLAN": values["molecule_plan"],
-                    "CLASSIFY_RESULT": "success",
-                    "FAST_RESULT": "success",
-                    "ANSIBLE_RESULT": "success" if depth != "fast" else "skipped",
-                    "MOLECULE_RESULT": (
-                        "success" if depth in ("molecule", "full") else "skipped"
-                    ),
+                    **{key: "success" for key in required},
                 }
-                required = [
-                    key
-                    for key in (
-                        "CLASSIFY_RESULT",
-                        "FAST_RESULT",
-                        "ANSIBLE_RESULT",
-                        "MOLECULE_RESULT",
-                    )
-                    if gate_env[key] == "success"
-                ]
                 for key in required:
                     for conclusion, expected in [
                         ("success", 0),
@@ -489,7 +339,6 @@ class ForgejoWorkflowTests(unittest.TestCase):
                                 text=True,
                             )
                             self.assertEqual(expected, result.returncode, result.stderr)
-            base = candidate
 
 
 if __name__ == "__main__":
