@@ -145,7 +145,7 @@ def validate_manifest(manifest, candidate):
     root = str(Path(__file__).resolve().parents[3])
     sys.path.insert(0, root)
     try:
-        from scripts.forgejo_runner.workload import registry_sources, SCENARIOS
+        from scripts.forgejo_runner.workload import approved_registry_images
     finally:
         sys.path.remove(root)
     expected = {'schema', 'architecture', 'source_tree', 'job_image_id', 'sources', 'registry_images', 'artifacts'}
@@ -162,9 +162,7 @@ def validate_manifest(manifest, candidate):
                 'mise_image': candidate['mise_images']['amd64']}):
         raise ValueError('Deployment manifest does not match the reviewed native sources')
     images = manifest['registry_images']
-    allowed = registry_sources(suite='stock-runtime')
-    for selector in SCENARIOS:
-        allowed |= registry_sources(selector)
+    allowed = approved_registry_images()
     if (not isinstance(images, list) or not 1 <= len(images) <= 64
             or any(not isinstance(reference, str) or reference not in allowed for reference in images)
             or len(set(images)) != len(images)):

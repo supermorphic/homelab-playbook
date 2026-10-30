@@ -80,7 +80,11 @@ class SlotPolicyTests(unittest.TestCase):
             changed['sources'][field] = 'unreviewed.invalid/image:latest'
             with self.subTest(field=field), self.assertRaises(ValueError):
                 self.policy.validate_manifest(changed, candidate)
-        for value in (['docker.io/library/debian:13;unsafe'], ['docker.io/library/debian:13']*65):
+        consumer = copy.deepcopy(manifest)
+        consumer['registry_images'] = ['docker.io/library/debian:13', 'docker.io/library/postgres']
+        self.assertEqual(consumer, self.policy.validate_manifest(consumer, candidate))
+        for value in (['docker.io/library/debian:13;unsafe'], ['docker.io/library/debian:13']*65,
+                      ['docker.io/library/redis']):
             changed = copy.deepcopy(manifest)
             changed['registry_images'] = value
             with self.assertRaises(ValueError):
