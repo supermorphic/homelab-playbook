@@ -248,18 +248,21 @@ repeating it. Preserve important decisions and authorization history.
 ## Validation
 
 - Run `mise run bootstrap` after checkout or dependency changes.
-- Use `mise run validate:fast` and `mise run validate:ansible` while iterating.
-- Before claiming completion or opening or updating a pull request, run
-  `mise run ci:changed`. The classifier selects the minimum required depth;
-  agents may escalate to `mise run ci` but may not de-escalate its result.
+- Use `mise run validate:fast` and `mise run validate:ansible` while iterating
+  and before pushing or opening or updating a pull request. A full
+  `mise run ci:changed` run is not required at that stage.
 - The merge check is a passing `mise run ci:changed` on the final candidate:
-  a clean, committed tree rebased on the current `origin/main`. Hosted
-  pull-request CI does not run. Rerun the check after any change to the
-  candidate, including a rebase; do not present earlier results as proof of a
-  changed candidate. Report the command, the tested head and base SHAs it
-  prints, and the result in the pull request.
-- At the start of a task, check the newest hosted run on `main` with
-  `trigger_event` `schedule` from
+  a clean, committed tree rebased on the current `origin/main`. The classifier
+  selects the minimum required depth; agents may escalate to `mise run ci` but
+  may not de-escalate its result. Hosted pull-request CI is not part of the
+  merge check. Report the command, the tested head and base SHAs it prints,
+  and the result in the pull request.
+- Run `ci:changed` when the candidate is ready to merge, before claiming
+  completion, not on every push. If the candidate then changes, including by a
+  rebase, rerun it. Do not present earlier results as proof of a changed
+  candidate.
+- At the start of a task, check the latest nightly hosted `ci` run on `main`:
+  the newest run with `trigger_event` `schedule` from
   `mise exec -- fj api 'repos/supermorphic/homelab-playbook/actions/runs?limit=20'`.
   If it failed, tell the operator. Continue unrelated work; fix the failure
   first when it affects the task's area. Before fixing, look for an open issue
