@@ -73,6 +73,14 @@ and dependency locks remain authoritative for project tools. Preserve the
 existing Molecule test-image acquisition contract; runner-image pins do not
 replace its maintained Debian base tags.
 
+Workers reject registry pulls by default. The deployment manifest allows this
+repository's test images plus a reviewed list of consumer images in
+[the workload module](../../scripts/forgejo_runner/workload.py). Consumer jobs
+reach those images through the worker socket, which resolves fully qualified
+names only. A consumer entry without a tag allows every tag of that repository,
+so a consumer's routine version upgrade needs no pool redeploy. Adding a new
+consumer repository is a reviewed change followed by a pool redeploy.
+
 ### Alternatives considered
 
 Disposable VMs give a separate kernel but add a lifecycle the operator deferred.

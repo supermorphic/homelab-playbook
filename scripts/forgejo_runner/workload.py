@@ -51,6 +51,21 @@ def registry_sources(selector=None, *, suite=None):
                 platform.base_image for platform in SCENARIOS['semaphore/default'].platforms}
 
 
+# Reviewed images that consumer repositories pull through the worker socket. An entry
+# without a tag or digest allows every tag of that repository.
+CONSUMER_IMAGES = frozenset({
+    # homelab-talos disposable PostgreSQL fixtures use the platform's official image.
+    'docker.io/library/postgres',
+})
+
+
+def approved_registry_images():
+    images = set(CONSUMER_IMAGES) | registry_sources(suite='stock-runtime')
+    for selector in SCENARIOS:
+        images |= registry_sources(selector)
+    return images
+
+
 def restore_source_tree(root: Path, expected: str) -> str:
     """Recreate only archived objects; verify modes and content before seeding."""
     import re

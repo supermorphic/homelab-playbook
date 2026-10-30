@@ -62,6 +62,17 @@ class NativeWorkloadTests(unittest.TestCase):
             host_worker.worker_files(self.target(), 'trusted launcher',
                 registry_images=['docker.io/library/postgres@sha256:' + '0' * 64])
 
+    def test_reviewed_consumer_repository_admits_its_tags_only(self):
+        from scripts.forgejo_runner import host_worker
+        files = host_worker.worker_files(self.target(), 'trusted launcher',
+                                         registry_images=['docker.io/library/postgres'])
+        policy = json.loads(files['etc/containers/policy.json'])
+        self.assertEqual([{'type': 'reject'}], policy['default'])
+        self.assertEqual({'docker.io/library/postgres'}, set(policy['transports']['docker']))
+        for refs in (['docker.io/library/redis'], ['docker.io/library'], ['docker.io/library/postgres-extra']):
+            with self.subTest(refs=refs), self.assertRaises(ValueError):
+                host_worker.worker_files(self.target(), 'trusted launcher', registry_images=refs)
+
     def test_workload_overlay_is_native_and_confined_to_owned_storage(self):
         import tomllib
         from scripts.forgejo_runner import host_worker,worker_probe

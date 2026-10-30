@@ -158,10 +158,8 @@ def worker_files(target, launcher, *, oci_assets=(), registry_images=(), storage
             '/work/input/' + name: [{'type': 'insecureAcceptAnything'}] for name in oci_assets}
         files['etc/containers/policy.json'] = json.dumps(policy)
     if registry_images:
-        from scripts.forgejo_runner.workload import registry_sources, SCENARIOS
-        approved = registry_sources(suite='stock-runtime')
-        for selector in SCENARIOS:
-            approved |= registry_sources(selector)
+        from scripts.forgejo_runner.workload import approved_registry_images
+        approved = approved_registry_images()
         if any(not isinstance(ref, str) or ref not in approved for ref in registry_images):
             raise ValueError('Invalid workload registry source')
         def policy_identity(reference):

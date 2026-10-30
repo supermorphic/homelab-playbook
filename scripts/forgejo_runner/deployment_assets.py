@@ -60,7 +60,7 @@ def ensure_image(run, pin, auth):
 
 def prepare(descriptor, destination):
     from scripts.forgejo_runner.fixture import RunnerRun, load_candidate
-    from scripts.forgejo_runner.workload import build_image, mise_image, source_tree, registry_sources, SCENARIOS
+    from scripts.forgejo_runner.workload import build_image, mise_image, source_tree, approved_registry_images
     from scripts.forgejo_runner.native_tools import prepare_archive, install_archive
     candidate = load_candidate(descriptor, 'amd64')
     if candidate['runner_image'] is None:
@@ -92,9 +92,7 @@ def prepare(descriptor, destination):
             path = destination / name
             path.chmod(0o600)
             artifacts[name] = describe(path)
-        registry_images = registry_sources(suite='stock-runtime')
-        for selector in SCENARIOS:
-            registry_images |= registry_sources(selector)
+        registry_images = approved_registry_images()
         manifest = {'schema': 1, 'architecture': 'amd64', 'source_tree': source_tree(ROOT),
                     'job_image_id': job_id, 'sources': {**candidate, 'mise_image': selected_mise},
                     'registry_images': sorted(registry_images), 'artifacts': artifacts}
